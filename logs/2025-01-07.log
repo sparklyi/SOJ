@@ -1,5 +1,0 @@
-2025-01-07T08:58:21.267+0800	ERROR	SOJ/main.go:11	test
-main.main
-	E:/Go/project/SOJ/main.go:11
-runtime.main
-	D:/Go/version/go1.22.5/src/runtime/proc.go:271
