@@ -7,12 +7,17 @@
 package initialize
 
 import (
-	"go.uber.org/zap"
+	"SOJ/internal/api"
+	"SOJ/utils/jwt"
 )
 
 // Injectors from wire.go:
 
-func InitServer() *zap.Logger {
+func InitServer() *api.UserAPI {
 	logger := InitLogger()
-	return logger
+	client := InitRedis()
+	jwtJWT := jwt.NewJWT(client, logger)
+	v := InitMiddleware(jwtJWT, logger)
+	userAPI := api.NewUserAPI(logger, jwtJWT, v)
+	return userAPI
 }
