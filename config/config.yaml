@@ -6,10 +6,15 @@ log:
 
 mysql:
   dsn: "root:sparkyi-soj@tcp(192.168.65.131:3306)/soj?charset=utf8mb4&parseTime=True&loc=Local"
+
 redis:
   addr: "192.168.65.131:6379"
   password: ""
   db: 0
+
+judge0:
+  addr: "192.168.65.131:2358"
+
 jwt:
   access_secret: "fLz4d8R!1nB6hPqT@2WmK7cJ#3vL0aY9xU"
   refresh_secret: "pQ7oL3Yt*2VgD0bKzJ9x5Zf1GdN8wT4u$"
