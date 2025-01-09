@@ -36,7 +36,7 @@ type JWT struct {
 
 //依赖注入方法
 
-func NewJWT(rs *redis.Client, log *zap.Logger) *JWT {
+func New(rs *redis.Client, log *zap.Logger) *JWT {
 	return &JWT{
 		Rs:            rs,
 		Log:           log,
