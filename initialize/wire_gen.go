@@ -8,6 +8,7 @@ package initialize
 
 import (
 	"SOJ/internal/api"
+	"SOJ/pkg/email"
 	"SOJ/utils/jwt"
 )
 
@@ -16,8 +17,9 @@ import (
 func InitServer() *api.UserAPI {
 	logger := InitLogger()
 	client := InitRedis()
-	jwtJWT := jwt.NewJWT(client, logger)
+	jwtJWT := jwt.New(client, logger)
 	v := InitMiddleware(jwtJWT, logger)
-	userAPI := api.NewUserAPI(logger, jwtJWT, v)
+	emailEmail := email.New(logger)
+	userAPI := api.NewUserAPI(logger, jwtJWT, v, emailEmail)
 	return userAPI
 }

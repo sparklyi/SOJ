@@ -12,6 +12,13 @@ redis:
   password: ""
   db: 0
 
+email:
+  host: "smtp.qq.com"
+  port: 25
+  username: "513254687@qq.com"
+  password: ""
+
+
 judge0:
   addr: "192.168.65.131:2358"
 
