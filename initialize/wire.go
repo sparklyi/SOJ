@@ -4,6 +4,7 @@ package initialize
 
 import (
 	"SOJ/internal/api"
+	"SOJ/pkg/email"
 	"SOJ/utils/jwt"
 	"github.com/google/wire"
 )
@@ -15,7 +16,8 @@ func InitServer() *api.UserAPI {
 		InitLogger,
 		InitRedis,
 		InitMiddleware,
-		jwt.NewJWT,
+		jwt.New,
+		email.New,
 		api.NewUserAPI,
 	)
 	return nil
