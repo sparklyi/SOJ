@@ -1,7 +1,7 @@
 package initialize
 
 import (
-	"SOJ/pkg/logger"
+	"SOJ/utils/logger"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
