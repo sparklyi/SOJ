@@ -25,7 +25,7 @@ func InitLogger() *zap.Logger {
 	//新建核心, 记录error及以上的日志信息
 	core := zapcore.NewCore(encoderConfig, wr, zapcore.InfoLevel)
 
-	//新建日志, 自动添加调用者, 记录error及以上的堆栈信息
+	//新建日志, 自动添加调用信息, 记录error及以上的堆栈信息
 	return zap.New(
 		core,
 		zap.AddCaller(),
