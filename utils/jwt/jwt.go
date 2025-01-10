@@ -34,8 +34,7 @@ type JWT struct {
 	RefreshExpire time.Duration     //长token过期时间
 }
 
-//依赖注入方法
-
+// New 仅用于依赖注入方法
 func New(rs *redis.Client, log *zap.Logger) *JWT {
 	return &JWT{
 		Rs:            rs,
@@ -135,6 +134,7 @@ func (j *JWT) BanToken(ctx *gin.Context, token string) error {
 	return nil
 }
 
+// VerifyRefresh 长token验证 redis存在则token失效
 func (j *JWT) VerifyRefresh(ctx *gin.Context, token string) (bool, *RefreshClaims, error) {
 	claims, err := j.ParseRefresh(token)
 	if err != nil {

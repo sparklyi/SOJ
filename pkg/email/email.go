@@ -12,6 +12,7 @@ type Email struct {
 	log *zap.Logger
 }
 
+// New 用于依赖注入
 func New(log *zap.Logger) *Email {
 	e := Email{
 		gomail.NewDialer(
@@ -25,6 +26,8 @@ func New(log *zap.Logger) *Email {
 	e.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 	return &e
 }
+
+// Send 邮件发送 content可以为html格式
 func (e *Email) Send(addr []string, content string) error {
 	m := gomail.NewMessage()
 	m.SetHeader("From", e.Username)
