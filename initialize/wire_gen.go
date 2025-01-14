@@ -8,18 +8,25 @@ package initialize
 
 import (
 	"SOJ/internal/api"
+	"SOJ/internal/mq"
 	"SOJ/pkg/email"
 	"SOJ/utils/jwt"
 )
 
 // Injectors from wire.go:
 
-func InitServer() *api.UserAPI {
+func InitServer() *Cmd {
 	logger := InitLogger()
 	client := InitRedis()
 	jwtJWT := jwt.New(client, logger)
 	v := InitMiddleware(jwtJWT, logger)
+	emailProducer := mq.NewEmailProducer(logger)
+	userAPI := api.NewUserAPI(logger, jwtJWT, v, emailProducer)
 	emailEmail := email.New(logger)
-	userAPI := api.NewUserAPI(logger, jwtJWT, v, emailEmail)
-	return userAPI
+	emailConsumer := mq.NewEmailConsumer(logger, emailEmail, emailProducer)
+	cmd := &Cmd{
+		UserAPI:       userAPI,
+		EmailConsumer: emailConsumer,
+	}
+	return cmd
 }
