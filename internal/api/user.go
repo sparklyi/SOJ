@@ -1,7 +1,7 @@
 package api
 
 import (
-	"SOJ/pkg/email"
+	"SOJ/internal/mq"
 	"SOJ/utils/jwt"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -13,10 +13,10 @@ type UserAPI struct {
 	jwt        *jwt.JWT
 	log        *zap.Logger
 	middleware []gin.HandlerFunc
-	email      *email.Email
+	email      *mq.EmailProducer
 }
 
-func NewUserAPI(log *zap.Logger, jwt *jwt.JWT, fc []gin.HandlerFunc, e *email.Email) *UserAPI {
+func NewUserAPI(log *zap.Logger, jwt *jwt.JWT, fc []gin.HandlerFunc, e *mq.EmailProducer) *UserAPI {
 	return &UserAPI{
 		jwt:        jwt,
 		log:        log,
@@ -47,8 +47,10 @@ func (u *UserAPI) TestFunc(ctx *gin.Context) {
 	//}
 
 	//发送邮件
-	if err = u.email.Send([]string{"sparkyi@qq.com"}, "test"); err != nil {
-		panic(err)
-	}
+	//if err = u.email.Send([]string{"sparkyi@qq.com"}, "test"); err != nil {
+	//	panic(err)
+	//}
+	c := mq.EmailContent{Content: "test", Target: []string{"513254687@qq.com", "3026080028@qq.com"}}
+	u.email.Send(ctx, c, 20)
 
 }

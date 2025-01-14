@@ -18,6 +18,11 @@ email:
   username: "513254687@qq.com"
   password: ""
 
+rabbitmq:
+  url: "amqp://admin:admin@192.168.65.131/soj"
+  exchange: "email_exchange"
+  queue: "email_queue"
+
 
 judge0:
   addr: "192.168.65.131:2358"
