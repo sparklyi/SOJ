@@ -21,11 +21,13 @@ func NewEmailConsumer(log *zap.Logger, email *email.Email, p *EmailProducer) *Em
 	}
 
 }
+
 func (c *EmailConsumer) Consume(ctx context.Context) error {
 	c.log.Info("start consume email")
 	defer c.log.Info("end consume email")
 
-	msgs, err := c.Channel.Consume(c.Queue, "", false, false, false, false, nil)
+	//从信道中消费消息
+	msgs, err := c.Channel.Consume(c.QueueName, "", false, false, false, false, nil)
 	if err != nil {
 		c.log.Error("consume email fail", zap.Error(err))
 		return err
