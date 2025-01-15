@@ -19,7 +19,9 @@ type EmailProducer struct {
 // EmailContent 邮件内容 包含收件人 内容 是否延迟发送
 type EmailContent struct {
 	Target  []string `json:"target"`
+	Subject string   `json:"subject"`
 	Content string   `json:"content"`
+	Code    string   `json:"code"`
 }
 
 func NewEmailProducer(log *zap.Logger) *EmailProducer {
@@ -90,5 +92,6 @@ func (p *EmailProducer) Send(ctx context.Context, content EmailContent, DelaySec
 		p.log.Error("消息发布失败", zap.Error(err))
 		return err
 	}
+	p.log.Info("消息发布成功", zap.Any("content", content))
 	return nil
 }
