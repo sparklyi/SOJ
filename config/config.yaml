@@ -20,8 +20,8 @@ email:
 
 rabbitmq:
   url: "amqp://admin:admin@192.168.65.131/soj"
-  exchange: "email_exchange"
-  queue: "email_queue"
+  exchange_email: "email_exchange"
+  queue_email: "email_queue"
 
 
 judge0:

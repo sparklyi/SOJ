@@ -9,11 +9,11 @@ import (
 )
 
 type EmailProducer struct {
-	log      *zap.Logger
-	Conn     *amqp.Connection
-	Channel  *amqp.Channel
-	Exchange string
-	Queue    string
+	log          *zap.Logger
+	Conn         *amqp.Connection
+	Channel      *amqp.Channel
+	ExchangeName string
+	QueueName    string
 }
 
 // EmailContent 邮件内容 包含收件人 内容 是否延迟发送
@@ -23,8 +23,8 @@ type EmailContent struct {
 }
 
 func NewEmailProducer(log *zap.Logger) *EmailProducer {
-	exchangeName := viper.GetString("rabbitmq.exchange")
-	QueueName := viper.GetString("rabbitmq.queue")
+	exchangeName := viper.GetString("rabbitmq.exchange_email")
+	QueueName := viper.GetString("rabbitmq.queue_email")
 	conn, err := amqp.Dial(viper.GetString("rabbitmq.url"))
 	if err != nil {
 		log.Error("rabbitmq连接失败", zap.Error(err))
@@ -58,11 +58,11 @@ func NewEmailProducer(log *zap.Logger) *EmailProducer {
 		return nil
 	}
 	return &EmailProducer{
-		log:      log,
-		Conn:     conn,
-		Channel:  ch,
-		Exchange: exchangeName,
-		Queue:    QueueName,
+		log:          log,
+		Conn:         conn,
+		Channel:      ch,
+		ExchangeName: exchangeName,
+		QueueName:    QueueName,
 	}
 
 }
@@ -75,7 +75,7 @@ func (p *EmailProducer) Send(ctx context.Context, content EmailContent, DelaySec
 	}
 
 	err = p.Channel.Publish(
-		p.Exchange,
+		p.ExchangeName,
 		"",
 		false, false,
 		amqp.Publishing{
