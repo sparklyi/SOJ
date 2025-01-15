@@ -3,7 +3,7 @@
 package initialize
 
 import (
-	"SOJ/internal/api"
+	"SOJ/internal/handle"
 	"SOJ/internal/mq"
 	"SOJ/pkg/email"
 	"SOJ/utils/jwt"
@@ -17,11 +17,16 @@ func InitServer() *Cmd {
 		InitLogger,
 		InitRedis,
 		InitMiddleware,
+		InitDB,
+		InitMongoDB,
 		jwt.New,
 		email.New,
 		mq.NewEmailProducer,
 		mq.NewEmailConsumer,
-		api.NewUserAPI,
+		handle.NewEmailHandler,
+		handle.NewUserHandler,
+
+		InitRoute,
 		wire.Struct(new(Cmd), "*"),
 	)
 	return new(Cmd)

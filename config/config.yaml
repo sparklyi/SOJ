@@ -12,6 +12,12 @@ redis:
   password: ""
   db: 0
 
+mongo:
+  uri: "mongodb://192.168.65.131:27017"
+  db: "soj"
+  collection_problem: "problem"
+  collection_blog: "blog"
+
 email:
   host: "smtp.qq.com"
   port: 25
