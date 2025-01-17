@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	MaxRetry = 5
+	MaxRetry = 5 //最大重试消费次数
 )
 
 type EmailConsumer struct {
@@ -57,7 +57,7 @@ func (c *EmailConsumer) Consume(ctx context.Context) error {
 			}
 
 			for range MaxRetry {
-				//只有验证码类型会令Storage=true
+				//如果发送的是验证码
 				if content.Code != "" {
 					if err = c.Rs.Set(ctx, content.Target[0], content.Code, time.Minute).Err(); err != nil {
 						c.log.Error("验证码缓存失败", zap.Error(err))
@@ -70,7 +70,7 @@ func (c *EmailConsumer) Consume(ctx context.Context) error {
 				//执行到这则已经完成缓存+发送
 				return
 			}
-			//执行到这 即重试5次依然失败，直接丢弃并记日志
+			//执行到这 即重试maxRetry次依然失败，直接丢弃并记日志
 			c.log.Error("消费达到最大次数:", zap.Any("content", content))
 		}(msg)
 	}
