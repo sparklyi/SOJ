@@ -1,1 +1,20 @@
 # SOJ
+## 结构
+- 采取wire依赖注入解耦
+- 采取经典三层架构(handle+service+repository)
+
+## 技术栈
+- 开发语言: 
+  - Golang
+- 框架: 
+  - gin
+  - gorm
+- 消息队列: 
+  - RabbitMQ
+- 数据库: 
+  - MySQL
+  - MongoDB
+- 缓存: 
+  - redis
+- 测评+沙箱: 
+  - judge0
