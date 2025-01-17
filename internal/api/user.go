@@ -8,6 +8,6 @@ import (
 func UserRoute(r *gin.RouterGroup, u *handle.UserHandler) {
 	user := r.Group("/user")
 	{
-		user.GET("/test", u.TestFunc)
+		user.POST("/register", u.Register)
 	}
 }
