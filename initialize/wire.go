@@ -5,6 +5,8 @@ package initialize
 import (
 	"SOJ/internal/handle"
 	"SOJ/internal/mq"
+	"SOJ/internal/repository"
+	"SOJ/internal/service"
 	"SOJ/pkg/email"
 	"SOJ/utils/jwt"
 	"github.com/google/wire"
@@ -25,6 +27,9 @@ func InitServer() *Cmd {
 		mq.NewEmailConsumer,
 		handle.NewEmailHandler,
 		handle.NewUserHandler,
+		service.NewUserService,
+		service.NewEmailService,
+		repository.NewUserRepository,
 
 		InitRoute,
 		wire.Struct(new(Cmd), "*"),

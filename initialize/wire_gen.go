@@ -9,6 +9,8 @@ package initialize
 import (
 	"SOJ/internal/handle"
 	"SOJ/internal/mq"
+	"SOJ/internal/repository"
+	"SOJ/internal/service"
 	"SOJ/pkg/email"
 	"SOJ/utils/jwt"
 )
@@ -17,17 +19,20 @@ import (
 
 func InitServer() *Cmd {
 	logger := InitLogger()
-	emailProducer := mq.NewEmailProducer(logger)
-	emailHandler := handle.NewEmailHandler(emailProducer)
 	client := InitRedis()
+	emailProducer := mq.NewEmailProducer(logger)
+	emailService := service.NewEmailService(logger, client, emailProducer)
+	emailHandler := handle.NewEmailHandler(emailService)
 	jwtJWT := jwt.New(client, logger)
+	db := InitDB()
+	userRepository := repository.NewUserRepository(logger, db, client)
+	userService := service.NewUserService(logger, userRepository, client)
 	v := InitMiddleware(jwtJWT, logger)
-	userHandler := handle.NewUserHandler(logger, jwtJWT, v, emailProducer)
+	userHandler := handle.NewUserHandler(logger, jwtJWT, emailProducer, userService, v)
 	engine := InitRoute(emailHandler, userHandler)
 	emailEmail := email.New(logger)
 	emailConsumer := mq.NewEmailConsumer(logger, emailEmail, emailProducer, client)
 	database := InitMongoDB()
-	db := InitDB()
 	cmd := &Cmd{
 		G:             engine,
 		EmailConsumer: emailConsumer,
