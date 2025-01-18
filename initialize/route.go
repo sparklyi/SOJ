@@ -9,10 +9,11 @@ import (
 func InitRoute(
 	email *handle.EmailHandler,
 	user *handle.UserHandler,
+	mid []gin.HandlerFunc,
 ) *gin.Engine {
 	r := gin.Default()
 	g := r.Group("/api/v1")
-	api.EmailRoute(g, email)
-	api.UserRoute(g, user)
+	api.EmailRoute(g, email, mid)
+	api.UserRoute(g, user, mid)
 	return r
 }

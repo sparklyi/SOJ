@@ -30,7 +30,6 @@ func InitServer() *Cmd {
 		service.NewUserService,
 		service.NewEmailService,
 		repository.NewUserRepository,
-
 		InitRoute,
 		wire.Struct(new(Cmd), "*"),
 	)
