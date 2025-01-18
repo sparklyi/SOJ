@@ -2,7 +2,6 @@ package handle
 
 import (
 	"SOJ/internal/entity"
-	"SOJ/internal/mq"
 	"SOJ/internal/service"
 	"SOJ/utils/jwt"
 	"SOJ/utils/response"
@@ -11,21 +10,16 @@ import (
 )
 
 type UserHandler struct {
-	jwt   *jwt.JWT
-	log   *zap.Logger
-	email *mq.EmailProducer
-
+	jwt *jwt.JWT
+	log *zap.Logger
 	svc *service.UserService
-	t   []gin.HandlerFunc
 }
 
-func NewUserHandler(log *zap.Logger, jwt *jwt.JWT, e *mq.EmailProducer, s *service.UserService, t []gin.HandlerFunc) *UserHandler {
+func NewUserHandler(log *zap.Logger, jwt *jwt.JWT, s *service.UserService) *UserHandler {
 	return &UserHandler{
-		jwt:   jwt,
-		log:   log,
-		email: e,
-		svc:   s,
-		t:     t,
+		jwt: jwt,
+		log: log,
+		svc: s,
 	}
 }
 
