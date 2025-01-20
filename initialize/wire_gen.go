@@ -28,7 +28,7 @@ func InitServer() *Cmd {
 	userRepository := repository.NewUserRepository(logger, db, client)
 	userService := service.NewUserService(logger, userRepository, client)
 	userHandler := handle.NewUserHandler(logger, jwtJWT, userService)
-	v := InitMiddleware(jwtJWT, logger)
+	v := InitMiddleware(jwtJWT)
 	engine := InitRoute(emailHandler, userHandler, v)
 	emailEmail := email.New(logger)
 	emailConsumer := mq.NewEmailConsumer(logger, emailEmail, emailProducer, client)

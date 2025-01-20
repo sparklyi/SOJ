@@ -135,19 +135,19 @@ func (j *JWT) BanToken(ctx *gin.Context, token string) error {
 }
 
 // VerifyRefresh 长token验证 redis存在则token失效
-func (j *JWT) VerifyRefresh(ctx *gin.Context, token string) (bool, *RefreshClaims, error) {
+func (j *JWT) VerifyRefresh(ctx *gin.Context, token string) (*RefreshClaims, error) {
 	claims, err := j.ParseRefresh(token)
 	if err != nil {
-		return false, nil, err
+		return nil, err
 	}
 	exist, err := j.Rs.Exists(ctx, token).Result()
 	if err != nil {
 		j.Log.Error("redis读取长token失败", zap.Error(err))
-		return false, nil, err
+		return nil, err
 	}
 	if exist != 0 {
-		return false, nil, fmt.Errorf("token失效")
+		return nil, fmt.Errorf("token失效")
 	}
-	return true, claims, nil
+	return claims, nil
 
 }
