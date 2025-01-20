@@ -4,14 +4,13 @@ import (
 	"SOJ/middleware"
 	"SOJ/utils/jwt"
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 )
 
-func InitMiddleware(j *jwt.JWT, log *zap.Logger) []gin.HandlerFunc {
+func InitMiddleware(j *jwt.JWT) []gin.HandlerFunc {
 	return []gin.HandlerFunc{
-		//token鉴权
-		middleware.NewJWTMiddleware(j).JWTAuth(),
-		//跨域
+		//跨域       mid[0]
 		middleware.CrossDomain(),
+		//token鉴权  mid[1]
+		middleware.NewJWTMiddleware(j).JWTAuth(),
 	}
 }

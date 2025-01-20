@@ -2,8 +2,8 @@ package middleware
 
 import (
 	"SOJ/utils/jwt"
+	"SOJ/utils/response"
 	"github.com/gin-gonic/gin"
-	"net/http"
 )
 
 type JWTMiddleware struct {
@@ -18,27 +18,26 @@ func NewJWTMiddleware(j *jwt.JWT) *JWTMiddleware {
 // JWTAuth jwt验证
 func (j *JWTMiddleware) JWTAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		//不需要鉴权的api
+		//url := c.Request.URL.Path
+		//strings.Split(url, "/")
+
 		//得到短token
-		token := c.Request.Header.Get("SOJ-Access-Token")
+		token := c.GetHeader("SOJ-Access-Token")
 		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"msg": "未登录",
-			})
+			response.UnauthorizedErrorWithMsg(c, "未登录")
 			c.Abort()
 			return
 		}
 		//解析短token
 		claims, err := j.ParseAccess(token)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"msg": err.Error(),
-			})
+			response.UnauthorizedErrorWithMsg(c, "token无效")
 			c.Abort()
 			return
 		}
 		//把声明存入context 后续请求使用
 		c.Set("claims", claims)
-		c.Set("id", claims.ID)
 		c.Next()
 	}
 
