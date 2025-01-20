@@ -12,6 +12,7 @@ func InitRoute(
 	mid []gin.HandlerFunc,
 ) *gin.Engine {
 	r := gin.Default()
+	r.Use(mid[0])
 	g := r.Group("/api/v1")
 	api.EmailRoute(g, email, mid)
 	api.UserRoute(g, user, mid)
