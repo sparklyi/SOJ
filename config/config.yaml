@@ -29,6 +29,11 @@ rabbitmq:
   exchange_email: "email_exchange"
   queue_email: "email_queue"
 
+cos:
+  url: "https://xxx.cos.ap-hangzhou.myqcloud.com"
+  secret_id: ""
+  secret_key: ""
+
 
 judge0:
   addr: "192.168.65.131:2358"

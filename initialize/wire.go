@@ -21,6 +21,7 @@ func InitServer() *Cmd {
 		InitMiddleware,
 		InitDB,
 		InitMongoDB,
+		InitCos,
 		jwt.New,
 		email.New,
 		mq.NewEmailProducer,
