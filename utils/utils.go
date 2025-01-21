@@ -2,12 +2,14 @@ package utils
 
 import (
 	"SOJ/utils/jwt"
+	"crypto/sha1"
+	"encoding/hex"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"math/rand"
 )
 
-// GenerateRandCode 生成长度为length的随机验证码
+// GenerateRandCode 生成长度为length的随机码
 func GenerateRandCode(length int) string {
 	digits := "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	code := make([]byte, length)
@@ -25,6 +27,7 @@ func Paginate(page, PageSize int) func(db *gorm.DB) *gorm.DB {
 	}
 }
 
+// GetAccessClaims 获取短token的声明
 func GetAccessClaims(c *gin.Context) *jwt.AccessClaims {
 	t, ok := c.Get("claims")
 	if !ok {
@@ -33,4 +36,10 @@ func GetAccessClaims(c *gin.Context) *jwt.AccessClaims {
 	claims, _ := t.(*jwt.AccessClaims)
 
 	return claims
+}
+
+func CryptoSHA1(str string) string {
+	hash := sha1.New()
+	hash.Write([]byte(str))
+	return hex.EncodeToString(hash.Sum(nil))
 }
