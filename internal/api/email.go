@@ -8,6 +8,7 @@ import (
 func EmailRoute(r *gin.RouterGroup, e *handle.EmailHandler, mid []gin.HandlerFunc) {
 	email := r.Group("/email")
 	{
-		email.POST("/send", e.SendEmailCode)
+		email.POST("/register", e.SendRegisterCode)
+		email.POST("/reset", mid[1], e.SendResetPwdCode)
 	}
 }
