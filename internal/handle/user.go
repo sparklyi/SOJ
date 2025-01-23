@@ -31,9 +31,7 @@ func NewUserHandler(log *zap.Logger, jwt *jwt.JWT, s *service.UserService) *User
 func (u *UserHandler) Register(ctx *gin.Context) {
 	req := entity.Register{}
 	if err := ctx.ShouldBind(&req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, err.Error())
-		response.BadRequestErrorWithMsg(ctx, "参数错误")
-
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
 		return
 	}
 	//转service层服务
@@ -60,7 +58,7 @@ func (u *UserHandler) Register(ctx *gin.Context) {
 func (u *UserHandler) LoginByEmail(ctx *gin.Context) {
 	req := entity.LoginByEmail{}
 	if err := ctx.ShouldBind(&req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数错误")
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
 		return
 	}
 	um, err := u.svc.LoginByEmail(ctx, &req)
@@ -123,6 +121,7 @@ func (u *UserHandler) Logout(ctx *gin.Context) {
 	response.SuccessNoContent(ctx)
 }
 
+// GetUserInfo 获取用户信息
 func (u *UserHandler) GetUserInfo(ctx *gin.Context) {
 	tid := ctx.Param("id")
 
@@ -132,7 +131,7 @@ func (u *UserHandler) GetUserInfo(ctx *gin.Context) {
 	}
 	id, err := strconv.Atoi(tid)
 	if err != nil || id <= 0 {
-		response.BadRequestErrorWithMsg(ctx, "参数错误")
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
 		return
 	}
 	user, err := u.svc.GetUserByID(ctx, id)
@@ -152,11 +151,77 @@ func (u *UserHandler) UploadAvatar(ctx *gin.Context) {
 	}
 	avatar, err := ctx.FormFile("avatar")
 	if err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数错误")
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
 		return
 	}
 
 	if err = u.svc.UploadAvatar(ctx, avatar, claims.ID); err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
+
+}
+
+// UpdatePassword 修改密码
+func (u *UserHandler) UpdatePassword(ctx *gin.Context) {
+	req := entity.UpdatePassword{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		return
+	}
+	if err := u.svc.UpdatePassword(ctx, &req); err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
+}
+
+// GetUserList 获取用户信息列表
+func (u *UserHandler) GetUserList(ctx *gin.Context) {
+	req := &entity.UserInfo{}
+	if err := ctx.ShouldBind(req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		return
+	}
+	users, err := u.svc.GetUserList(ctx, req)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, users)
+}
+
+// UpdateUserInfo 用户信息更新
+func (u *UserHandler) UpdateUserInfo(ctx *gin.Context) {
+	req := &entity.UserUpdate{}
+	if err := ctx.ShouldBind(req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		return
+	}
+	claims := utils.GetAccessClaims(ctx)
+
+	if claims == nil || (claims.ID != req.ID && claims.Auth != 3) {
+		response.UnauthorizedErrorWithMsg(ctx, "未授权")
+		return
+	}
+	err := u.svc.UpdateUserInfo(ctx, req, claims.Auth == 3)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
+}
+
+// ResetPassword 重置密码
+func (u *UserHandler) ResetPassword(ctx *gin.Context) {
+	email := ctx.Param("email")
+	if email == "" {
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		return
+	}
+	err := u.svc.ResetPassword(ctx, email)
+	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
