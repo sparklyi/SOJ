@@ -23,6 +23,13 @@ func GenerateRandCode(length int) string {
 // Paginate 分页处理
 func Paginate(page, PageSize int) func(db *gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
+		if page <= 0 {
+			page = 1
+		}
+		if PageSize <= 0 || PageSize >= 200 {
+			PageSize = 20
+		}
+
 		return db.Offset((page - 1) * PageSize).Limit(PageSize)
 	}
 }

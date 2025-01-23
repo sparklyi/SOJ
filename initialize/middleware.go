@@ -12,5 +12,7 @@ func InitMiddleware(j *jwt.JWT) []gin.HandlerFunc {
 		middleware.CrossDomain(),
 		//token鉴权  mid[1]
 		middleware.NewJWTMiddleware(j).JWTAuth(),
+		//admin权限
+		middleware.AdminAuth(),
 	}
 }
