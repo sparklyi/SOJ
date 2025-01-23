@@ -51,7 +51,7 @@ func (ur *UserRepository) GetUserByEmail(c *gin.Context, email string) (*model.U
 	user := &model.User{}
 	err := ur.db.WithContext(c).Where("email = ?", email).First(user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errors.New("此邮箱未注册")
+		return nil, errors.New("此邮箱未注册或已被封禁")
 	} else if err != nil {
 		ur.log.Error("数据库获取数据失败", zap.Error(err))
 		return nil, errors.New("内部错误")
@@ -130,4 +130,17 @@ func (ur *UserRepository) GetUserList(c *gin.Context, user *entity.UserInfo) (*[
 		return nil, errors.New("内部错误")
 	}
 	return &us, nil
+}
+
+// UpdateUserByEmail 使用email更新用户信息
+func (ur *UserRepository) UpdateUserByEmail(c *gin.Context, user *model.User) error {
+	var mysqlErr *mysql.MySQLError
+	err := ur.db.WithContext(c).Where("email = ? ", user.Email).Updates(user).Error
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == MysqlDuplicateError {
+		return errors.New("唯一索引冲突")
+	} else if err != nil {
+		ur.log.Error("数据库异常", zap.Error(err))
+		return errors.New("内部错误")
+	}
+	return nil
 }

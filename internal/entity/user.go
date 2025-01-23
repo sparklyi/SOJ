@@ -25,3 +25,16 @@ type UserInfo struct {
 	Page     int    `json:"page" binding:"omitempty,number,min=1"`
 	PageSize int    `json:"page_size" binding:"omitempty,number,min=20,max=100"`
 }
+
+type UserUpdate struct {
+	ID       int    `json:"id" binding:"required,number"`
+	Username string `json:"username" binding:"omitempty"`
+	Email    string `json:"email" binding:"omitempty,email"`
+	Tel      string `json:"tel" binding:"omitempty"`
+	Role     int    `json:"role" binding:"omitempty,oneof=-1 1 2 3"`
+}
+type UpdatePassword struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=8,max=20"`
+	Code     string `json:"code" binding:"required,len=6"`
+}
