@@ -79,6 +79,30 @@ func (u *UserHandle) LoginByEmail(ctx *gin.Context) {
 
 }
 
+// LoginByPassword 密码登录
+func (u *UserHandle) LoginByPassword(ctx *gin.Context) {
+	req := entity.LoginByPassword{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		return
+	}
+	user, err := u.svc.LoginByPassword(ctx, &req)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	st, rt, err := u.jwt.CreateToken(ctx, int(user.ID), user.Role)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, "令牌生成失败")
+		return
+	}
+	response.SuccessWithData(ctx, map[string]interface{}{
+		"id":                user.ID,
+		"SOJ-Access-Token":  st,
+		"SOJ-Refresh-Token": rt,
+	})
+}
+
 // RefreshToken 刷新token令牌
 func (u *UserHandle) RefreshToken(ctx *gin.Context) {
 
