@@ -5,7 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func UserRoute(r *gin.RouterGroup, u *handle.UserHandler, mid []gin.HandlerFunc) {
+func UserRoute(r *gin.RouterGroup, u *handle.UserHandle, mid []gin.HandlerFunc) {
 	user := r.Group("/user")
 	{
 		user.GET("/logout", u.Logout)

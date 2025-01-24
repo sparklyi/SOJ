@@ -8,6 +8,7 @@ require (
 	github.com/go-sql-driver/mysql v1.7.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/wire v0.6.0
+	github.com/mojocn/base64Captcha v1.3.8
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/spf13/pflag v1.0.5
@@ -37,6 +38,7 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.23.0 // indirect
 	github.com/goccy/go-json v0.10.4 // indirect
+	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
@@ -70,6 +72,7 @@ require (
 	golang.org/x/arch v0.13.0 // indirect
 	golang.org/x/crypto v0.32.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
+	golang.org/x/image v0.23.0 // indirect
 	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect

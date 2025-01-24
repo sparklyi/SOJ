@@ -4,6 +4,7 @@ import (
 	"SOJ/internal/entity"
 	"SOJ/internal/mq"
 	"SOJ/utils"
+	"SOJ/utils/captcha"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -15,13 +16,15 @@ type EmailService struct {
 	log           *zap.Logger
 	rs            *redis.Client
 	emailProducer *mq.EmailProducer
+	captcha       *captcha.Captcha
 }
 
-func NewEmailService(log *zap.Logger, rs *redis.Client, e *mq.EmailProducer) *EmailService {
+func NewEmailService(log *zap.Logger, rs *redis.Client, e *mq.EmailProducer, c *captcha.Captcha) *EmailService {
 	return &EmailService{
 		log:           log,
 		rs:            rs,
 		emailProducer: e,
+		captcha:       c,
 	}
 }
 
@@ -48,4 +51,8 @@ func (es *EmailService) SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCo
 		return errors.New("验证码发送失败")
 	}
 	return nil
+}
+
+func (es *EmailService) CheckCaptcha(c *gin.Context, req *entity.SendEmailCode) bool {
+	return es.captcha.Verify(req.CaptchaID, req.Captcha, true)
 }

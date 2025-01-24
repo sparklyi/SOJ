@@ -12,25 +12,29 @@ import (
 	"SOJ/internal/repository"
 	"SOJ/internal/service"
 	"SOJ/pkg/email"
+	"SOJ/utils/captcha"
 	"SOJ/utils/jwt"
 )
 
 // Injectors from wire.go:
 
 func InitServer() *Cmd {
-	logger := InitLogger()
 	client := InitRedis()
+	logger := InitLogger()
+	redisStore := captcha.NewRedisStore(client, logger)
+	captchaCaptcha := captcha.New(redisStore)
+	captchaHandle := handle.NewCaptchaHandle(captchaCaptcha, logger)
 	emailProducer := mq.NewEmailProducer(logger)
-	emailService := service.NewEmailService(logger, client, emailProducer)
-	emailHandler := handle.NewEmailHandler(emailService)
+	emailService := service.NewEmailService(logger, client, emailProducer, captchaCaptcha)
+	emailHandle := handle.NewEmailHandle(emailService)
 	jwtJWT := jwt.New(client, logger)
 	db := InitDB()
 	userRepository := repository.NewUserRepository(logger, db, client)
 	cosClient := InitCos()
 	userService := service.NewUserService(logger, userRepository, client, cosClient, emailService)
-	userHandler := handle.NewUserHandler(logger, jwtJWT, userService)
+	userHandle := handle.NewUserHandle(logger, jwtJWT, userService)
 	v := InitMiddleware(jwtJWT)
-	engine := InitRoute(emailHandler, userHandler, v)
+	engine := InitRoute(captchaHandle, emailHandle, userHandle, v)
 	emailEmail := email.New(logger)
 	emailConsumer := mq.NewEmailConsumer(logger, emailEmail, emailProducer, client)
 	database := InitMongoDB()
