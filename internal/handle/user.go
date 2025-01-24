@@ -12,15 +12,15 @@ import (
 	"strconv"
 )
 
-type UserHandler struct {
+type UserHandle struct {
 	jwt *jwt.JWT
 	log *zap.Logger
 	svc *service.UserService
 }
 
-// NewUserHandler 依赖注入方法
-func NewUserHandler(log *zap.Logger, jwt *jwt.JWT, s *service.UserService) *UserHandler {
-	return &UserHandler{
+// NewUserHandle 依赖注入方法
+func NewUserHandle(log *zap.Logger, jwt *jwt.JWT, s *service.UserService) *UserHandle {
+	return &UserHandle{
 		jwt: jwt,
 		log: log,
 		svc: s,
@@ -28,7 +28,7 @@ func NewUserHandler(log *zap.Logger, jwt *jwt.JWT, s *service.UserService) *User
 }
 
 // Register 用户注册
-func (u *UserHandler) Register(ctx *gin.Context) {
+func (u *UserHandle) Register(ctx *gin.Context) {
 	req := entity.Register{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, "参数无效")
@@ -55,7 +55,7 @@ func (u *UserHandler) Register(ctx *gin.Context) {
 }
 
 // LoginByEmail 使用邮箱登录
-func (u *UserHandler) LoginByEmail(ctx *gin.Context) {
+func (u *UserHandle) LoginByEmail(ctx *gin.Context) {
 	req := entity.LoginByEmail{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, "参数无效")
@@ -80,7 +80,7 @@ func (u *UserHandler) LoginByEmail(ctx *gin.Context) {
 }
 
 // RefreshToken 刷新token令牌
-func (u *UserHandler) RefreshToken(ctx *gin.Context) {
+func (u *UserHandle) RefreshToken(ctx *gin.Context) {
 
 	rt := ctx.GetHeader("SOJ-Refresh-Token")
 	if rt == "" {
@@ -107,7 +107,7 @@ func (u *UserHandler) RefreshToken(ctx *gin.Context) {
 }
 
 // Logout 用户手动退出
-func (u *UserHandler) Logout(ctx *gin.Context) {
+func (u *UserHandle) Logout(ctx *gin.Context) {
 	rt := ctx.GetHeader("SOJ-Refresh-Token")
 	if rt == "" {
 		response.BadRequestErrorWithMsg(ctx, "未携带刷新token")
@@ -122,7 +122,7 @@ func (u *UserHandler) Logout(ctx *gin.Context) {
 }
 
 // GetUserInfo 获取用户信息
-func (u *UserHandler) GetUserInfo(ctx *gin.Context) {
+func (u *UserHandle) GetUserInfo(ctx *gin.Context) {
 	tid := ctx.Param("id")
 
 	if tid == "" {
@@ -143,7 +143,7 @@ func (u *UserHandler) GetUserInfo(ctx *gin.Context) {
 }
 
 // UploadAvatar 头像上传至cos
-func (u *UserHandler) UploadAvatar(ctx *gin.Context) {
+func (u *UserHandle) UploadAvatar(ctx *gin.Context) {
 	claims := utils.GetAccessClaims(ctx)
 	if claims == nil {
 		response.UnauthorizedErrorWithMsg(ctx, "未授权")
@@ -164,7 +164,7 @@ func (u *UserHandler) UploadAvatar(ctx *gin.Context) {
 }
 
 // UpdatePassword 修改密码
-func (u *UserHandler) UpdatePassword(ctx *gin.Context) {
+func (u *UserHandle) UpdatePassword(ctx *gin.Context) {
 	req := entity.UpdatePassword{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, "参数无效")
@@ -178,7 +178,7 @@ func (u *UserHandler) UpdatePassword(ctx *gin.Context) {
 }
 
 // GetUserList 获取用户信息列表
-func (u *UserHandler) GetUserList(ctx *gin.Context) {
+func (u *UserHandle) GetUserList(ctx *gin.Context) {
 	req := &entity.UserInfo{}
 	if err := ctx.ShouldBind(req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, "参数无效")
@@ -193,7 +193,7 @@ func (u *UserHandler) GetUserList(ctx *gin.Context) {
 }
 
 // UpdateUserInfo 用户信息更新
-func (u *UserHandler) UpdateUserInfo(ctx *gin.Context) {
+func (u *UserHandle) UpdateUserInfo(ctx *gin.Context) {
 	req := &entity.UserUpdate{}
 	if err := ctx.ShouldBind(req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, "参数无效")
@@ -214,7 +214,7 @@ func (u *UserHandler) UpdateUserInfo(ctx *gin.Context) {
 }
 
 // ResetPassword 重置密码
-func (u *UserHandler) ResetPassword(ctx *gin.Context) {
+func (u *UserHandle) ResetPassword(ctx *gin.Context) {
 	email := ctx.Param("email")
 	if email == "" {
 		response.BadRequestErrorWithMsg(ctx, "参数无效")
