@@ -6,6 +6,7 @@ import (
 	"SOJ/internal/mq"
 	"SOJ/internal/repository"
 	"SOJ/utils"
+	"SOJ/utils/captcha"
 	"crypto/sha512"
 	"errors"
 	"fmt"
@@ -21,20 +22,22 @@ import (
 )
 
 type UserService struct {
-	log   *zap.Logger
-	repo  *repository.UserRepository
-	rs    *redis.Client
-	cs    *cos.Client
-	Email *EmailService
+	log     *zap.Logger
+	repo    *repository.UserRepository
+	rs      *redis.Client
+	cs      *cos.Client
+	Email   *EmailService
+	captcha *captcha.Captcha
 }
 
-func NewUserService(log *zap.Logger, repo *repository.UserRepository, rs *redis.Client, cs *cos.Client, e *EmailService) *UserService {
+func NewUserService(log *zap.Logger, repo *repository.UserRepository, rs *redis.Client, cs *cos.Client, e *EmailService, c *captcha.Captcha) *UserService {
 	return &UserService{
-		log:   log,
-		repo:  repo,
-		rs:    rs,
-		cs:    cs,
-		Email: e,
+		log:     log,
+		repo:    repo,
+		rs:      rs,
+		cs:      cs,
+		Email:   e,
+		captcha: c,
 	}
 }
 
@@ -93,10 +96,21 @@ func (us *UserService) LoginByEmail(ctx *gin.Context, req *entity.LoginByEmail) 
 	return us.repo.GetUserByEmail(ctx, req.Email)
 }
 
-//
-//func (us *UserService) LoginByPassword(ctx *gin.Context, req *entity.LoginByPassword) (*model.User, error) {
-//
-//}
+// LoginByPassword 密码登录
+func (us *UserService) LoginByPassword(ctx *gin.Context, req *entity.LoginByPassword) (*model.User, error) {
+	//验证码验证
+	if !us.captcha.Verify(req.CaptchaID, req.Captcha, true) {
+		return nil, errors.New("图形验证码错误")
+	}
+	user, err := us.repo.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		return nil, err
+	}
+	if !us.CheckPassword(req.Password, user.Password) {
+		return nil, errors.New("密码错误")
+	}
+	return user, nil
+}
 
 // GetUserByID 通过ID获取用户信息
 func (us *UserService) GetUserByID(ctx *gin.Context, id int) (*model.User, error) {
