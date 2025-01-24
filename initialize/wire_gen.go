@@ -31,7 +31,7 @@ func InitServer() *Cmd {
 	db := InitDB()
 	userRepository := repository.NewUserRepository(logger, db, client)
 	cosClient := InitCos()
-	userService := service.NewUserService(logger, userRepository, client, cosClient, emailService)
+	userService := service.NewUserService(logger, userRepository, client, cosClient, emailService, captchaCaptcha)
 	userHandle := handle.NewUserHandle(logger, jwtJWT, userService)
 	v := InitMiddleware(jwtJWT)
 	engine := InitRoute(captchaHandle, emailHandle, userHandle, v)
