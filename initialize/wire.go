@@ -8,6 +8,7 @@ import (
 	"SOJ/internal/repository"
 	"SOJ/internal/service"
 	"SOJ/pkg/email"
+	"SOJ/utils/captcha"
 	"SOJ/utils/jwt"
 	"github.com/google/wire"
 )
@@ -23,11 +24,14 @@ func InitServer() *Cmd {
 		InitMongoDB,
 		InitCos,
 		jwt.New,
+		captcha.New,
+		captcha.NewRedisStore,
 		email.New,
 		mq.NewEmailProducer,
 		mq.NewEmailConsumer,
-		handle.NewEmailHandler,
-		handle.NewUserHandler,
+		handle.NewEmailHandle,
+		handle.NewUserHandle,
+		handle.NewCaptchaHandle,
 		service.NewUserService,
 		service.NewEmailService,
 		repository.NewUserRepository,

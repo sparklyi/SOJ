@@ -3,7 +3,9 @@ package entity
 import "time"
 
 type SendEmailCode struct {
-	Email string `json:"email" binding:"required,email"`
+	Email     string `json:"email" binding:"required,email"`
+	CaptchaID string `json:"captcha_id" binding:"required"`
+	Captcha   string `json:"captcha" binding:"required,len=6"`
 }
 type SendEmail struct {
 	Recipients []string   `json:"recipients" binding:"required,email"`

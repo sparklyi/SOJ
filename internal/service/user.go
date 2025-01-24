@@ -93,6 +93,11 @@ func (us *UserService) LoginByEmail(ctx *gin.Context, req *entity.LoginByEmail) 
 	return us.repo.GetUserByEmail(ctx, req.Email)
 }
 
+//
+//func (us *UserService) LoginByPassword(ctx *gin.Context, req *entity.LoginByPassword) (*model.User, error) {
+//
+//}
+
 // GetUserByID 通过ID获取用户信息
 func (us *UserService) GetUserByID(ctx *gin.Context, id int) (*model.User, error) {
 	user, err := us.repo.GetUserByID(ctx, id)
