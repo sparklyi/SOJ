@@ -21,6 +21,7 @@ type EmailConsumer struct {
 	Rs *redis.Client
 }
 
+// NewEmailConsumer 依赖注入方法
 func NewEmailConsumer(log *zap.Logger, email *email.Email, p *EmailProducer, rs *redis.Client) *EmailConsumer {
 	return &EmailConsumer{
 		log:           log,
@@ -31,6 +32,7 @@ func NewEmailConsumer(log *zap.Logger, email *email.Email, p *EmailProducer, rs 
 
 }
 
+// Consume 消费队列消息
 func (c *EmailConsumer) Consume(ctx context.Context) error {
 	c.log.Info("start consume email")
 	defer c.log.Info("end consume email")
