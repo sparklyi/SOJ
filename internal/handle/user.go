@@ -137,6 +137,7 @@ func (u *UserHandle) Logout(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, "未携带刷新token")
 		return
 	}
+	//令长token失效
 	err := u.jwt.BanToken(ctx, rt)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())

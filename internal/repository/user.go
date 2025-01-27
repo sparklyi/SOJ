@@ -40,6 +40,7 @@ func (ur *UserRepository) CreateUserByEmail(c *gin.Context, user *model.User) er
 		return errors.New("该邮箱已注册")
 	}
 	if err != nil {
+		ur.log.Error("数据库异常", zap.Error(err))
 		return errors.New("服务器异常")
 	}
 	return nil

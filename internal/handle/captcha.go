@@ -13,6 +13,7 @@ type CaptchaHandle struct {
 	log     *zap.Logger
 }
 
+// NewCaptchaHandle 依赖注入
 func NewCaptchaHandle(c *captcha.Captcha, log *zap.Logger) *CaptchaHandle {
 	return &CaptchaHandle{
 		captcha: c,
@@ -20,6 +21,7 @@ func NewCaptchaHandle(c *captcha.Captcha, log *zap.Logger) *CaptchaHandle {
 	}
 }
 
+// GenerateCaptcha 生成验证码
 func (c *CaptchaHandle) GenerateCaptcha(ctx *gin.Context) {
 
 	captchaID, base64, digit, err := c.captcha.Generate()
