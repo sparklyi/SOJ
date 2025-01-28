@@ -11,6 +11,8 @@ func ProblemRoute(r *gin.RouterGroup, p *handle.ProblemHandle, mid []gin.Handler
 		problem.GET("/list")
 		problem.GET("/:pid")
 		problem.POST("/create", mid[1], mid[2])
-
+		problem.PUT("/update", mid[1], mid[2])
+		problem.DELETE("/delete", mid[1], mid[2])
+		problem.POST("/search", mid[1])
 	}
 }
