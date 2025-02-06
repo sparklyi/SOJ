@@ -33,11 +33,14 @@ func InitServer() *Cmd {
 	cosClient := InitCos()
 	userService := service.NewUserService(logger, userRepository, client, cosClient, emailService, captchaCaptcha)
 	userHandle := handle.NewUserHandle(logger, jwtJWT, userService)
+	database := InitMongoDB()
+	problemRepository := repository.NewProblemRepository(logger, db, database)
+	problemService := service.NewProblemService(logger, problemRepository)
+	problemHandle := handle.NewProblemHandle(logger, problemService)
 	v := InitMiddleware(jwtJWT)
-	engine := InitRoute(captchaHandle, emailHandle, userHandle, v)
+	engine := InitRoute(captchaHandle, emailHandle, userHandle, problemHandle, v)
 	emailEmail := email.New(logger)
 	emailConsumer := mq.NewEmailConsumer(logger, emailEmail, emailProducer, client)
-	database := InitMongoDB()
 	cmd := &Cmd{
 		G:             engine,
 		EmailConsumer: emailConsumer,
