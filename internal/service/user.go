@@ -1,6 +1,7 @@
 package service
 
 import (
+	"SOJ/internal/constant"
 	"SOJ/internal/entity"
 	"SOJ/internal/model"
 	"SOJ/internal/mq"
@@ -191,7 +192,7 @@ func (us *UserService) UpdateUserInfo(ctx *gin.Context, req *entity.UserUpdate, 
 	user.Username = req.Username
 	user.ID = uint(req.ID)
 	//修改角色权限为-1则直接删除用户
-	if user.Role == -1 {
+	if user.Role == constant.BanLevel {
 		return us.repo.DeleteUserByID(ctx, req.ID)
 	}
 	return us.repo.UpdateUserByID(ctx, &user)

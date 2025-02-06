@@ -19,6 +19,8 @@ func InitDB() *gorm.DB {
 		model.Language{},
 		model.TestCase{},
 		model.Submission{},
+		model.Competition{},
+		model.Apply{},
 	)
 	if err != nil {
 		panic(err)
