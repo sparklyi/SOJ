@@ -4,5 +4,13 @@ import "gorm.io/gorm"
 
 type Competition struct {
 	gorm.Model
-	Name string `gorm:"type:varchar(255);unique;comment:竞赛名" json:"name"`
+	//存到mongo
+	ObjectID string `gorm:"varchar(30);unique;comment:对应存储在mongo的竞赛id" json:"object_id"`
+
+	//外键
+	Apply []Apply `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"apply,omitempty"`
+}
+
+func (Competition) TableName() string {
+	return "competition"
 }
