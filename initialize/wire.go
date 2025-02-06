@@ -32,9 +32,12 @@ func InitServer() *Cmd {
 		handle.NewEmailHandle,
 		handle.NewUserHandle,
 		handle.NewCaptchaHandle,
+		handle.NewProblemHandle,
 		service.NewUserService,
 		service.NewEmailService,
+		service.NewProblemService,
 		repository.NewUserRepository,
+		repository.NewProblemRepository,
 		InitRoute,
 		wire.Struct(new(Cmd), "*"),
 	)

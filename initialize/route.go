@@ -10,7 +10,7 @@ func InitRoute(
 	captcha *handle.CaptchaHandle,
 	email *handle.EmailHandle,
 	user *handle.UserHandle,
-
+	problem *handle.ProblemHandle,
 	mid []gin.HandlerFunc,
 ) *gin.Engine {
 	r := gin.Default()
@@ -19,5 +19,6 @@ func InitRoute(
 	api.CaptchaRoute(g, captcha, mid)
 	api.EmailRoute(g, email, mid)
 	api.UserRoute(g, user, mid)
+	api.ProblemRoute(g, problem, mid)
 	return r
 }
