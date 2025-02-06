@@ -1,6 +1,7 @@
 package handle
 
 import (
+	"SOJ/internal/constant"
 	"SOJ/internal/entity"
 	"SOJ/internal/service"
 	"SOJ/utils"
@@ -226,7 +227,7 @@ func (u *UserHandle) UpdateUserInfo(ctx *gin.Context) {
 	}
 	claims := utils.GetAccessClaims(ctx)
 
-	if claims == nil || (claims.ID != req.ID && claims.Auth != 3) {
+	if claims == nil || (claims.ID != req.ID && claims.Auth != constant.RootLevel) {
 		response.UnauthorizedErrorWithMsg(ctx, "未授权")
 		return
 	}

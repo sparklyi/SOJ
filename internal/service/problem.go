@@ -79,3 +79,31 @@ func (ps *ProblemService) GetProblemInfo(ctx *gin.Context, id int) (*bson.M, err
 
 	return res, nil
 }
+
+// UpdateProblemInfo 更新题目内容
+func (ps *ProblemService) UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) error {
+	//获取ObjectID
+	p, err := ps.repo.GetInfoByID(ctx, int(req.ID))
+	if err != nil {
+		return err
+	}
+	p.Level = req.Level
+	p.Owner = req.Owner
+	p.Name = req.Name
+	p.Status = req.Visible
+	err = ps.repo.MysqlUpdateInfoByID(ctx, p)
+	if err != nil {
+		return err
+	}
+	objID, err := primitive.ObjectIDFromHex(p.ObjectID)
+	if err != nil {
+		ps.log.Error("object id转换HEX失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	err = ps.repo.MongoUpdateInfoByObjID(ctx, req, objID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
