@@ -6,6 +6,7 @@ type Case struct {
 }
 
 type Problem struct {
+	ID                uint     `json:"id" binding:"omitempty,number"`
 	Name              string   `json:"name" binding:"required"`
 	Tag               []string `json:"tag"`
 	TimeLimit         string   `json:"time_limit"`

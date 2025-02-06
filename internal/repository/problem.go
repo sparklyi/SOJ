@@ -68,7 +68,7 @@ func (pr *ProblemRepository) GetProblemList(ctx *gin.Context, req *entity.Proble
 		db = db.Where("id = ?", req.ID)
 	}
 	if req.Name != "" {
-		db = db.Where("name LIKE ", req.Name+"%")
+		db = db.Where("name LIKE ", "%"+req.Name+"%")
 	}
 	if req.Level != "" {
 		db = db.Where("level = ?", req.Level)
@@ -111,4 +111,29 @@ func (pr *ProblemRepository) GetInfoByObjID(ctx *gin.Context, obj primitive.Obje
 	}
 
 	return &res, nil
+}
+
+// MysqlUpdateInfoByID 题目信息更新
+func (pr *ProblemRepository) MysqlUpdateInfoByID(ctx *gin.Context, problem *model.Problem) error {
+	err := pr.db.WithContext(ctx).Save(problem).Error
+	if err != nil {
+		pr.log.Error("数据库更新失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	return nil
+}
+
+// MongoUpdateInfoByObjID mongo中的信息更新
+func (pr *ProblemRepository) MongoUpdateInfoByObjID(ctx *gin.Context, req *entity.Problem, objID primitive.ObjectID) error {
+	filter := bson.M{"_id": objID}
+	update := bson.M{"$set": req}
+	res, err := pr.mongo.UpdateOne(ctx, filter, update)
+	if err != nil {
+		pr.log.Error("mongo文档更新失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	if res.MatchedCount == 0 {
+		return errors.New(constant.NotFoundError)
+	}
+	return nil
 }
