@@ -14,5 +14,7 @@ func InitMiddleware(j *jwt.JWT) []gin.HandlerFunc {
 		middleware.NewJWTMiddleware(j).JWTAuth(),
 		//admin权限
 		middleware.AdminAuth(),
+		//root权限
+		middleware.RootAuth(),
 	}
 }

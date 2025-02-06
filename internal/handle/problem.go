@@ -81,3 +81,19 @@ func (p *ProblemHandle) Create(ctx *gin.Context) {
 	response.SuccessNoContent(ctx)
 
 }
+
+// UpdateInfo  题目信息更新
+func (p *ProblemHandle) UpdateInfo(ctx *gin.Context) {
+	req := entity.Problem{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError+err.Error())
+		return
+	}
+	err := p.svc.UpdateProblemInfo(ctx, &req)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
+
+}
