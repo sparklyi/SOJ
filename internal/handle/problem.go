@@ -97,3 +97,19 @@ func (p *ProblemHandle) UpdateInfo(ctx *gin.Context) {
 	response.SuccessNoContent(ctx)
 
 }
+
+// Delete  题目删除
+func (p *ProblemHandle) Delete(ctx *gin.Context) {
+	t := ctx.Param("pid")
+	pid, err := strconv.Atoi(t)
+	if err != nil || pid <= 0 {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	err = p.svc.DeleteProblem(ctx, pid)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
+}
