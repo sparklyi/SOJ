@@ -28,6 +28,10 @@ func NewProblemRepository(log *zap.Logger, db *gorm.DB, m *mongo.Database) *Prob
 	}
 }
 
+func (pr *ProblemRepository) GetTransaction(ctx *gin.Context) *gorm.DB {
+	return pr.db.WithContext(ctx).Begin()
+}
+
 // MongoCreate 创建mongo记录
 func (pr *ProblemRepository) MongoCreate(ctx *gin.Context, req *entity.Problem) (primitive.ObjectID, error) {
 	res, err := pr.mongo.InsertOne(ctx, req)
@@ -114,8 +118,8 @@ func (pr *ProblemRepository) GetInfoByObjID(ctx *gin.Context, obj primitive.Obje
 }
 
 // MysqlUpdateInfoByID 题目信息更新
-func (pr *ProblemRepository) MysqlUpdateInfoByID(ctx *gin.Context, problem *model.Problem) error {
-	err := pr.db.WithContext(ctx).Save(problem).Error
+func (pr *ProblemRepository) MysqlUpdateInfoByID(ctx *gin.Context, tx *gorm.DB, problem *model.Problem) error {
+	err := tx.WithContext(ctx).Save(problem).Error
 	if err != nil {
 		pr.log.Error("数据库更新失败", zap.Error(err))
 		return errors.New(constant.ServerError)
@@ -135,5 +139,29 @@ func (pr *ProblemRepository) MongoUpdateInfoByObjID(ctx *gin.Context, req *entit
 	if res.MatchedCount == 0 {
 		return errors.New(constant.NotFoundError)
 	}
+	return nil
+}
+
+// MysqlDeleteProblem mysql中的题目删除
+func (pr *ProblemRepository) MysqlDeleteProblem(ctx *gin.Context, tx *gorm.DB, id int) error {
+	err := tx.WithContext(ctx).Where("id = ?", id).Delete(&model.Problem{}).Error
+	if err != nil {
+		pr.log.Error("数据库删除记录失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	return nil
+}
+
+// MongoDeleteProblem mongo中的题目删除
+func (pr *ProblemRepository) MongoDeleteProblem(ctx *gin.Context, objID primitive.ObjectID) error {
+	filter := bson.M{"_id": objID}
+	_, err := pr.mongo.DeleteOne(ctx, filter)
+	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+		pr.log.Error("mongo删除文档失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	//if res.DeletedCount == 0 {
+	//	return errors.New(constant.NotFoundError)
+	//}
 	return nil
 }
