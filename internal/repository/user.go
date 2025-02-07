@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"SOJ/internal/constant"
 	"SOJ/internal/entity"
 	"SOJ/internal/model"
 	"SOJ/utils"
@@ -41,7 +42,7 @@ func (ur *UserRepository) CreateUserByEmail(c *gin.Context, user *model.User) er
 	}
 	if err != nil {
 		ur.log.Error("数据库异常", zap.Error(err))
-		return errors.New("服务器异常")
+		return errors.New(constant.ServerError)
 	}
 	return nil
 
@@ -55,7 +56,7 @@ func (ur *UserRepository) GetUserByEmail(c *gin.Context, email string) (*model.U
 		return nil, errors.New("此邮箱未注册或已被封禁")
 	} else if err != nil {
 		ur.log.Error("数据库获取数据失败", zap.Error(err))
-		return nil, errors.New("内部错误")
+		return nil, errors.New(constant.ServerError)
 	}
 	return user, nil
 }
@@ -68,7 +69,7 @@ func (ur *UserRepository) GetUserByID(c *gin.Context, id int) (*model.User, erro
 		return nil, errors.New("ID不存在")
 	} else if err != nil {
 		ur.log.Error("数据库获取数据失败", zap.Error(err))
-		return nil, errors.New("内部错误")
+		return nil, errors.New(constant.ServerError)
 	}
 	return user, nil
 }
@@ -81,7 +82,7 @@ func (ur *UserRepository) UpdateUserByID(c *gin.Context, user *model.User) error
 		return errors.New("唯一索引冲突")
 	} else if err != nil {
 		ur.log.Error("数据库获取数据失败", zap.Error(err))
-		return errors.New("内部错误")
+		return errors.New(constant.ServerError)
 	}
 	return nil
 }
@@ -91,7 +92,7 @@ func (ur *UserRepository) DeleteUserByID(c *gin.Context, id int) error {
 	err := ur.db.WithContext(c).Where("id = ?", id).Delete(&model.User{}).Error
 	if err != nil {
 		ur.log.Error("数据库异常", zap.Error(err))
-		return errors.New("内部错误")
+		return errors.New(constant.ServerError)
 	}
 	return nil
 }
@@ -101,7 +102,7 @@ func (ur *UserRepository) DeleteUserByEmail(c *gin.Context, email string) error 
 	err := ur.db.WithContext(c).Where("email = ?", email).Delete(&model.User{}).Error
 	if err != nil {
 		ur.log.Error("数据库异常", zap.Error(err))
-		return errors.New("内部错误")
+		return errors.New(constant.ServerError)
 	}
 	return nil
 }
@@ -128,7 +129,7 @@ func (ur *UserRepository) GetUserList(c *gin.Context, user *entity.UserInfo) (*[
 	err := db.Scopes(utils.Paginate(user.Page, user.PageSize)).Find(&us).Error
 	if err != nil {
 		ur.log.Error("获取用户列表失败", zap.Error(err))
-		return nil, errors.New("内部错误")
+		return nil, errors.New(constant.ServerError)
 	}
 	return &us, nil
 }
@@ -141,7 +142,7 @@ func (ur *UserRepository) UpdateUserByEmail(c *gin.Context, user *model.User) er
 		return errors.New("唯一索引冲突")
 	} else if err != nil {
 		ur.log.Error("数据库异常", zap.Error(err))
-		return errors.New("内部错误")
+		return errors.New(constant.ServerError)
 	}
 	return nil
 }
