@@ -82,28 +82,73 @@ func (ps *ProblemService) GetProblemInfo(ctx *gin.Context, id int) (*bson.M, err
 
 // UpdateProblemInfo 更新题目内容
 func (ps *ProblemService) UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) error {
-	//获取ObjectID
+	tx := ps.repo.GetTransaction(ctx)
+
 	p, err := ps.repo.GetInfoByID(ctx, int(req.ID))
 	if err != nil {
 		return err
 	}
+
+	// 并行
+	mongoErrChan := make(chan error, 1)
+
+	objID, err := primitive.ObjectIDFromHex(p.ObjectID)
+	if err != nil {
+		ps.log.Error("object id转换失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	// 启动Mongo更新协程
+	go func() {
+		mongoErrChan <- ps.repo.MongoUpdateInfoByObjID(ctx, req, objID)
+	}()
+
 	p.Level = req.Level
 	p.Owner = req.Owner
 	p.Name = req.Name
 	p.Status = req.Visible
-	err = ps.repo.MysqlUpdateInfoByID(ctx, p)
-	if err != nil {
-		return err
-	}
-	objID, err := primitive.ObjectIDFromHex(p.ObjectID)
-	if err != nil {
-		ps.log.Error("object id转换HEX失败", zap.Error(err))
-		return errors.New(constant.ServerError)
-	}
-	err = ps.repo.MongoUpdateInfoByObjID(ctx, req, objID)
-	if err != nil {
+	if err = ps.repo.MysqlUpdateInfoByID(ctx, tx, p); err != nil {
+		tx.Rollback()
+		//后续引入补偿机制
 		return err
 	}
 
+	// 等待Mongo结果
+	if mongoErr := <-mongoErrChan; mongoErr != nil {
+		tx.Rollback()
+		return mongoErr
+	}
+
+	tx.Commit()
 	return nil
+}
+
+// DeleteProblem 题目删除
+func (ps *ProblemService) DeleteProblem(ctx *gin.Context, id int) error {
+	tx := ps.repo.GetTransaction(ctx)
+
+	ok := make(chan error, 1)
+	go func() {
+		p, err := ps.repo.GetInfoByID(ctx, id)
+		if err != nil {
+			ok <- err
+		}
+		objID, err := primitive.ObjectIDFromHex(p.ObjectID)
+		if err != nil {
+			ok <- err
+		}
+		ok <- ps.repo.MongoDeleteProblem(ctx, objID)
+	}()
+
+	err := ps.repo.MysqlDeleteProblem(ctx, tx, id)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err = <-ok; err != nil {
+		tx.Rollback()
+		return err
+	}
+	tx.Commit()
+	return nil
+
 }
