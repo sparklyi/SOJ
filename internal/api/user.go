@@ -19,5 +19,6 @@ func UserRoute(r *gin.RouterGroup, u *handle.UserHandle, mid []gin.HandlerFunc) 
 		user.PUT("/update_password", mid[1], mid[3], u.UpdatePassword)
 		user.PUT("/update", mid[1], u.UpdateUserInfo)
 		user.PUT("/:email", mid[1], mid[3], u.ResetPassword)
+		user.DELETE("/:id", mid[1], mid[3], u.Delete)
 	}
 }

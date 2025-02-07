@@ -218,3 +218,8 @@ func (us *UserService) ResetPassword(ctx *gin.Context, email string) error {
 	return nil
 
 }
+
+// DeleteByID 删除用户
+func (us *UserService) DeleteByID(ctx *gin.Context, id int) error {
+	return us.repo.DeleteUserByID(ctx, id)
+}

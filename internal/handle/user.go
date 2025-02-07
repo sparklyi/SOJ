@@ -32,7 +32,7 @@ func NewUserHandle(log *zap.Logger, jwt *jwt.JWT, s *service.UserService) *UserH
 func (u *UserHandle) Register(ctx *gin.Context) {
 	req := entity.Register{}
 	if err := ctx.ShouldBind(&req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	//转service层服务
@@ -59,7 +59,7 @@ func (u *UserHandle) Register(ctx *gin.Context) {
 func (u *UserHandle) LoginByEmail(ctx *gin.Context) {
 	req := entity.LoginByEmail{}
 	if err := ctx.ShouldBind(&req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	um, err := u.svc.LoginByEmail(ctx, &req)
@@ -84,7 +84,7 @@ func (u *UserHandle) LoginByEmail(ctx *gin.Context) {
 func (u *UserHandle) LoginByPassword(ctx *gin.Context) {
 	req := entity.LoginByPassword{}
 	if err := ctx.ShouldBind(&req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	user, err := u.svc.LoginByPassword(ctx, &req)
@@ -152,12 +152,12 @@ func (u *UserHandle) GetUserInfo(ctx *gin.Context) {
 	tid := ctx.Param("id")
 
 	if tid == "" {
-		response.BadRequestErrorWithMsg(ctx, "未提供id")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	id, err := strconv.Atoi(tid)
 	if err != nil || id <= 0 {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	user, err := u.svc.GetUserByID(ctx, id)
@@ -172,12 +172,12 @@ func (u *UserHandle) GetUserInfo(ctx *gin.Context) {
 func (u *UserHandle) UploadAvatar(ctx *gin.Context) {
 	claims := utils.GetAccessClaims(ctx)
 	if claims == nil {
-		response.UnauthorizedErrorWithMsg(ctx, "未授权")
+		response.UnauthorizedErrorWithMsg(ctx, constant.UnauthorizedError)
 		return
 	}
 	avatar, err := ctx.FormFile("avatar")
 	if err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 
@@ -193,7 +193,7 @@ func (u *UserHandle) UploadAvatar(ctx *gin.Context) {
 func (u *UserHandle) UpdatePassword(ctx *gin.Context) {
 	req := entity.UpdatePassword{}
 	if err := ctx.ShouldBind(&req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	if err := u.svc.UpdatePassword(ctx, &req); err != nil {
@@ -207,7 +207,7 @@ func (u *UserHandle) UpdatePassword(ctx *gin.Context) {
 func (u *UserHandle) GetUserList(ctx *gin.Context) {
 	req := &entity.UserInfo{}
 	if err := ctx.ShouldBind(req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	users, err := u.svc.GetUserList(ctx, req)
@@ -222,13 +222,13 @@ func (u *UserHandle) GetUserList(ctx *gin.Context) {
 func (u *UserHandle) UpdateUserInfo(ctx *gin.Context) {
 	req := &entity.UserUpdate{}
 	if err := ctx.ShouldBind(req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	claims := utils.GetAccessClaims(ctx)
 
 	if claims == nil || (claims.ID != req.ID && claims.Auth != constant.RootLevel) {
-		response.UnauthorizedErrorWithMsg(ctx, "未授权")
+		response.UnauthorizedErrorWithMsg(ctx, constant.UnauthorizedError)
 		return
 	}
 	err := u.svc.UpdateUserInfo(ctx, req, claims.Auth == 3)
@@ -243,7 +243,7 @@ func (u *UserHandle) UpdateUserInfo(ctx *gin.Context) {
 func (u *UserHandle) ResetPassword(ctx *gin.Context) {
 	email := ctx.Param("email")
 	if email == "" {
-		response.BadRequestErrorWithMsg(ctx, "参数无效")
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	err := u.svc.ResetPassword(ctx, email)
@@ -253,4 +253,20 @@ func (u *UserHandle) ResetPassword(ctx *gin.Context) {
 	}
 	response.SuccessNoContent(ctx)
 
+}
+
+// Delete 用户删除
+func (u *UserHandle) Delete(ctx *gin.Context) {
+	t := ctx.Param("id")
+	id, err := strconv.Atoi(t)
+	if err != nil || id <= 0 {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	err = u.svc.DeleteByID(ctx, id)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
 }
