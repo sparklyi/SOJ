@@ -1,12 +1,9 @@
 package model
 
-import "gorm.io/gorm"
-
 type Language struct {
-	gorm.Model
+	ID     int    `gorm:"primary_key" json:"id"`
 	Name   string `gorm:"type:varchar(255);not null" json:"name"`
-	MapID  uint   `gorm:"unique;comment:对应judge0的语言id" json:"map_id"`
-	Status bool   `gorm:"default:true;comment:是否启用" json:"status"`
+	Status *bool  `gorm:"default:false;comment:是否启用" json:"status"`
 }
 
 func (Language) TableName() string {
