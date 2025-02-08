@@ -37,15 +37,18 @@ func InitServer() *Cmd {
 	problemRepository := repository.NewProblemRepository(logger, db, database)
 	problemService := service.NewProblemService(logger, problemRepository)
 	problemHandle := handle.NewProblemHandle(logger, problemService)
+	languageRepository := repository.NewLanguageRepository(logger, db)
+	languageService := service.NewLanguageService(logger, languageRepository)
+	languageHandle := handle.NewLanguageHandle(logger, languageService)
 	v := InitMiddleware(jwtJWT)
-	engine := InitRoute(captchaHandle, emailHandle, userHandle, problemHandle, v)
+	engine := InitRoute(captchaHandle, emailHandle, userHandle, problemHandle, languageHandle, v)
 	emailEmail := email.New(logger)
 	emailConsumer := mq.NewEmailConsumer(logger, emailEmail, emailProducer, client)
+	cron := service.NewCronTask(logger, languageService)
 	cmd := &Cmd{
 		G:             engine,
 		EmailConsumer: emailConsumer,
-		Mongo:         database,
-		DB:            db,
+		Cron:          cron,
 	}
 	return cmd
 }
