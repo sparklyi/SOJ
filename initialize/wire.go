@@ -33,12 +33,16 @@ func InitServer() *Cmd {
 		handle.NewUserHandle,
 		handle.NewCaptchaHandle,
 		handle.NewProblemHandle,
+		handle.NewLanguageHandle,
 		service.NewUserService,
 		service.NewEmailService,
 		service.NewProblemService,
+		service.NewLanguageService,
 		repository.NewUserRepository,
 		repository.NewProblemRepository,
+		repository.NewLanguageRepository,
 		InitRoute,
+		service.NewCronTask,
 		wire.Struct(new(Cmd), "*"),
 	)
 	return new(Cmd)
