@@ -17,6 +17,7 @@ func InitRoute(
 	r := gin.Default()
 	r.Use(mid[0])
 	g := r.Group("/api/v1")
+	//各级路由注册
 	api.CaptchaRoute(g, captcha, mid)
 	api.EmailRoute(g, email, mid)
 	api.UserRoute(g, user, mid)

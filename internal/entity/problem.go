@@ -1,10 +1,12 @@
 package entity
 
+// Case 样例
 type Case struct {
 	Input  string `json:"input"`
 	Output string `json:"output"`
 }
 
+// Problem 题目创建及更新
 type Problem struct {
 	ID                uint     `json:"id" binding:"omitempty,number"`
 	Name              string   `json:"name" binding:"required"`
@@ -21,6 +23,7 @@ type Problem struct {
 	Owner             *uint    `json:"owner" binding:"omitempty,number"`
 }
 
+// ProblemList 题目列表
 type ProblemList struct {
 	ID       int    `json:"id" binding:"omitempty,number"`
 	Name     string `json:"name"`

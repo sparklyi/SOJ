@@ -15,6 +15,7 @@ type LanguageHandle struct {
 	svc *service.LanguageService
 }
 
+// NewLanguageHandle 依赖注入
 func NewLanguageHandle(log *zap.Logger, svc *service.LanguageService) *LanguageHandle {
 	return &LanguageHandle{
 		log: log,
@@ -22,6 +23,7 @@ func NewLanguageHandle(log *zap.Logger, svc *service.LanguageService) *LanguageH
 	}
 }
 
+// GetInfo 获取测评语言信息
 func (lh *LanguageHandle) GetInfo(ctx *gin.Context) {
 	t := ctx.Param("lid")
 	lid, err := strconv.Atoi(t)
@@ -38,6 +40,7 @@ func (lh *LanguageHandle) GetInfo(ctx *gin.Context) {
 
 }
 
+// List 获取语言列表
 func (lh *LanguageHandle) List(ctx *gin.Context) {
 	req := entity.Language{}
 	if err := ctx.ShouldBind(&req); err != nil {
@@ -53,6 +56,7 @@ func (lh *LanguageHandle) List(ctx *gin.Context) {
 	response.SuccessWithData(ctx, lang)
 }
 
+// Update 测评语言更新
 func (lh *LanguageHandle) Update(ctx *gin.Context) {
 	req := entity.Language{}
 	if err := ctx.ShouldBind(&req); err != nil {
@@ -67,6 +71,7 @@ func (lh *LanguageHandle) Update(ctx *gin.Context) {
 	response.SuccessNoContent(ctx)
 }
 
+// SyncLanguage 同步judge0的测评语言
 func (lh *LanguageHandle) SyncLanguage(ctx *gin.Context) {
 	err := lh.svc.SyncJudge0Lang(ctx)
 	if err != nil {

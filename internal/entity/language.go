@@ -1,5 +1,6 @@
 package entity
 
+// Language 语言查询及更新
 type Language struct {
 	ID       int    `json:"id" binding:"omitempty,number"`
 	Name     string `json:"name"`
