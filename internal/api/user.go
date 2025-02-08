@@ -9,7 +9,7 @@ func UserRoute(r *gin.RouterGroup, u *handle.UserHandle, mid []gin.HandlerFunc) 
 	user := r.Group("/user")
 	{
 		user.GET("/logout", u.Logout)
-		user.GET("/:id", u.GetUserInfo)
+		user.GET("/:id", mid[1], u.GetUserInfo)
 		user.POST("/register", u.Register)
 		user.POST("/login_password", u.LoginByPassword)
 		user.POST("/login_email", u.LoginByEmail)

@@ -18,6 +18,10 @@ mongo:
   collection_problem: "problem"
   collection_blog: "blog"
 
+postgresql:
+  dsn: "host=192.168.65.131 user=soj password=soj dbname=judge0 port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+
+
 email:
   host: "smtp.qq.com"
   port: 25

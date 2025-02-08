@@ -21,10 +21,12 @@ func NewLanguageService(log *zap.Logger, repo *repository.LanguageRepository) *L
 	}
 }
 
+// GetLanguageList 获取语言列表
 func (ls *LanguageService) GetLanguageList(ctx *gin.Context, req *entity.Language) ([]*model.Language, error) {
 	return ls.repo.GetLangList(ctx, req)
 }
 
+// UpdateLang 更新语言
 func (ls *LanguageService) UpdateLang(ctx *gin.Context, req *entity.Language) error {
 
 	lang := &model.Language{
@@ -36,6 +38,7 @@ func (ls *LanguageService) UpdateLang(ctx *gin.Context, req *entity.Language) er
 
 }
 
+// GetInfo 获取语言信息
 func (ls *LanguageService) GetInfo(ctx *gin.Context, id int) (*model.Language, error) {
 	return ls.repo.GetByID(ctx, id)
 
@@ -43,6 +46,5 @@ func (ls *LanguageService) GetInfo(ctx *gin.Context, id int) (*model.Language, e
 
 // SyncJudge0Lang 同步judge0语言信息
 func (ls *LanguageService) SyncJudge0Lang(ctx context.Context) error {
-
 	return ls.repo.SyncLanguages(ctx)
 }
