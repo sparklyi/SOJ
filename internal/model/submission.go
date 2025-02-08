@@ -14,7 +14,7 @@ type Submission struct {
 	Memory        float64 `gorm:"comment:测评耗存" json:"memory"`
 	Stderr        string  `gorm:"type:longtext;comment:标准错误'" json:"stderr"`
 	CompileOut    string  `gorm:"type:longtext;comment:编译输出'" json:"compile_out"`
-	Visible       bool    `gorm:"default:true;comment:是否可见" json:"visible"`
+	Visible       *bool   `gorm:"default:true;comment:是否可见" json:"visible"`
 }
 
 func (Submission) TableName() string {

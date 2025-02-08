@@ -48,7 +48,7 @@ func (ps *ProblemService) Count(ctx *gin.Context) (int64, error) {
 }
 
 // GetProblemList 获取题目列表
-func (ps *ProblemService) GetProblemList(ctx *gin.Context, req *entity.ProblemList) (*[]model.Problem, error) {
+func (ps *ProblemService) GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, error) {
 
 	return ps.repo.GetProblemList(ctx, req, utils.GetAccessClaims(ctx).Auth == constant.RootLevel)
 }
@@ -62,7 +62,7 @@ func (ps *ProblemService) GetProblemInfo(ctx *gin.Context, id int) (*bson.M, err
 	claims := utils.GetAccessClaims(ctx)
 	//有鉴权中间件则不可能为空
 	//非管理员 且 (题目不可见 或 题目未公开)
-	if claims.Auth != constant.RootLevel && (!p.Status || p.Owner != 0) {
+	if claims.Auth != constant.RootLevel && (!*p.Status || *p.Owner != 0) {
 		return nil, errors.New(constant.UnauthorizedError)
 	}
 	//转换为ObjectID对象

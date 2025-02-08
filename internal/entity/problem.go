@@ -17,8 +17,8 @@ type Problem struct {
 	Level             string   `json:"level" binding:"required,oneof=easy mid hard"`
 	Example           []Case   `json:"example"`
 	ReMark            string   `json:"remark"`
-	Visible           bool     `json:"visible" binding:"omitempty,boolean"`
-	Owner             uint     `json:"owner" binding:"omitempty,number"`
+	Visible           *bool    `json:"visible" binding:"omitempty,boolean"`
+	Owner             *uint    `json:"owner" binding:"omitempty,number"`
 }
 
 type ProblemList struct {
