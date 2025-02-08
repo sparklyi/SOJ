@@ -29,6 +29,7 @@ func NewEmailService(log *zap.Logger, rs *redis.Client, e *mq.EmailProducer, c *
 }
 
 func (es *EmailService) SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCode) error {
+	//随机生成
 	code := utils.GenerateRandCode(6)
 	fmt.Println(code)
 	data := mq.EmailContent{
@@ -53,6 +54,7 @@ func (es *EmailService) SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCo
 	return nil
 }
 
+// CheckCaptcha 图形验证码校验
 func (es *EmailService) CheckCaptcha(c *gin.Context, req *entity.SendEmailCode) bool {
 	return es.captcha.Verify(req.CaptchaID, req.Captcha, true)
 }

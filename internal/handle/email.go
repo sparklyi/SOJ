@@ -27,6 +27,7 @@ func (e *EmailHandle) SendVerifyCode(c *gin.Context) {
 		response.BadRequestErrorWithMsg(c, "图形验证码错误")
 		return
 	}
+	//发送邮件验证码
 	if err := e.svc.SendVerifyCode(c, &req); err != nil {
 		response.BadRequestErrorWithMsg(c, err.Error())
 		return

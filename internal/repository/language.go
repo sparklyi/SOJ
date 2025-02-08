@@ -34,6 +34,7 @@ func NewLanguageRepository(log *zap.Logger, db *gorm.DB) *LanguageRepository {
 	}
 }
 
+// Create 语言增加
 func (lr *LanguageRepository) Create(ctx *gin.Context, lang *model.Language) (*model.Language, error) {
 	err := lr.db.WithContext(ctx).Create(lang).Error
 	if err != nil {
@@ -43,6 +44,7 @@ func (lr *LanguageRepository) Create(ctx *gin.Context, lang *model.Language) (*m
 	return lang, nil
 }
 
+// Update 语言更新(名字 是否可用)
 func (lr *LanguageRepository) Update(ctx *gin.Context, lang *model.Language) error {
 	err := lr.db.WithContext(ctx).Save(lang).Error
 	if err != nil {
@@ -52,6 +54,7 @@ func (lr *LanguageRepository) Update(ctx *gin.Context, lang *model.Language) err
 	return nil
 }
 
+// Delete 删除语言(不可用 语言删除只能手动去docker环境)
 func (lr *LanguageRepository) Delete(ctx *gin.Context, id int) error {
 	err := lr.db.WithContext(ctx).Delete(&model.Language{}, id).Error
 	if err != nil {
@@ -61,6 +64,7 @@ func (lr *LanguageRepository) Delete(ctx *gin.Context, id int) error {
 	return nil
 }
 
+// GetByID 根据id获取语言信息
 func (lr *LanguageRepository) GetByID(ctx *gin.Context, id int) (*model.Language, error) {
 	var lang model.Language
 	err := lr.db.WithContext(ctx).First(&lang, id).Error
@@ -71,6 +75,7 @@ func (lr *LanguageRepository) GetByID(ctx *gin.Context, id int) (*model.Language
 	return &lang, nil
 }
 
+// GetLangList 获取语言列表
 func (lr *LanguageRepository) GetLangList(ctx *gin.Context, req *entity.Language) ([]*model.Language, error) {
 	var langs []*model.Language
 	db := lr.db.WithContext(ctx).Model(&model.Language{})
@@ -92,6 +97,7 @@ func (lr *LanguageRepository) GetLangList(ctx *gin.Context, req *entity.Language
 	return langs, nil
 }
 
+// Count 测评语言统计
 func (lr *LanguageRepository) Count(ctx *gin.Context) (int64, error) {
 	var count int64
 	err := lr.db.WithContext(ctx).Model(&model.Language{}).Count(&count).Error
@@ -101,6 +107,8 @@ func (lr *LanguageRepository) Count(ctx *gin.Context) (int64, error) {
 	}
 	return count, nil
 }
+
+// GetTransaction 获取事务
 func (lr *LanguageRepository) GetTransaction(ctx *gin.Context) *gorm.DB {
 	return lr.db.WithContext(ctx).Begin()
 }
