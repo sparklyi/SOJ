@@ -108,7 +108,7 @@ func (ur *UserRepository) DeleteUserByEmail(c *gin.Context, email string) error 
 }
 
 // GetUserList 获取用户列表(条件分页)
-func (ur *UserRepository) GetUserList(c *gin.Context, user *entity.UserInfo) (*[]model.User, error) {
+func (ur *UserRepository) GetUserList(c *gin.Context, user *entity.UserInfo) ([]*model.User, error) {
 	db := ur.db.WithContext(c).Model(&model.User{})
 	if user.ID != 0 {
 		db = db.Where("id = ?", user.ID)
@@ -125,13 +125,13 @@ func (ur *UserRepository) GetUserList(c *gin.Context, user *entity.UserInfo) (*[
 	if user.Role != 0 {
 		db = db.Where("role = ?", user.Role)
 	}
-	var us []model.User
+	var us []*model.User
 	err := db.Scopes(utils.Paginate(user.Page, user.PageSize)).Find(&us).Error
 	if err != nil {
 		ur.log.Error("获取用户列表失败", zap.Error(err))
 		return nil, errors.New(constant.ServerError)
 	}
-	return &us, nil
+	return us, nil
 }
 
 // UpdateUserByEmail 使用email更新用户信息

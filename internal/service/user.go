@@ -168,14 +168,14 @@ func (us *UserService) UpdatePassword(ctx *gin.Context, req *entity.UpdatePasswo
 }
 
 // GetUserList 获取用户列表
-func (us *UserService) GetUserList(ctx *gin.Context, req *entity.UserInfo) (*[]model.User, error) {
+func (us *UserService) GetUserList(ctx *gin.Context, req *entity.UserInfo) ([]*model.User, error) {
 	users, err := us.repo.GetUserList(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	//去敏
-	for i := range *users {
-		(*users)[i].Password = ""
+	for i := range users {
+		users[i].Password = ""
 	}
 	return users, nil
 }

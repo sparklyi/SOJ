@@ -65,8 +65,8 @@ func (pr *ProblemRepository) Count(ctx *gin.Context) (int64, error) {
 }
 
 // GetProblemList 获取题目列表(条件筛选+分页)
-func (pr *ProblemRepository) GetProblemList(ctx *gin.Context, req *entity.ProblemList, admin bool) (*[]model.Problem, error) {
-	var sets []model.Problem
+func (pr *ProblemRepository) GetProblemList(ctx *gin.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, error) {
+	var sets []*model.Problem
 	db := pr.db.WithContext(ctx).Model(&model.Problem{})
 	if req.ID != 0 {
 		db = db.Where("id = ?", req.ID)
@@ -86,7 +86,7 @@ func (pr *ProblemRepository) GetProblemList(ctx *gin.Context, req *entity.Proble
 		pr.log.Error("数据库查询失败", zap.Error(err))
 		return nil, errors.New(constant.ServerError)
 	}
-	return &sets, nil
+	return sets, nil
 }
 
 // GetInfoByID 根据ID获取数据库信息
