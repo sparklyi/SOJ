@@ -35,6 +35,5 @@ type ProblemList struct {
 
 // TestCase 创建及更新测试点
 type TestCase struct {
-	ID      int    `json:"id" binding:"omitempty,number"`
-	Content string `json:"content" binding:"required"`
+	Content []Case `json:"content" binding:"required"`
 }

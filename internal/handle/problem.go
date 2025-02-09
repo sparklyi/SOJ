@@ -130,3 +130,46 @@ func (p *ProblemHandle) TestCaseInfo(ctx *gin.Context) {
 	response.SuccessWithData(ctx, res)
 
 }
+
+// CreateTestCase 创建测试点
+func (p *ProblemHandle) CreateTestCase(ctx *gin.Context) {
+	req := entity.TestCase{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	t := ctx.Param("pid")
+	pid, err := strconv.Atoi(t)
+	if err != nil || pid <= 0 {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	err = p.svc.CreateTestCase(ctx, &req, pid)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
+}
+
+// UpdateTestCase 更新测试点
+func (p *ProblemHandle) UpdateTestCase(ctx *gin.Context) {
+	req := entity.TestCase{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	t := ctx.Param("pid")
+	pid, err := strconv.Atoi(t)
+	if err != nil || pid <= 0 {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	err = p.svc.UpdateTestCase(ctx, &req, pid)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
+
+}
