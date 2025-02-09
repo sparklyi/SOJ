@@ -32,3 +32,9 @@ type ProblemList struct {
 	PageSize int    `json:"page_size" binding:"omitempty,number"`
 	//Tag   string `json:"tag"`
 }
+
+// TestCase 创建及更新测试点
+type TestCase struct {
+	ID      int    `json:"id" binding:"omitempty,number"`
+	Content string `json:"content" binding:"required"`
+}
