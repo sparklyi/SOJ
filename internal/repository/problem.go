@@ -15,16 +15,18 @@ import (
 )
 
 type ProblemRepository struct {
-	log   *zap.Logger
-	db    *gorm.DB
-	mongo *mongo.Collection
+	log          *zap.Logger
+	db           *gorm.DB
+	ProblemColl  *mongo.Collection
+	TestCaseColl *mongo.Collection
 }
 
 func NewProblemRepository(log *zap.Logger, db *gorm.DB, m *mongo.Database) *ProblemRepository {
 	return &ProblemRepository{
-		log:   log,
-		db:    db,
-		mongo: m.Collection("problem"),
+		log:          log,
+		db:           db,
+		ProblemColl:  m.Collection("problem"),
+		TestCaseColl: m.Collection("test_case"),
 	}
 }
 
@@ -34,7 +36,7 @@ func (pr *ProblemRepository) GetTransaction(ctx *gin.Context) *gorm.DB {
 
 // MongoCreate 创建mongo记录
 func (pr *ProblemRepository) MongoCreate(ctx *gin.Context, req *entity.Problem) (primitive.ObjectID, error) {
-	res, err := pr.mongo.InsertOne(ctx, req)
+	res, err := pr.ProblemColl.InsertOne(ctx, req)
 	if err != nil {
 		pr.log.Error("mongo写入失败", zap.Error(err))
 		return primitive.ObjectID{}, errors.New(constant.ServerError)
@@ -105,7 +107,7 @@ func (pr *ProblemRepository) GetInfoByID(ctx *gin.Context, id int) (*model.Probl
 // GetInfoByObjID 通过对象id获取对应的文档内容
 func (pr *ProblemRepository) GetInfoByObjID(ctx *gin.Context, obj primitive.ObjectID) (*bson.M, error) {
 	var res bson.M
-	err := pr.mongo.FindOne(ctx, bson.M{"_id": obj}).Decode(&res)
+	err := pr.ProblemColl.FindOne(ctx, bson.M{"_id": obj}).Decode(&res)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, errors.New(constant.NotFoundError)
@@ -119,6 +121,9 @@ func (pr *ProblemRepository) GetInfoByObjID(ctx *gin.Context, obj primitive.Obje
 
 // MysqlUpdateInfoByID 题目信息更新
 func (pr *ProblemRepository) MysqlUpdateInfoByID(ctx *gin.Context, tx *gorm.DB, problem *model.Problem) error {
+	if tx == nil {
+		tx = pr.db
+	}
 	err := tx.WithContext(ctx).Save(problem).Error
 	if err != nil {
 		pr.log.Error("数据库更新失败", zap.Error(err))
@@ -131,7 +136,7 @@ func (pr *ProblemRepository) MysqlUpdateInfoByID(ctx *gin.Context, tx *gorm.DB, 
 func (pr *ProblemRepository) MongoUpdateInfoByObjID(ctx *gin.Context, req *entity.Problem, objID primitive.ObjectID) error {
 	filter := bson.M{"_id": objID}
 	update := bson.M{"$set": req}
-	res, err := pr.mongo.UpdateOne(ctx, filter, update)
+	res, err := pr.ProblemColl.UpdateOne(ctx, filter, update)
 	if err != nil {
 		pr.log.Error("mongo文档更新失败", zap.Error(err))
 		return errors.New(constant.ServerError)
@@ -155,7 +160,7 @@ func (pr *ProblemRepository) MysqlDeleteProblem(ctx *gin.Context, tx *gorm.DB, i
 // MongoDeleteProblem mongo中的题目删除
 func (pr *ProblemRepository) MongoDeleteProblem(ctx *gin.Context, objID primitive.ObjectID) error {
 	filter := bson.M{"_id": objID}
-	_, err := pr.mongo.DeleteOne(ctx, filter)
+	_, err := pr.ProblemColl.DeleteOne(ctx, filter)
 	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
 		pr.log.Error("mongo删除文档失败", zap.Error(err))
 		return errors.New(constant.ServerError)
@@ -166,11 +171,11 @@ func (pr *ProblemRepository) MongoDeleteProblem(ctx *gin.Context, objID primitiv
 	return nil
 }
 
-// GetTestCaseInfo 获取题目测试点信息
-func (pr *ProblemRepository) GetTestCaseInfo(ctx *gin.Context, objID primitive.ObjectID) (*bson.D, error) {
+// GetTestCaseInfo 获取测试点
+func (pr *ProblemRepository) GetTestCaseInfo(ctx *gin.Context, objID primitive.ObjectID) (*bson.M, error) {
 
-	var res *bson.D
-	err := pr.mongo.FindOne(ctx, bson.M{"_id": objID}).Decode(&res)
+	var res *bson.M
+	err := pr.TestCaseColl.FindOne(ctx, bson.M{"_id": objID}).Decode(&res)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, errors.New(constant.NotFoundError)
@@ -179,4 +184,41 @@ func (pr *ProblemRepository) GetTestCaseInfo(ctx *gin.Context, objID primitive.O
 		return nil, errors.New(constant.ServerError)
 	}
 	return res, nil
+}
+
+// CreateTestCase 创建测试点
+func (pr *ProblemRepository) CreateTestCase(ctx *gin.Context, req *entity.TestCase) (primitive.ObjectID, error) {
+	res, err := pr.TestCaseColl.InsertOne(ctx, req)
+	if err != nil {
+		pr.log.Error("测试点写入失败", zap.Error(err))
+		return primitive.ObjectID{}, errors.New(constant.ServerError)
+	}
+	return res.InsertedID.(primitive.ObjectID), nil
+
+}
+
+// UpdateTestCase 更新测试点
+func (pr *ProblemRepository) UpdateTestCase(ctx *gin.Context, req *entity.TestCase, objID primitive.ObjectID) error {
+	filter := bson.M{"_id": objID}
+	update := bson.M{"$set": req}
+	res, err := pr.TestCaseColl.UpdateOne(ctx, filter, update)
+	if err != nil {
+		pr.log.Error("测试点更新失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	if res.MatchedCount == 0 {
+		return errors.New(constant.NotFoundError)
+	}
+	return nil
+}
+
+// DeleteTestCase 删除测试点
+func (pr *ProblemRepository) DeleteTestCase(ctx *gin.Context, objID primitive.ObjectID) error {
+	filter := bson.M{"_id": objID}
+	_, err := pr.TestCaseColl.DeleteOne(ctx, filter)
+	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+		pr.log.Error("mongo删除文档失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	return nil
 }
