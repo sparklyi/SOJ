@@ -16,8 +16,8 @@ func InitDB() *gorm.DB {
 	err = db.AutoMigrate(
 		model.User{},
 		model.Problem{},
+
 		model.Language{},
-		model.TestCase{},
 		model.Submission{},
 		model.Competition{},
 		model.Apply{},

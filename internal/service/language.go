@@ -30,7 +30,7 @@ func (ls *LanguageService) GetLanguageList(ctx *gin.Context, req *entity.Languag
 func (ls *LanguageService) UpdateLang(ctx *gin.Context, req *entity.Language) error {
 
 	lang := &model.Language{
-		ID:     req.ID,
+		ID:     uint(req.ID),
 		Name:   req.Name,
 		Status: req.Status,
 	}
