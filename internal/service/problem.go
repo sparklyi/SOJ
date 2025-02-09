@@ -152,3 +152,22 @@ func (ps *ProblemService) DeleteProblem(ctx *gin.Context, id int) error {
 	return nil
 
 }
+
+// GetTestCaseInfo 获取测试点信息
+func (ps *ProblemService) GetTestCaseInfo(ctx *gin.Context, id int) (*bson.D, error) {
+	//获取objID
+	p, err := ps.repo.GetInfoByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := primitive.ObjectIDFromHex(p.ObjectID)
+	if err != nil {
+		ps.log.Error("objectID转换HEX失败", zap.Error(err))
+		return nil, errors.New(constant.ServerError)
+	}
+	res, err := ps.repo.GetTestCaseInfo(ctx, obj)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}

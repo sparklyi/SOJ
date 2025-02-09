@@ -113,3 +113,20 @@ func (p *ProblemHandle) Delete(ctx *gin.Context) {
 	}
 	response.SuccessNoContent(ctx)
 }
+
+// TestCaseInfo 获取题目测试点
+func (p *ProblemHandle) TestCaseInfo(ctx *gin.Context) {
+	t := ctx.Param("pid")
+	pid, err := strconv.Atoi(t)
+	if err != nil || pid <= 0 {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	res, err := p.svc.GetTestCaseInfo(ctx, pid)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, res)
+
+}

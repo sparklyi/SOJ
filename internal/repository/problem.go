@@ -165,3 +165,18 @@ func (pr *ProblemRepository) MongoDeleteProblem(ctx *gin.Context, objID primitiv
 	//}
 	return nil
 }
+
+// GetTestCaseInfo 获取题目测试点信息
+func (pr *ProblemRepository) GetTestCaseInfo(ctx *gin.Context, objID primitive.ObjectID) (*bson.D, error) {
+
+	var res *bson.D
+	err := pr.mongo.FindOne(ctx, bson.M{"_id": objID}).Decode(&res)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, errors.New(constant.NotFoundError)
+		}
+		pr.log.Error("获取mongo文档失败", zap.Error(err))
+		return nil, errors.New(constant.ServerError)
+	}
+	return res, nil
+}
