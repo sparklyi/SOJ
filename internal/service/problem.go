@@ -11,6 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
+	"sync"
 )
 
 type ProblemService struct {
@@ -65,12 +66,12 @@ func (ps *ProblemService) GetProblemInfo(ctx *gin.Context, id int) (*bson.M, err
 	if claims.Auth != constant.RootLevel && (!*p.Status || *p.Owner != 0) {
 		return nil, errors.New(constant.UnauthorizedError)
 	}
-	//转换为ObjectID对象
-	obj, err := primitive.ObjectIDFromHex(p.ObjectID)
-	if err != nil {
-		ps.log.Error("objectID转换HEX失败", zap.Error(err))
-		return nil, errors.New(constant.ServerError)
+	if p.ObjectID == "" {
+		return nil, errors.New(constant.NotFoundError)
 	}
+	//转换为ObjectID对象
+	obj, _ := primitive.ObjectIDFromHex(p.ObjectID)
+
 	//获取文档内容
 	res, err := ps.repo.GetInfoByObjID(ctx, obj)
 	if err != nil {
@@ -91,12 +92,10 @@ func (ps *ProblemService) UpdateProblemInfo(ctx *gin.Context, req *entity.Proble
 
 	// 并行
 	mongoErrChan := make(chan error, 1)
-
-	objID, err := primitive.ObjectIDFromHex(p.ObjectID)
-	if err != nil {
-		ps.log.Error("object id转换失败", zap.Error(err))
-		return errors.New(constant.ServerError)
+	if p.ObjectID == "" {
+		return errors.New(constant.NotFoundError)
 	}
+	objID, _ := primitive.ObjectIDFromHex(p.ObjectID)
 	// 启动Mongo更新协程
 	go func() {
 		mongoErrChan <- ps.repo.MongoUpdateInfoByObjID(ctx, req, objID)
@@ -126,27 +125,40 @@ func (ps *ProblemService) UpdateProblemInfo(ctx *gin.Context, req *entity.Proble
 func (ps *ProblemService) DeleteProblem(ctx *gin.Context, id int) error {
 	tx := ps.repo.GetTransaction(ctx)
 
-	ok := make(chan error, 1)
+	p, err := ps.repo.GetInfoByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if p.TestCaseID == "" || p.ObjectID == "" {
+		return errors.New(constant.NotFoundError)
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	var perr error
+	var terr error
+	//删除题目文档
 	go func() {
-		p, err := ps.repo.GetInfoByID(ctx, id)
-		if err != nil {
-			ok <- err
-		}
-		objID, err := primitive.ObjectIDFromHex(p.ObjectID)
-		if err != nil {
-			ok <- err
-		}
-		ok <- ps.repo.MongoDeleteProblem(ctx, objID)
+		defer wg.Done()
+		objID, _ := primitive.ObjectIDFromHex(p.ObjectID)
+		perr = ps.repo.MongoDeleteProblem(ctx, objID)
+	}()
+	//删除测试点文档
+	go func() {
+		defer wg.Done()
+		objID, _ := primitive.ObjectIDFromHex(p.TestCaseID)
+		terr = ps.repo.DeleteTestCase(ctx, objID)
 	}()
 
-	err := ps.repo.MysqlDeleteProblem(ctx, tx, id)
+	err = ps.repo.MysqlDeleteProblem(ctx, tx, id)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
-	if err = <-ok; err != nil {
+	wg.Wait()
+	if perr != nil || terr != nil {
 		tx.Rollback()
-		return err
+		return errors.New(constant.ServerError)
 	}
 	tx.Commit()
 	return nil
@@ -154,20 +166,55 @@ func (ps *ProblemService) DeleteProblem(ctx *gin.Context, id int) error {
 }
 
 // GetTestCaseInfo 获取测试点信息
-func (ps *ProblemService) GetTestCaseInfo(ctx *gin.Context, id int) (*bson.D, error) {
+func (ps *ProblemService) GetTestCaseInfo(ctx *gin.Context, id int) (*bson.M, error) {
 	//获取objID
 	p, err := ps.repo.GetInfoByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	obj, err := primitive.ObjectIDFromHex(p.ObjectID)
-	if err != nil {
-		ps.log.Error("objectID转换HEX失败", zap.Error(err))
-		return nil, errors.New(constant.ServerError)
+	if p.TestCaseID == "" {
+		return nil, errors.New(constant.NotFoundError)
 	}
+	obj, _ := primitive.ObjectIDFromHex(p.TestCaseID)
 	res, err := ps.repo.GetTestCaseInfo(ctx, obj)
 	if err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// CreateTestCase 创建测试点
+func (ps *ProblemService) CreateTestCase(ctx *gin.Context, req *entity.TestCase, pid int) error {
+	p, err := ps.repo.GetInfoByID(ctx, pid)
+	if err != nil {
+		return err
+	}
+	objID, err := ps.repo.CreateTestCase(ctx, req)
+	if err != nil {
+		return err
+	}
+	p.TestCaseID = objID.Hex()
+	err = ps.repo.MysqlUpdateInfoByID(ctx, nil, p)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// UpdateTestCase 更新测试点
+func (ps *ProblemService) UpdateTestCase(ctx *gin.Context, req *entity.TestCase, pid int) error {
+	p, err := ps.repo.GetInfoByID(ctx, pid)
+	if err != nil {
+		return err
+	}
+	if p.TestCaseID == "" {
+		return errors.New(constant.NotFoundError)
+	}
+	obj, _ := primitive.ObjectIDFromHex(p.TestCaseID)
+
+	err = ps.repo.UpdateTestCase(ctx, req, obj)
+	if err != nil {
+		return err
+	}
+	return nil
 }

@@ -6,7 +6,7 @@ type Language struct {
 	Status *bool  `gorm:"default:false;comment:是否启用" json:"status"`
 
 	//外键
-	//Submission []Submission `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"submission,omitempty"`
+	Submission []Submission `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"submission,omitempty"`
 }
 
 func (Language) TableName() string {
