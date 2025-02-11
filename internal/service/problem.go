@@ -29,6 +29,7 @@ func NewProblemService(log *zap.Logger, r *repository.ProblemRepository) *Proble
 // Create 题目创建
 func (ps *ProblemService) Create(ctx *gin.Context, req *entity.Problem) error {
 	//插入mongo
+
 	pid, err := ps.repo.MongoCreate(ctx, req)
 	if err != nil {
 		return err
