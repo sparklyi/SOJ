@@ -2,25 +2,32 @@ package entity
 
 // Case 样例
 type Case struct {
-	Input  string `json:"input"`
-	Output string `json:"output"`
+	Stdin          string `json:"stdin" bson:"stdin"`
+	ExpectedOutput string `json:"expected_output" bson:"expected_output"`
+}
+
+// Limit 语言时空限制
+type Limit struct {
+	TimeLimit   float64 `json:"time_limit" bson:"time_limit"`
+	MemoryLimit int     `json:"memory_limit" bson:"memory_limit"`
 }
 
 // Problem 题目创建及更新
 type Problem struct {
-	ID                uint     `json:"id" binding:"omitempty,number"`
-	Name              string   `json:"name" binding:"required"`
-	Tag               []string `json:"tag"`
-	TimeLimit         string   `json:"time_limit"`
-	MemoryLimit       string   `json:"memory_limit"`
-	Description       string   `json:"description" binding:"required"`
-	InputDescription  string   `json:"input_description" `
-	OutputDescription string   `json:"output_description"`
-	Level             string   `json:"level" binding:"required,oneof=easy mid hard"`
-	Example           []Case   `json:"example"`
-	ReMark            string   `json:"remark"`
-	Visible           *bool    `json:"visible" binding:"omitempty,boolean"`
-	Owner             *uint    `json:"owner" binding:"omitempty,number"`
+	ID                uint             `json:"id" binding:"omitempty,number" bson:"id"`
+	Name              string           `json:"name" binding:"required" bson:"name"`
+	Tag               []string         `json:"tag" bson:"tag"`
+	TimeLimit         string           `json:"time_limit" bson:"time_limit"`
+	MemoryLimit       string           `json:"memory_limit" bson:"memory_limit"`
+	Description       string           `json:"description" binding:"required" bson:"description"`
+	InputDescription  string           `json:"input_description" bson:"input_description"`
+	OutputDescription string           `json:"output_description" bson:"output_description"`
+	Level             string           `json:"level" binding:"required,oneof=easy mid hard" bson:"level"`
+	Example           []Case           `json:"example" bson:"example"`
+	LangLimit         map[string]Limit `json:"lang_limit" bson:"lang_limit"`
+	ReMark            string           `json:"remark" bson:"re_mark"`
+	Visible           *bool            `json:"visible" binding:"omitempty,boolean" bson:"visible"`
+	Owner             *uint            `json:"owner" binding:"omitempty,number" bson:"owner"`
 }
 
 // ProblemList 题目列表
@@ -35,5 +42,5 @@ type ProblemList struct {
 
 // TestCase 创建及更新测试点
 type TestCase struct {
-	Content []Case `json:"content" binding:"required"`
+	Content []Case `json:"content" binding:"required" bson:"content"`
 }
