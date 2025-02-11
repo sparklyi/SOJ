@@ -12,6 +12,7 @@ func InitRoute(
 	user *handle.UserHandle,
 	problem *handle.ProblemHandle,
 	language *handle.LanguageHandle,
+	submission *handle.SubmissionHandle,
 	mid []gin.HandlerFunc,
 ) *gin.Engine {
 	r := gin.Default()
@@ -23,5 +24,6 @@ func InitRoute(
 	api.UserRoute(g, user, mid)
 	api.ProblemRoute(g, problem, mid)
 	api.LanguageRoute(g, language, mid)
+	api.SubmissionRoute(g, submission, mid)
 	return r
 }
