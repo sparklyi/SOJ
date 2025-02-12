@@ -9,7 +9,7 @@ type Case struct {
 // Limit 语言时空限制
 type Limit struct {
 	TimeLimit   float64 `json:"time_limit" bson:"time_limit"`
-	MemoryLimit int     `json:"memory_limit" bson:"memory_limit"`
+	MemoryLimit float64 `json:"memory_limit" bson:"memory_limit"`
 }
 
 // Problem 题目创建及更新

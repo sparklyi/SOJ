@@ -4,12 +4,9 @@ import (
 	"SOJ/internal/constant"
 	"SOJ/internal/entity"
 	"SOJ/internal/service"
-	"SOJ/pkg/judge0"
 	"SOJ/utils/response"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	"net/http"
-	"time"
 )
 
 type SubmissionHandle struct {
@@ -31,7 +28,10 @@ func (sh *SubmissionHandle) Run(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	judge0.Run(&http.Client{
-		Timeout: 10 * time.Second,
-	}, &req)
+	data, err := sh.svc.Run(ctx, &req)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, data)
 }
