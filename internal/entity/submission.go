@@ -2,17 +2,35 @@ package entity
 
 // Run 提交测评
 type Run struct {
-	ProblemID     int     `json:"problem_id" binding:"required,number"`
-	SourceCode    string  `json:"source_code" binding:"required"`
-	LanguageID    int     `json:"language_id" binding:"required,number"`
-	CompetitionID int     `json:"competition_id" binding:"omitempty,number"`
-	CpuTimeLimit  float64 `json:"cpu_time_limit" binding:"omitempty,number"`
-	CpuExtraLimit float64 `json:"cpu_extra_limit" binding:"omitempty,number"`
-	MemoryLimit   float64 `json:"memory_limit" binding:"omitempty,number"`
+	ProblemID     int    `json:"problem_id,omitempty" binding:"required,number"`
+	ProblemObjID  string `json:"problem_obj_id,omitempty"`
+	SourceCode    string `json:"source_code,omitempty" binding:"required"`
+	LanguageID    int    `json:"language_id,omitempty" binding:"required"`
+	CompetitionID int    `json:"competition_id,omitempty"`
+	Limit
+	CpuExtraLimit float64 `json:"cpu_extra_limit,omitempty"`
 	Case
 }
 
-// Submissions 多测试点测评
-type Submissions struct {
+// Judge 多测试点测评
+type Judge struct {
 	Submissions []Run `json:"submissions"`
+}
+
+// JudgeStatus 测评状态
+type JudgeStatus struct {
+	ID          int    `json:"id,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// JudgeResult 测评结果
+type JudgeResult struct {
+	Stdout        string  `json:"stdout,omitempty"`
+	Time          string  `json:"time,omitempty"`
+	Memory        float64 `json:"memory,omitempty"`
+	Stderr        string  `json:"stderr,omitempty"`
+	Token         string  `json:"token,omitempty"`
+	CompileOutput string  `json:"compile_output,omitempty"`
+	Message       string  `json:"message,omitempty"`
+	JudgeStatus   `json:"status,omitempty"`
 }

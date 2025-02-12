@@ -41,7 +41,7 @@ func InitServer() *Cmd {
 	languageService := service.NewLanguageService(logger, languageRepository)
 	languageHandle := handle.NewLanguageHandle(logger, languageService)
 	submissionRepository := repository.NewSubmissionRepository(logger, db)
-	submissionService := service.NewSubmissionService(logger, submissionRepository)
+	submissionService := service.NewSubmissionService(logger, submissionRepository, problemRepository)
 	submissionHandle := handle.NewSubmissionHandle(logger, submissionService)
 	v := InitMiddleware(jwtJWT)
 	engine := InitRoute(captchaHandle, emailHandle, userHandle, problemHandle, languageHandle, submissionHandle, v)
