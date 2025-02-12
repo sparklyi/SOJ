@@ -4,22 +4,26 @@ import (
 	"SOJ/internal/entity"
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"github.com/spf13/viper"
+	"errors"
 	"io"
 	"net/http"
 )
 
-func Run(client *http.Client, req *entity.Run) {
-	url := "http://" + viper.GetString("judge0.addr") + "/submissions"
+func Run(client *http.Client, req *entity.Run, url string) (*entity.JudgeResult, error) {
 
 	data, _ := json.Marshal(req)
 	resp, err := client.Post(url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
-		panic(err)
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return nil, errors.New("测评机请求失败")
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	fmt.Println(string(body))
+	var t entity.JudgeResult
+	_ = json.Unmarshal(body, &t)
+
+	return &t, nil
 
 }
