@@ -8,8 +8,8 @@ type Case struct {
 
 // Limit 语言时空限制
 type Limit struct {
-	TimeLimit   float64 `json:"time_limit" bson:"time_limit"`
-	MemoryLimit float64 `json:"memory_limit" bson:"memory_limit"`
+	CpuTimeLimit   float64 `json:"cpu_time_limit" bson:"cpu_time_limit"`
+	CpuMemoryLimit float64 `json:"cpu_memory_limit" bson:"cpu_memory_limit"`
 }
 
 // Problem 题目创建及更新

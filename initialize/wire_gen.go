@@ -12,6 +12,7 @@ import (
 	"SOJ/internal/repository"
 	"SOJ/internal/service"
 	"SOJ/pkg/email"
+	"SOJ/pkg/judge0"
 	"SOJ/utils/captcha"
 	"SOJ/utils/jwt"
 )
@@ -41,13 +42,14 @@ func InitServer() *Cmd {
 	languageService := service.NewLanguageService(logger, languageRepository)
 	languageHandle := handle.NewLanguageHandle(logger, languageService)
 	submissionRepository := repository.NewSubmissionRepository(logger, db)
-	submissionService := service.NewSubmissionService(logger, submissionRepository, problemRepository)
+	judge := judge0.New(logger)
+	submissionService := service.NewSubmissionService(logger, submissionRepository, problemRepository, judge)
 	submissionHandle := handle.NewSubmissionHandle(logger, submissionService)
 	v := InitMiddleware(jwtJWT)
 	engine := InitRoute(captchaHandle, emailHandle, userHandle, problemHandle, languageHandle, submissionHandle, v)
 	emailEmail := email.New(logger)
 	emailConsumer := mq.NewEmailConsumer(logger, emailEmail, emailProducer, client)
-	cron := service.NewCronTask(logger, languageService)
+	cron := service.NewCronTask(logger, languageService, submissionService)
 	cmd := &Cmd{
 		G:             engine,
 		EmailConsumer: emailConsumer,
