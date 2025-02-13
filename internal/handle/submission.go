@@ -22,6 +22,7 @@ func NewSubmissionHandle(log *zap.Logger, svc *service.SubmissionService) *Submi
 	}
 }
 
+// Run 自测运行
 func (sh *SubmissionHandle) Run(ctx *gin.Context) {
 	req := entity.Run{}
 	if err := ctx.ShouldBind(&req); err != nil {
@@ -29,6 +30,21 @@ func (sh *SubmissionHandle) Run(ctx *gin.Context) {
 		return
 	}
 	data, err := sh.svc.Run(ctx, &req)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, data)
+}
+
+// Judge 提交运行
+func (sh *SubmissionHandle) Judge(ctx *gin.Context) {
+	req := entity.Run{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	data, err := sh.svc.Judge(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return

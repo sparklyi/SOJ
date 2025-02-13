@@ -2,7 +2,7 @@ package model
 
 import "gorm.io/gorm"
 
-type Competition struct {
+type Contest struct {
 	gorm.Model
 	//存到mongo
 	ObjectID string `gorm:"varchar(30);unique;comment:对应存储在mongo的竞赛id" json:"object_id"`
@@ -11,6 +11,6 @@ type Competition struct {
 	Apply []Apply `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"apply,omitempty"`
 }
 
-func (Competition) TableName() string {
-	return "competition"
+func (Contest) TableName() string {
+	return "contest"
 }
