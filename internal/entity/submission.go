@@ -2,13 +2,13 @@ package entity
 
 // Run 提交测评
 type Run struct {
-	ProblemID     int    `json:"problem_id,omitempty" binding:"required,number"`
-	ProblemObjID  string `json:"problem_obj_id,omitempty"`
-	SourceCode    string `json:"source_code,omitempty" binding:"required"`
-	LanguageID    int    `json:"language_id,omitempty" binding:"required"`
-	CompetitionID int    `json:"competition_id,omitempty"`
+	ProblemID    int    `json:"problem_id,omitempty" binding:"required,number"`
+	ProblemObjID string `json:"problem_obj_id,omitempty"`
+	SourceCode   string `json:"source_code,omitempty" binding:"required"`
+	LanguageID   int    `json:"language_id,omitempty" binding:"required"`
+	ContestID    int    `json:"contest_id_id,omitempty"`
 	Limit
-	CpuExtraLimit float64 `json:"cpu_extra_limit,omitempty"`
+	CpuExtraLimit float64 `json:"cpu_extra_time,omitempty"`
 	Case
 }
 

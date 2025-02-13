@@ -8,6 +8,7 @@ import (
 	"SOJ/internal/repository"
 	"SOJ/internal/service"
 	"SOJ/pkg/email"
+	"SOJ/pkg/judge0"
 	"SOJ/utils/captcha"
 	"SOJ/utils/jwt"
 	"github.com/google/wire"
@@ -27,6 +28,7 @@ func InitServer() *Cmd {
 		captcha.New,
 		captcha.NewRedisStore,
 		email.New,
+		judge0.New,
 		mq.NewEmailProducer,
 		mq.NewEmailConsumer,
 		handle.NewEmailHandle,

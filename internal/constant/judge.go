@@ -5,6 +5,8 @@ const (
 	JudgeInQueue
 	JudgeAccepted
 	Judge
+
+	JudgeUnknown
 )
 
 var tab = []string{
