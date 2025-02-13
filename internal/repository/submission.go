@@ -1,18 +1,81 @@
 package repository
 
 import (
+	"SOJ/internal/constant"
+	"SOJ/internal/model"
+	"context"
+	"errors"
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 type SubmissionRepository struct {
-	log *zap.Logger
-	db  *gorm.DB
+	log        *zap.Logger
+	db         *gorm.DB
+	postgresql *gorm.DB
 }
 
 func NewSubmissionRepository(log *zap.Logger, db *gorm.DB) *SubmissionRepository {
-	return &SubmissionRepository{
-		log: log,
-		db:  db,
+	//连接postgres
+	dsn := viper.GetString("postgresql.dsn")
+	p, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		panic(err)
 	}
+	return &SubmissionRepository{
+		log:        log,
+		db:         db,
+		postgresql: p,
+	}
+}
+
+// CreateSubmission 创建测评记录
+func (sr *SubmissionRepository) CreateSubmission(ctx *gin.Context, s *model.Submission) error {
+	err := sr.db.WithContext(ctx).Create(s).Error
+	if err != nil {
+		sr.log.Error("创建测评记录失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	return nil
+}
+
+// GetInfoByID 根据id获取测评记录
+func (sr *SubmissionRepository) GetInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
+	var submission model.Submission
+	err := sr.db.WithContext(ctx).First(&submission, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New(constant.NotFoundError)
+	} else if err != nil {
+		sr.log.Error("查询数据库失败", zap.Error(err))
+		return nil, errors.New(constant.ServerError)
+	}
+	return &submission, nil
+}
+
+// GetSubmissionList 获取测评列表
+func (sr *SubmissionRepository) GetSubmissionList(ctx *gin.Context) {
+
+}
+
+// DeleteJudgeByToken 删除postgresql的测评记录
+func (sr *SubmissionRepository) DeleteJudgeByToken(ctx *gin.Context, token string) error {
+	err := sr.postgresql.WithContext(ctx).Table("submissions").Where("token = ?", token).Delete(nil).Error
+	if err != nil {
+		sr.log.Error("删除postgres测评记录失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	return nil
+}
+
+// DeleteAllJudgeHistory 删除postgres的测评历史
+func (sr *SubmissionRepository) DeleteAllJudgeHistory(ctx context.Context) error {
+	err := sr.postgresql.WithContext(ctx).Exec("DELETE FROM submissions;").Error
+	if err != nil {
+		sr.log.Error("删除postgres测评历史失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	return nil
 }
