@@ -10,7 +10,7 @@ func SubmissionRoute(r *gin.RouterGroup, s *handle.SubmissionHandle, mid []gin.H
 	submission := r.Group("submission")
 	{
 		submission.POST("run", mid[1], s.Run)
-		submission.POST("judge", mid[1])
+		submission.POST("judge", mid[1], s.Judge)
 	}
 
 }

@@ -19,7 +19,7 @@ func InitDB() *gorm.DB {
 
 		model.Language{},
 		model.Submission{},
-		model.Competition{},
+		model.Contest{},
 		model.Apply{},
 	)
 	if err != nil {
