@@ -4,6 +4,7 @@ import (
 	"SOJ/internal/constant"
 	"SOJ/internal/entity"
 	"SOJ/internal/service"
+	"SOJ/utils"
 	"SOJ/utils/response"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -46,6 +47,12 @@ func (lh *LanguageHandle) List(ctx *gin.Context) {
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
+	}
+	claims := utils.GetAccessClaims(ctx)
+	//普通用户只能查看可用语言
+	if claims.Auth <= constant.AdminLevel {
+		req.Status = new(bool)
+		*req.Status = true
 	}
 
 	lang, err := lh.svc.GetLanguageList(ctx, &req)
