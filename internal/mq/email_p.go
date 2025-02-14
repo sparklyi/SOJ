@@ -29,17 +29,17 @@ func NewEmailProducer(log *zap.Logger) *EmailProducer {
 	QueueName := viper.GetString("rabbitmq.queue_email")
 	conn, err := amqp.Dial(viper.GetString("rabbitmq.url"))
 	if err != nil {
-		log.Error("rabbitmq连接失败", zap.Error(err))
+		panic("rabbitmq连接失败")
 		return nil
 	}
 	ch, err := conn.Channel()
 	if err != nil {
-		log.Error("rabbitmq信道创建失败", zap.Error(err))
+		panic("rabbitmq信道创建失败")
 		return nil
 	}
 	delay, err := ch.QueueDeclare(QueueName, true, false, false, false, nil)
 	if err != nil {
-		log.Error("rabbitmq队列创建失败", zap.Error(err))
+		panic("rabbitmq队列创建失败")
 		return nil
 	}
 	err = ch.ExchangeDeclare(
@@ -51,12 +51,12 @@ func NewEmailProducer(log *zap.Logger) *EmailProducer {
 		},
 	)
 	if err != nil {
-		log.Error("rabbitmq交换机创建失败", zap.Error(err))
+		panic("rabbitmq交换机创建失败")
 		return nil
 	}
 	err = ch.QueueBind(delay.Name, "", exchangeName, false, nil)
 	if err != nil {
-		log.Error("rabbitmq交换机绑定失败", zap.Error(err))
+		panic("rabbitmq交换机绑定失败")
 		return nil
 	}
 	return &EmailProducer{
