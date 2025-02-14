@@ -2,14 +2,14 @@ package entity
 
 // Case 样例
 type Case struct {
-	Stdin          string `json:"stdin" bson:"stdin"`
-	ExpectedOutput string `json:"expected_output" bson:"expected_output"`
+	Stdin          string `json:"stdin,omitempty" bson:"stdin"`
+	ExpectedOutput string `json:"expected_output,omitempty" bson:"expected_output"`
 }
 
 // Limit 语言时空限制
 type Limit struct {
-	CpuTimeLimit   float64 `json:"cpu_time_limit" bson:"cpu_time_limit"`
-	CpuMemoryLimit float64 `json:"cpu_memory_limit" bson:"cpu_memory_limit"`
+	CpuTimeLimit   float64 `json:"cpu_time_limit,omitempty" bson:"cpu_time_limit"`
+	CpuMemoryLimit float64 `json:"cpu_memory_limit,omitempty" bson:"cpu_memory_limit"`
 }
 
 // Problem 题目创建及更新

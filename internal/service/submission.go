@@ -20,20 +20,28 @@ type SubmissionService struct {
 	log         *zap.Logger
 	repo        *repository.SubmissionRepository
 	problemRepo *repository.ProblemRepository
+	langRepo    *repository.LanguageRepository
 	judge       *judge0.Judge
 }
 
-func NewSubmissionService(log *zap.Logger, repo *repository.SubmissionRepository, p *repository.ProblemRepository, j *judge0.Judge) *SubmissionService {
+func NewSubmissionService(log *zap.Logger, repo *repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge) *SubmissionService {
 	return &SubmissionService{
 		log:         log,
 		repo:        repo,
 		problemRepo: p,
+		langRepo:    l,
 		judge:       j,
 	}
 }
 
 // GetLimit 获取相关语言的时空限制
 func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string) (*entity.Limit, error) {
+	//检查语言是否可用
+	if l, err := ss.langRepo.GetByID(ctx, lid); err != nil {
+		return nil, err
+	} else if !(*l.Status) {
+		return nil, errors.New(constant.DisableError)
+	}
 	//从mongo中得到当前测评语言的时空限制
 	if oid == "" {
 		p, err := ss.problemRepo.GetInfoByID(ctx, pid)
@@ -59,8 +67,8 @@ func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string
 	}
 	//默认限制
 	limit := entity.Limit{
-		CpuTimeLimit:   1.0,        //s
-		CpuMemoryLimit: 256 * 1024, //KB
+		CpuTimeLimit:   2.0,        //s
+		CpuMemoryLimit: 512 * 1024, //KB
 	}
 	//存在当前测评语言的限制
 	if v, ok := t.LangLimit[strconv.Itoa(lid)]; ok {
@@ -138,7 +146,12 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 
 		SourceCode: req.SourceCode,
 	}
-	//*s.Visible = req.ContestID == 0
+	//测评记录是否可见
+	if req.ContestID != 0 {
+		s.Visible = new(bool)
+		*s.Visible = false
+	}
+
 	//测试点检查
 	mxid := 0
 	for range n {
@@ -158,6 +171,7 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 		//	break
 		//}
 	}
+	//测评机请求时间过长会导致上下文过长，gorm会警告慢sql
 	err = ss.repo.CreateSubmission(ctx, s)
 	if err != nil {
 		return nil, err

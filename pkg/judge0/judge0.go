@@ -22,7 +22,7 @@ type Judge struct {
 func New(l *zap.Logger) (j *Judge) {
 	j = new(Judge)
 	j.log = l
-	j.client = &http.Client{Timeout: 10 * time.Second}
+	j.client = &http.Client{Timeout: 60 * time.Second}
 	j.url = "http://" + viper.GetString("judge0.addr")
 	j.judgeUrl = j.url + "/submissions/?wait=true"
 	return
@@ -34,8 +34,8 @@ func (j *Judge) Run(req *entity.Run) *entity.JudgeResult {
 	var t entity.JudgeResult
 	//预设错误值, 函数不再处理error
 	t.ID = constant.JudgeUnknown
-	t.Description = "测评机错误"
-	t.Message = "测评机错误"
+	t.Description = "Internal Error"
+	t.Message = "Internal Error"
 
 	resp, err := j.client.Post(j.judgeUrl, "application/json", bytes.NewBuffer(data))
 	if err != nil {
@@ -45,6 +45,7 @@ func (j *Judge) Run(req *entity.Run) *entity.JudgeResult {
 	if resp.StatusCode != http.StatusCreated {
 		return &t
 	}
+	//测评完成了 重置设置的消息(测评结果可能message为null不会读入到结构体)
 	t.Message = ""
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
