@@ -35,18 +35,20 @@ func NewSubmissionService(log *zap.Logger, repo *repository.SubmissionRepository
 }
 
 // GetLimit 获取相关语言的时空限制
-func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string) (*entity.Limit, error) {
+func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string, s *model.Submission) (*entity.Limit, error) {
 	//检查语言是否可用
-	if l, err := ss.langRepo.GetByID(ctx, lid); err != nil {
+	l, err := ss.langRepo.GetByID(ctx, lid)
+	if err != nil {
 		return nil, err
 	} else if !(*l.Status) {
 		return nil, errors.New(constant.DisableError)
 	}
+
 	//从mongo中得到当前测评语言的时空限制
 	if oid == "" {
-		p, err := ss.problemRepo.GetInfoByID(ctx, pid)
-		if err != nil {
-			return nil, err
+		p, terr := ss.problemRepo.GetInfoByID(ctx, pid)
+		if terr != nil {
+			return nil, terr
 		}
 		oid = p.ObjectID
 	}
@@ -65,6 +67,7 @@ func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string
 	if err != nil {
 		return nil, err
 	}
+
 	//默认限制
 	limit := entity.Limit{
 		CpuTimeLimit:   2.0,        //s
@@ -74,13 +77,17 @@ func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string
 	if v, ok := t.LangLimit[strconv.Itoa(lid)]; ok {
 		limit = v
 	}
+	//把部分信息存入
+	if s != nil {
+		s.ProblemName, s.Language = t.Name, l.Name
+	}
 	return &limit, nil
 }
 
 // Run 自测运行
 func (ss *SubmissionService) Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResult, error) {
 
-	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID)
+	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +102,9 @@ func (ss *SubmissionService) Run(ctx *gin.Context, req *entity.Run) (*entity.Jud
 
 // Judge 提交运行
 func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error) {
-
+	s := &model.Submission{}
 	//获取当前测评语言的限制
-	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID)
+	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID, s)
 	if err != nil {
 		return nil, err
 	}
@@ -136,20 +143,20 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 		}(*req)
 	}
 
-	claims := utils.GetAccessClaims(ctx)
+	s.UserID = uint(utils.GetAccessClaims(ctx).ID)
+	s.ProblemID = uint(req.ProblemID)
+	s.LanguageID = uint(req.LanguageID)
+	s.ContestID = uint(req.ContestID)
+	s.SourceCode = req.SourceCode
 
-	s := &model.Submission{
-		UserID:     uint(claims.ID),
-		ProblemID:  uint(req.ProblemID),
-		LanguageID: uint(req.LanguageID),
-		ContestID:  uint(req.ContestID),
-
-		SourceCode: req.SourceCode,
-	}
-	//测评记录是否可见
+	//当contestId不为空时,从apply表获取用户名, 且记录不可见
+	//反之从user表获取,记录可见
 	if req.ContestID != 0 {
 		s.Visible = new(bool)
 		*s.Visible = false
+		//TODO 查询apply表
+	} else {
+		//TODO 查询user表
 	}
 
 	//测试点检查
@@ -178,6 +185,11 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 	}
 	return s, nil
 
+}
+
+// GetSubmissionInfoByID  根据ID获取测评详情
+func (ss *SubmissionService) GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
+	return ss.repo.GetInfoByID(ctx, id)
 }
 
 // DeletePostgresJudgeHistory 删除postgres的测评历史记录
