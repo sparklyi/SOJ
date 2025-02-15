@@ -34,3 +34,12 @@ type JudgeResult struct {
 	Message       string  `json:"message,omitempty"`
 	JudgeStatus   `json:"status,omitempty"`
 }
+
+// SubmissionList 获取测评列表
+type SubmissionList struct {
+	UserID     int    `json:"user_id,omitempty" binding:"omitempty,number"`
+	UserName   string `json:"user_name,omitempty"`
+	ProblemID  int    `json:"problem_id,omitempty" binding:"omitempty,number"`
+	LanguageID int    `json:"language_id,omitempty" binding:"omitempty,number"`
+	ContestID  int    `json:"contest_id,omitempty" binding:"omitempty,number"`
+}
