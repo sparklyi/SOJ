@@ -33,7 +33,7 @@ func NewEmailConsumer(log *zap.Logger, email *email.Email, p *EmailProducer, rs 
 }
 
 // Consume 消费队列消息
-func (c *EmailConsumer) Consume(ctx context.Context) error {
+func (c *EmailConsumer) Consume(ctx context.Context) {
 	c.log.Info("start consume email")
 	defer c.log.Info("end consume email")
 
@@ -41,7 +41,7 @@ func (c *EmailConsumer) Consume(ctx context.Context) error {
 	msgs, err := c.Channel.Consume(c.QueueName, "", true, false, false, false, nil)
 	if err != nil {
 		c.log.Error("consume email fail", zap.Error(err))
-		return err
+		return
 	}
 
 	for msg := range msgs {
@@ -76,5 +76,4 @@ func (c *EmailConsumer) Consume(ctx context.Context) error {
 			c.log.Error("消费达到最大次数:", zap.Any("content", content))
 		}(msg)
 	}
-	return nil
 }
