@@ -77,6 +77,7 @@ func (us *UserService) Register(ctx *gin.Context, req *entity.Register) (*model.
 	}
 
 	user := model.User{
+		Username: "用户" + req.Email,
 		Email:    req.Email,
 		Password: us.EncryptPassword(req.Password),
 	}

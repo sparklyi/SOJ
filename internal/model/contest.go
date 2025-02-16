@@ -14,3 +14,8 @@ type Contest struct {
 func (Contest) TableName() string {
 	return "contest"
 }
+
+/*
+	{
+	}
+*/
