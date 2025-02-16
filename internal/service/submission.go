@@ -196,3 +196,27 @@ func (ss *SubmissionService) GetSubmissionInfoByID(ctx *gin.Context, id int) (*m
 func (ss *SubmissionService) DeletePostgresJudgeHistory(ctx context.Context) error {
 	return ss.repo.DeleteAllJudgeHistory(ctx)
 }
+
+// GetSubmissionList 获取测评列表
+func (ss *SubmissionService) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
+	s, err := ss.repo.GetSubmissionList(ctx, req)
+	for _, v := range s {
+		v.SourceCode = ""
+		v.Visible = nil
+		v.Stderr, v.CompileOut = "", ""
+	}
+	return s, err
+}
+
+// GetSubmissionByID 根据测评id获取详情
+func (ss *SubmissionService) GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error) {
+	s, err := ss.repo.GetInfoByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	claims := utils.GetAccessClaims(ctx)
+	if *s.Visible == false && (claims.ID != int(s.UserID) || claims.Auth < constant.AdminLevel) {
+		return nil, errors.New(constant.UnauthorizedError)
+	}
+	return s, nil
+}

@@ -11,7 +11,6 @@ func ProblemRoute(r *gin.RouterGroup, p *handle.ProblemHandle, mid []gin.Handler
 		//problem.GET("/set/:tag")
 		problem.GET("/total", mid[1], p.Count)
 		problem.GET("/:pid", mid[1], p.Detail)
-		problem.GET("/:pid/submission", mid[1])
 		problem.POST("/", mid[1], p.List)
 		problem.POST("/create", mid[1], mid[2], p.Create)
 		problem.PUT("/update", mid[1], mid[2], p.UpdateInfo)

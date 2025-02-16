@@ -7,6 +7,7 @@ import (
 	"SOJ/utils/response"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"strconv"
 )
 
 type SubmissionHandle struct {
@@ -50,4 +51,35 @@ func (sh *SubmissionHandle) Judge(ctx *gin.Context) {
 		return
 	}
 	response.SuccessWithData(ctx, data)
+}
+
+// List 获取测评列表
+func (sh *SubmissionHandle) List(ctx *gin.Context) {
+	req := entity.SubmissionList{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	s, err := sh.svc.GetSubmissionList(ctx, &req)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, s)
+}
+
+// GetInfoByID 获取测评信息
+func (sh *SubmissionHandle) GetInfoByID(ctx *gin.Context) {
+	t := ctx.Param("sid")
+	id, err := strconv.Atoi(t)
+	if err != nil || id <= 0 {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	res, err := sh.svc.GetSubmissionByID(ctx, id)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, res)
 }
