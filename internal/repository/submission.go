@@ -2,7 +2,9 @@ package repository
 
 import (
 	"SOJ/internal/constant"
+	"SOJ/internal/entity"
 	"SOJ/internal/model"
+	"SOJ/utils"
 	"context"
 	"errors"
 	"github.com/gin-gonic/gin"
@@ -56,7 +58,30 @@ func (sr *SubmissionRepository) GetInfoByID(ctx *gin.Context, id int) (*model.Su
 }
 
 // GetSubmissionList 获取测评列表
-func (sr *SubmissionRepository) GetSubmissionList(ctx *gin.Context) {
+func (sr *SubmissionRepository) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
+	db := sr.db.WithContext(ctx).Model(&model.Submission{})
+	if req.UserID != 0 {
+		db = db.Where("user_id = ?", req.UserID)
+	}
+	if req.UserName != "" {
+		db = db.Where("user_name LIKE ?", req.UserName+"%")
+	}
+	if req.LanguageID != 0 {
+		db = db.Where("language_id = ?", req.LanguageID)
+	}
+	if req.ContestID != 0 {
+		db = db.Where("contest_id = ?", req.ContestID)
+	}
+	if req.ProblemID != 0 {
+		db = db.Where("problem_id = ?", req.ProblemID)
+	}
+
+	var submissions []*model.Submission
+	if err := db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&submissions).Error; err != nil {
+		sr.log.Error("查询数据库失败", zap.Error(err))
+		return nil, err
+	}
+	return submissions, nil
 
 }
 

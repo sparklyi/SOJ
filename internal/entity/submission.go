@@ -42,4 +42,6 @@ type SubmissionList struct {
 	ProblemID  int    `json:"problem_id,omitempty" binding:"omitempty,number"`
 	LanguageID int    `json:"language_id,omitempty" binding:"omitempty,number"`
 	ContestID  int    `json:"contest_id,omitempty" binding:"omitempty,number"`
+	Page       int    `json:"page,omitempty" binding:"omitempty,number"`
+	PageSize   int    `json:"page_size,omitempty" binding:"omitempty,number"`
 }
