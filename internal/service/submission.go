@@ -21,16 +21,18 @@ type SubmissionService struct {
 	repo        *repository.SubmissionRepository
 	problemRepo *repository.ProblemRepository
 	langRepo    *repository.LanguageRepository
+	userRepo    *repository.UserRepository
 	judge       *judge0.Judge
 }
 
-func NewSubmissionService(log *zap.Logger, repo *repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge) *SubmissionService {
+func NewSubmissionService(log *zap.Logger, repo *repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge, u *repository.UserRepository) *SubmissionService {
 	return &SubmissionService{
 		log:         log,
 		repo:        repo,
 		problemRepo: p,
 		langRepo:    l,
 		judge:       j,
+		userRepo:    u,
 	}
 }
 
@@ -142,8 +144,8 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 			resp <- *ss.judge.Run(&req)
 		}(*req)
 	}
-
-	s.UserID = uint(utils.GetAccessClaims(ctx).ID)
+	claims := utils.GetAccessClaims(ctx)
+	s.UserID = uint(claims.ID)
 	s.ProblemID = uint(req.ProblemID)
 	s.LanguageID = uint(req.LanguageID)
 	s.ContestID = uint(req.ContestID)
@@ -157,6 +159,11 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 		//TODO 查询apply表
 	} else {
 		//TODO 查询user表
+		u, uErr := ss.userRepo.GetUserByID(ctx, claims.ID)
+		if uErr != nil {
+			return nil, uErr
+		}
+		s.UserName = u.Username
 	}
 
 	//测试点检查
