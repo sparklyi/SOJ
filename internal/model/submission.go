@@ -4,13 +4,13 @@ import "gorm.io/gorm"
 
 type Submission struct {
 	gorm.Model
-	UserID      uint    `json:"user_id,omitempty"`
+	UserID      uint    `gorm:"index" json:"user_id,omitempty"`
 	UserName    string  `json:"user_name,omitempty"`
-	ProblemID   uint    `json:"problem_id,omitempty"`
+	ProblemID   uint    `gorm:"index" json:"problem_id,omitempty"`
 	ProblemName string  `json:"problem_name,omitempty"`
-	LanguageID  uint    `json:"language_id,omitempty"`
+	LanguageID  uint    `gorm:"index" json:"language_id,omitempty"`
 	Language    string  `json:"language,omitempty"`
-	ContestID   uint    `gorm:"default:0;0表示非比赛提交" json:"contest_id,omitempty"`
+	ContestID   uint    `gorm:"index" gorm:"default:0;0表示非比赛提交" json:"contest_id,omitempty"`
 	SourceCode  string  `gorm:"type:longtext;comment:源代码'" json:"source_code,omitempty"`
 	Status      string  `gorm:"type:varchar(255);comment:测评状态'" json:"status,omitempty"`
 	Time        float64 `gorm:"comment:测评耗时" json:"time,omitempty"`

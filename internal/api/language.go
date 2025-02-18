@@ -6,11 +6,11 @@ import (
 )
 
 func LanguageRoute(r *gin.RouterGroup, l *handle.LanguageHandle, mid []gin.HandlerFunc) {
-	lang := r.Group("language")
+	lang := r.Group("language").Use(mid[1])
 	{
-		lang.POST("", mid[1], l.List)
-		lang.POST("/sync", mid[1], mid[3], l.SyncLanguage)
-		lang.PUT("/update", mid[1], mid[3], l.Update)
-		lang.GET("/:lid", mid[1], mid[2], l.GetInfo)
+		lang.POST("", l.List)
+		lang.POST("/sync", mid[3], l.SyncLanguage)
+		lang.PUT("/update", mid[3], l.Update)
+		lang.GET("/:lid", mid[2], l.GetInfo)
 	}
 }
