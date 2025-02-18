@@ -34,8 +34,8 @@ func (j *Judge) Run(req *entity.Run) *entity.JudgeResult {
 	var t entity.JudgeResult
 	//预设错误值, 函数不再处理error
 	t.ID = constant.JudgeUnknown
-	t.Description = "Internal Error"
-	t.Message = "Internal Error"
+	t.Description = constant.JudgeCode2Details[t.ID]
+	t.Message = constant.JudgeCode2Details[t.ID]
 
 	resp, err := j.client.Post(j.judgeUrl, "application/json", bytes.NewBuffer(data))
 	if err != nil {
