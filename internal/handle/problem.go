@@ -73,12 +73,12 @@ func (p *ProblemHandle) Create(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, "参数无效"+err.Error())
 		return
 	}
-	err := p.svc.Create(ctx, &req)
+	problem, err := p.svc.Create(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessNoContent(ctx)
+	response.SuccessWithData(ctx, problem)
 
 }
 
