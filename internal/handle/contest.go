@@ -27,7 +27,11 @@ func NewContestHandle(log *zap.Logger, svc *service.ContestService) *ContestHand
 func (ch *ContestHandle) CreateContest(ctx *gin.Context) {
 	req := entity.Contest{}
 	if err := ctx.ShouldBind(&req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, constant.ParamError+err.Error())
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	if req.StartTime.Unix() > req.EndTime.Unix() {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	c, err := ch.svc.CreateContest(ctx, &req)
@@ -37,4 +41,24 @@ func (ch *ContestHandle) CreateContest(ctx *gin.Context) {
 	}
 	response.SuccessWithData(ctx, c)
 
+}
+
+// UpdateContest 更新比赛
+func (ch *ContestHandle) UpdateContest(ctx *gin.Context) {
+
+	req := entity.Contest{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	if req.StartTime.Unix() > req.EndTime.Unix() {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+
+	if err := ch.svc.UpdateContest(ctx, &req); err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessNoContent(ctx)
 }
