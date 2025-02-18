@@ -144,6 +144,8 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 			resp <- *ss.judge.Run(&req)
 		}(*req)
 	}
+
+	//构建测评记录
 	claims := utils.GetAccessClaims(ctx)
 	s.UserID = uint(claims.ID)
 	s.ProblemID = uint(req.ProblemID)
@@ -157,8 +159,9 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 		s.Visible = new(bool)
 		*s.Visible = false
 		//TODO 查询apply表
+
 	} else {
-		//TODO 查询user表
+		//查询user表
 		u, uErr := ss.userRepo.GetUserByID(ctx, claims.ID)
 		if uErr != nil {
 			return nil, uErr

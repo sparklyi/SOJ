@@ -1,15 +1,25 @@
 package constant
 
 const (
-	JudgePending = iota
-	JudgeInQueue
-	JudgeAccepted
-	Judge
-
+	JudgePD = iota
+	JudgeIQ
+	JudgePR
+	JudgeAC
+	JudgeWA
+	JudgeTLE
+	JudgeCE
+	JudgeRESIGSEGV
+	JudgeRESIGXFSZ
+	JudgeRESIGFPE
+	JudgeRESIGABRT
+	JudgeRENZEC
+	JudgeRE
+	JudgeIE
+	JudgeEFE
 	JudgeUnknown
 )
 
-var tab = []string{
+var JudgeCode2Details = []string{
 	"Pending",
 	"In Queue",
 	"Processing",
@@ -25,4 +35,5 @@ var tab = []string{
 	"Runtime Error",
 	"Internal Error",
 	"Exec Format Error",
+	"Unknown Error",
 }

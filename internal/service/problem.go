@@ -27,12 +27,12 @@ func NewProblemService(log *zap.Logger, r *repository.ProblemRepository) *Proble
 }
 
 // Create 题目创建
-func (ps *ProblemService) Create(ctx *gin.Context, req *entity.Problem) error {
+func (ps *ProblemService) Create(ctx *gin.Context, req *entity.Problem) (*model.Problem, error) {
 	//插入mongo
 
 	pid, err := ps.repo.MongoCreate(ctx, req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	problem := model.Problem{
 		ObjectID: pid.Hex(),
@@ -41,7 +41,7 @@ func (ps *ProblemService) Create(ctx *gin.Context, req *entity.Problem) error {
 		Status:   req.Visible,
 		Owner:    req.Owner,
 	}
-	return ps.repo.MySQLCreate(ctx, &problem)
+	return &problem, ps.repo.MySQLCreate(ctx, &problem)
 }
 
 // Count 获取题目数量
