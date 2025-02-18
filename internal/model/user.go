@@ -13,6 +13,7 @@ type User struct {
 	//外键
 	Submission []Submission `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"submission,omitempty"`
 	Apply      []Apply      `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"apply,omitempty"`
+	Contest    []Contest    `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"contest,omitempty"`
 }
 
 func (User) TableName() string {
