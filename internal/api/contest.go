@@ -6,12 +6,14 @@ import (
 )
 
 func ContestRoute(r *gin.RouterGroup, c *handle.ContestHandle, mid []gin.HandlerFunc) {
-	contest := r.Group("contest")
+	contest := r.Group("contest").Use(mid[1])
 	{
-		contest.POST("/")
-		contest.POST("/create", mid[1], c.CreateContest)
-		contest.GET("/:cid", mid[1])
-		contest.PUT("/update", mid[1], c.UpdateContest)
+		contest.GET("/:cid", c.GetInfoByID)
+		contest.GET("/u/:uid", c.GetListByUserID)
+		contest.POST("/", c.GetContestList)
+		contest.POST("/create", c.CreateContest)
+		contest.PUT("/update", c.UpdateContest)
+		contest.DELETE("/:cid", c.DeleteContest)
 
 	}
 }

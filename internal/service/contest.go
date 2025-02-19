@@ -1,11 +1,13 @@
 package service
 
 import (
+	"SOJ/internal/constant"
 	"SOJ/internal/entity"
 	"SOJ/internal/model"
 	"SOJ/internal/repository"
 	"SOJ/utils"
 	"encoding/json"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -77,5 +79,55 @@ func (cs *ContestService) UpdateContest(ctx *gin.Context, req *entity.Contest) e
 		c.ProblemSet = string(data)
 	}
 	return cs.repo.UpdateContest(ctx, c)
+
+}
+
+// GetContestList 获取比赛列表
+func (cs *ContestService) GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, error) {
+	claims := utils.GetAccessClaims(ctx)
+	admin := claims != nil && claims.Auth > constant.UserLevel
+
+	list, err := cs.repo.GetContestList(ctx, req, admin)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range list {
+		v.Code = ""
+		v.FreezeTime = nil
+		v.Description = ""
+		v.ProblemSet = ""
+	}
+	return list, nil
+}
+
+// GetListByUserID 获取用户比赛列表
+func (cs *ContestService) GetListByUserID(ctx *gin.Context, id int) ([]*model.Contest, error) {
+	return cs.repo.GetListByUserID(ctx, id, 1, 20)
+}
+
+// GetContestInfoByID 获取比赛详情
+func (cs *ContestService) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error) {
+	c, err := cs.repo.GetContestInfoByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	claims := utils.GetAccessClaims(ctx)
+	if claims.Auth < constant.AdminLevel && c.UserID != uint(claims.ID) {
+		c.Code = ""
+	}
+	return c, nil
+}
+
+// DeleteContest 删除比赛
+func (cs *ContestService) DeleteContest(ctx *gin.Context, id int) error {
+	c, err := cs.repo.GetContestInfoByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	claims := utils.GetAccessClaims(ctx)
+	if claims.Auth < constant.AdminLevel && c.UserID != uint(claims.ID) {
+		return errors.New(constant.UnauthorizedError)
+	}
+	return cs.repo.DeleteContest(ctx, id)
 
 }

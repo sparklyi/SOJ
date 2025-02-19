@@ -2,7 +2,9 @@ package repository
 
 import (
 	"SOJ/internal/constant"
+	"SOJ/internal/entity"
 	"SOJ/internal/model"
+	"SOJ/utils"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -53,4 +55,54 @@ func (cr *ContestRepository) UpdateContest(ctx *gin.Context, contest *model.Cont
 		return errors.New(constant.ServerError)
 	}
 	return nil
+}
+
+// GetContestList 获取比赛列表
+func (cr *ContestRepository) GetContestList(ctx *gin.Context, req *entity.ContestList, admin bool) ([]*model.Contest, error) {
+	db := cr.db.WithContext(ctx).Model(&model.Contest{})
+	if !admin {
+		req.Publish = new(bool)
+		*req.Publish = true
+	}
+	if req.ID != 0 {
+		db = db.Where("id = ?", req.ID)
+	}
+	if req.Tag != "" {
+		db = db.Where("tag = ?", req.Tag)
+	}
+	if req.Type != "" {
+		db = db.Where("type = ?", req.Type)
+	}
+	if req.Publish != nil {
+		db = db.Where("publish = ?", req.Publish)
+	}
+	var list []*model.Contest
+	err := db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&list).Error
+	if err != nil {
+		cr.log.Error("获取比赛列表失败", zap.Error(err))
+		return nil, errors.New(constant.ServerError)
+	}
+	return list, nil
+
+}
+
+// DeleteContest 删除比赛
+func (cr *ContestRepository) DeleteContest(ctx *gin.Context, id int) error {
+	err := cr.db.WithContext(ctx).Delete(&model.Contest{}, id).Error
+	if err != nil {
+		cr.log.Error("删除比赛失败", zap.Error(err))
+		return errors.New(constant.ServerError)
+	}
+	return nil
+}
+
+// GetListByUserID 获取用户创建的比赛
+func (cr *ContestRepository) GetListByUserID(ctx *gin.Context, uid int, page int, pageSize int) ([]*model.Contest, error) {
+	var list []*model.Contest
+	err := cr.db.WithContext(ctx).Scopes(utils.Paginate(page, pageSize)).Find(&list).Error
+	if err != nil {
+		cr.log.Error("获取用户比赛列表失败", zap.Error(err))
+		return nil, errors.New(constant.ServerError)
+	}
+	return list, nil
 }
