@@ -22,3 +22,15 @@ type Contest struct {
 	Code        string           `json:"code" bson:"code" bson:"code"`
 	Publish     *bool            `json:"publish" binding:"required,boolean" bson:"publish"`
 }
+
+// ContestList 比赛列表
+type ContestList struct {
+	ID       int    `json:"id" binding:"omitempty,number"`
+	Name     string `json:"name" binding:"omitempty" bson:"name"`
+	Tag      string `json:"tag" binding:"omitempty" bson:"tag"`
+	Type     string `json:"type" binding:"omitempty" bson:"type"`
+	Public   *bool  `json:"public" binding:"omitempty" bson:"public"`
+	Publish  *bool  `json:"publish" binding:"omitempty" bson:"publish"`
+	Page     int    `json:"page" binding:"omitempty" bson:"page"`
+	PageSize int    `json:"page_size" binding:"omitempty" bson:"page_size"`
+}
