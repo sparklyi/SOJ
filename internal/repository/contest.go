@@ -40,7 +40,10 @@ func (cr *ContestRepository) CreateContest(ctx *gin.Context, contest *model.Cont
 func (cr *ContestRepository) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error) {
 	contest := &model.Contest{}
 	err := cr.db.WithContext(ctx).First(contest, id).Error
-	if err != nil {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New(constant.NotFoundError)
+
+	} else if err != nil {
 		cr.log.Error("获取数据库信息失败", zap.Error(err))
 		return nil, errors.New(constant.ServerError)
 	}
