@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
 	"strconv"
@@ -64,18 +63,18 @@ func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string
 	if err != nil {
 		return nil, err
 	}
-	//正反序列化后得到时空限制
-	bd, _ := bson.Marshal(data)
+	//序列化后得到时空限制
 	t := entity.Problem{}
-	err = bson.Unmarshal(bd, &t)
+	err = utils.UnmarshalBSON(data, &t)
+
 	if err != nil {
 		return nil, err
 	}
 
 	//默认限制
 	limit := entity.Limit{
-		CpuTimeLimit:   2.0,        //s
-		CpuMemoryLimit: 512 * 1024, //KB
+		CpuTimeLimit:   constant.DefaultJudgeTimeLimit,
+		CpuMemoryLimit: constant.DefaultJudgeMemoryLimit,
 	}
 	//存在当前测评语言的限制
 	if v, ok := t.LangLimit[strconv.Itoa(lid)]; ok {
@@ -128,13 +127,14 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 		return nil, err
 	}
 
-	//正反序列化得到测试点
-	tc, _ := bson.Marshal(t)
+	//序列化得到测试点
 	var testcase entity.TestCase
-	err = bson.Unmarshal(tc, &testcase)
+	err = utils.UnmarshalBSON(t, &testcase)
 	if err != nil {
 		return nil, err
 	}
+
+	ss.log.Info("提交测评", zap.Any("request:", req))
 
 	//并发提交每个测试点
 	n := len(testcase.Content)
@@ -191,9 +191,9 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 			s.Status, s.Stderr, s.CompileOut = v.Description, v.Stderr, v.CompileOutput
 		}
 		//未通过直接返回,后续测试点不再检查(ACM模式, 其他模式后续扩展)
-		//if mxid != constant.JudgeAccepted {
-		//	break
-		//}
+		if mxid != constant.JudgeAC {
+			break
+		}
 	}
 	//测评机请求时间过长会导致上下文过长，gorm会警告慢sql
 	err = ss.repo.CreateSubmission(ctx, s)

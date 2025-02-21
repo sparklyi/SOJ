@@ -37,3 +37,8 @@ var JudgeCode2Details = []string{
 	"Exec Format Error",
 	"Unknown Error",
 }
+
+const (
+	DefaultJudgeTimeLimit   = 2          //默认时间限制(s)
+	DefaultJudgeMemoryLimit = 512 * 1024 //默认内存限制(KB)
+)

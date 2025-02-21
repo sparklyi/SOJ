@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson"
 	"gorm.io/gorm"
 	"math/rand"
 )
@@ -49,4 +50,12 @@ func CryptoSHA1(str string) string {
 	hash := sha1.New()
 	hash.Write([]byte(str))
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func UnmarshalBSON(data interface{}, target interface{}) error {
+	bd, err := bson.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return bson.Unmarshal(bd, target)
 }
