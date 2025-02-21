@@ -9,10 +9,10 @@ func SubmissionRoute(r *gin.RouterGroup, s *handle.SubmissionHandle, mid []gin.H
 
 	submission := r.Group("submission").Use(mid[1])
 	{
-		submission.POST("run", s.Run)
-		submission.POST("judge", s.Judge)
-		submission.POST("list", s.List)
-		submission.GET("/:sid", s.GetInfoByID)
+		submission.POST("run", s.Run)          //自测运行
+		submission.POST("judge", s.Judge)      //提交运行
+		submission.POST("list", s.List)        //测评列表
+		submission.GET("/:sid", s.GetInfoByID) //测评详情
 		//TODO 竞赛结束修改测评为可见
 
 	}
