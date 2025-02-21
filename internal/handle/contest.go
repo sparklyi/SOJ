@@ -87,7 +87,17 @@ func (ch *ContestHandle) GetListByUserID(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	list, err := ch.svc.GetListByUserID(ctx, uid)
+	page, err := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	if err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	pageSize, err := strconv.Atoi(ctx.DefaultQuery("page_size", "10"))
+	if err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	list, err := ch.svc.GetListByUserID(ctx, uid, page, pageSize)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return

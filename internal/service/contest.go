@@ -13,13 +13,18 @@ import (
 )
 
 type ContestService struct {
-	log  *zap.Logger
-	repo *repository.ContestRepository
+	log       *zap.Logger
+	repo      *repository.ContestRepository
+	applyRepo *repository.ApplyRepository
 }
 
 // NewContestService 依赖注入
-func NewContestService(logger *zap.Logger, repo *repository.ContestRepository) *ContestService {
-	return &ContestService{log: logger, repo: repo}
+func NewContestService(logger *zap.Logger, repo *repository.ContestRepository, a *repository.ApplyRepository) *ContestService {
+	return &ContestService{
+		log:       logger,
+		repo:      repo,
+		applyRepo: a,
+	}
 
 }
 
@@ -52,6 +57,10 @@ func (cs *ContestService) UpdateContest(ctx *gin.Context, req *entity.Contest) e
 	c, err := cs.repo.GetContestInfoByID(ctx, req.ID)
 	if err != nil {
 		return err
+	}
+	claims := utils.GetAccessClaims(ctx)
+	if c.UserID != uint(claims.ID) && claims.Auth < constant.AdminLevel {
+		return errors.New(constant.UnauthorizedError)
 	}
 	if req.Name != "" {
 		c.Name = req.Name
@@ -101,8 +110,8 @@ func (cs *ContestService) GetContestList(ctx *gin.Context, req *entity.ContestLi
 }
 
 // GetListByUserID 获取用户比赛列表
-func (cs *ContestService) GetListByUserID(ctx *gin.Context, id int) ([]*model.Contest, error) {
-	return cs.repo.GetListByUserID(ctx, id, 1, 20)
+func (cs *ContestService) GetListByUserID(ctx *gin.Context, id, page, pageSize int) ([]*model.Contest, error) {
+	return cs.repo.GetListByUserID(ctx, id, page, pageSize)
 }
 
 // GetContestInfoByID 获取比赛详情
@@ -128,6 +137,10 @@ func (cs *ContestService) DeleteContest(ctx *gin.Context, id int) error {
 	if claims.Auth < constant.AdminLevel && c.UserID != uint(claims.ID) {
 		return errors.New(constant.UnauthorizedError)
 	}
-	return cs.repo.DeleteContest(ctx, id)
-
+	err = cs.repo.DeleteContest(ctx, id)
+	if err != nil {
+		return err
+	}
+	go cs.applyRepo.DeleteApplyByContestID(ctx, id)
+	return nil
 }
