@@ -22,10 +22,11 @@ type SubmissionService struct {
 	problemRepo *repository.ProblemRepository
 	langRepo    *repository.LanguageRepository
 	userRepo    *repository.UserRepository
+	applyRepo   *repository.ApplyRepository
 	judge       *judge0.Judge
 }
 
-func NewSubmissionService(log *zap.Logger, repo *repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge, u *repository.UserRepository) *SubmissionService {
+func NewSubmissionService(log *zap.Logger, a *repository.ApplyRepository, repo *repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge, u *repository.UserRepository) *SubmissionService {
 	return &SubmissionService{
 		log:         log,
 		repo:        repo,
@@ -33,6 +34,7 @@ func NewSubmissionService(log *zap.Logger, repo *repository.SubmissionRepository
 		langRepo:    l,
 		judge:       j,
 		userRepo:    u,
+		applyRepo:   a,
 	}
 }
 
@@ -158,7 +160,12 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 	if req.ContestID != 0 {
 		s.Visible = new(bool)
 		*s.Visible = false
-		//TODO 查询apply表
+		//查询apply表
+		a, aErr := ss.applyRepo.GetInfoByUserAndContest(ctx, s.UserID, s.ContestID)
+		if aErr != nil {
+			return nil, aErr
+		}
+		s.UserName = a.Name
 
 	} else {
 		//查询user表
