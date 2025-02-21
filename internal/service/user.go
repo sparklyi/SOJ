@@ -73,7 +73,7 @@ func (us *UserService) Register(ctx *gin.Context, req *entity.Register) (*model.
 	if check, err := us.CheckCode(ctx, req.Email, req.Code); err != nil {
 		return nil, err
 	} else if !check {
-		return nil, errors.New("验证码错误")
+		return nil, errors.New(constant.CodeError)
 	}
 
 	user := model.User{
@@ -93,7 +93,7 @@ func (us *UserService) LoginByEmail(ctx *gin.Context, req *entity.LoginByEmail) 
 	if check, err := us.CheckCode(ctx, req.Email, req.Code); err != nil {
 		return nil, err
 	} else if !check {
-		return nil, errors.New("验证码错误")
+		return nil, errors.New(constant.CodeError)
 	}
 	return us.repo.GetUserByEmail(ctx, req.Email)
 }
@@ -102,7 +102,7 @@ func (us *UserService) LoginByEmail(ctx *gin.Context, req *entity.LoginByEmail) 
 func (us *UserService) LoginByPassword(ctx *gin.Context, req *entity.LoginByPassword) (*model.User, error) {
 	//验证码验证
 	if !us.captcha.Verify(req.CaptchaID, req.Captcha, true) {
-		return nil, errors.New("图形验证码错误")
+		return nil, errors.New(constant.CodeError)
 	}
 	user, err := us.repo.GetUserByEmail(ctx, req.Email)
 	if err != nil {
@@ -158,7 +158,7 @@ func (us *UserService) UpdatePassword(ctx *gin.Context, req *entity.UpdatePasswo
 	if check, err := us.CheckCode(ctx, req.Email, req.Code); err != nil {
 		return err
 	} else if !check {
-		return errors.New("验证码错误")
+		return errors.New(constant.CodeError)
 	}
 	//密码加密存入数据库
 	user := &model.User{
