@@ -17,7 +17,7 @@ import (
 
 type SubmissionService struct {
 	log         *zap.Logger
-	repo        *repository.SubmissionRepository
+	repo        repository.SubmissionRepository
 	problemRepo *repository.ProblemRepository
 	langRepo    *repository.LanguageRepository
 	userRepo    *repository.UserRepository
@@ -25,7 +25,7 @@ type SubmissionService struct {
 	judge       *judge0.Judge
 }
 
-func NewSubmissionService(log *zap.Logger, a *repository.ApplyRepository, repo *repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge, u *repository.UserRepository) *SubmissionService {
+func NewSubmissionService(log *zap.Logger, a *repository.ApplyRepository, repo repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge, u *repository.UserRepository) *SubmissionService {
 	return &SubmissionService{
 		log:         log,
 		repo:        repo,
