@@ -6,7 +6,7 @@ type Run struct {
 	ProblemObjID string `json:"problem_obj_id,omitempty"`
 	SourceCode   string `json:"source_code,omitempty" binding:"required"`
 	LanguageID   int    `json:"language_id,omitempty" binding:"required"`
-	ContestID    int    `json:"contest_id_id,omitempty"`
+	ContestID    int    `json:"contest_id,omitempty" binding:"omitempty,number"`
 	Limit
 	CpuExtraLimit float64 `json:"cpu_extra_time,omitempty"`
 	Case
