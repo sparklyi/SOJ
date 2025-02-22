@@ -9,8 +9,8 @@ import (
 
 func NewCronTask(
 	log *zap.Logger,
-	lang *LanguageService,
-	submission *SubmissionService,
+	lang LanguageService,
+	submission SubmissionService,
 ) *cron.Cron {
 
 	c := cron.New()

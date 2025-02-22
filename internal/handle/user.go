@@ -13,15 +13,30 @@ import (
 	"strconv"
 )
 
-type UserHandle struct {
+type UserHandle interface {
+	Register(ctx *gin.Context)
+	LoginByEmail(ctx *gin.Context)
+	LoginByPassword(ctx *gin.Context)
+	RefreshToken(ctx *gin.Context)
+	Logout(ctx *gin.Context)
+	GetUserInfo(ctx *gin.Context)
+	UploadAvatar(ctx *gin.Context)
+	UpdatePassword(ctx *gin.Context)
+	GetUserList(ctx *gin.Context)
+	UpdateUserInfo(ctx *gin.Context)
+	ResetPassword(ctx *gin.Context)
+	Delete(ctx *gin.Context)
+}
+
+type user struct {
 	jwt *jwt.JWT
 	log *zap.Logger
-	svc *service.UserService
+	svc service.UserService
 }
 
 // NewUserHandle 依赖注入方法
-func NewUserHandle(log *zap.Logger, jwt *jwt.JWT, s *service.UserService) *UserHandle {
-	return &UserHandle{
+func NewUserHandle(log *zap.Logger, jwt *jwt.JWT, s service.UserService) UserHandle {
+	return &user{
 		jwt: jwt,
 		log: log,
 		svc: s,
@@ -29,20 +44,20 @@ func NewUserHandle(log *zap.Logger, jwt *jwt.JWT, s *service.UserService) *UserH
 }
 
 // Register 用户注册
-func (u *UserHandle) Register(ctx *gin.Context) {
+func (uh *user) Register(ctx *gin.Context) {
 	req := entity.Register{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
 	//转service层服务
-	um, err := u.svc.Register(ctx, &req)
+	um, err := uh.svc.Register(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
 	//生成token
-	st, rt, err := u.jwt.CreateToken(ctx, int(um.ID), um.Role)
+	st, rt, err := uh.jwt.CreateToken(ctx, int(um.ID), um.Role)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
@@ -56,18 +71,18 @@ func (u *UserHandle) Register(ctx *gin.Context) {
 }
 
 // LoginByEmail 使用邮箱登录
-func (u *UserHandle) LoginByEmail(ctx *gin.Context) {
+func (uh *user) LoginByEmail(ctx *gin.Context) {
 	req := entity.LoginByEmail{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	um, err := u.svc.LoginByEmail(ctx, &req)
+	um, err := uh.svc.LoginByEmail(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	st, rt, err := u.jwt.CreateToken(ctx, int(um.ID), um.Role)
+	st, rt, err := uh.jwt.CreateToken(ctx, int(um.ID), um.Role)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
@@ -81,31 +96,31 @@ func (u *UserHandle) LoginByEmail(ctx *gin.Context) {
 }
 
 // LoginByPassword 密码登录
-func (u *UserHandle) LoginByPassword(ctx *gin.Context) {
+func (uh *user) LoginByPassword(ctx *gin.Context) {
 	req := entity.LoginByPassword{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	user, err := u.svc.LoginByPassword(ctx, &req)
+	u, err := uh.svc.LoginByPassword(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	st, rt, err := u.jwt.CreateToken(ctx, int(user.ID), user.Role)
+	st, rt, err := uh.jwt.CreateToken(ctx, int(u.ID), u.Role)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, "令牌生成失败")
 		return
 	}
 	response.SuccessWithData(ctx, map[string]interface{}{
-		"id":                user.ID,
+		"id":                u.ID,
 		"SOJ-Access-Token":  st,
 		"SOJ-Refresh-Token": rt,
 	})
 }
 
 // RefreshToken 刷新token令牌
-func (u *UserHandle) RefreshToken(ctx *gin.Context) {
+func (uh *user) RefreshToken(ctx *gin.Context) {
 
 	rt := ctx.GetHeader("SOJ-Refresh-Token")
 	if rt == "" {
@@ -114,13 +129,13 @@ func (u *UserHandle) RefreshToken(ctx *gin.Context) {
 	}
 
 	//验证长token是否有效
-	claims, err := u.jwt.VerifyRefresh(ctx, rt)
+	claims, err := uh.jwt.VerifyRefresh(ctx, rt)
 	if err != nil {
 		response.BadRequestErrorWithMsg(ctx, err.Error())
 		return
 	}
 	//生成新的token
-	token, err := u.jwt.CreateAccessToken(ctx, claims.ID, claims.Auth)
+	token, err := uh.jwt.CreateAccessToken(ctx, claims.ID, claims.Auth)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, "访问令牌生成失败")
 		return
@@ -132,14 +147,14 @@ func (u *UserHandle) RefreshToken(ctx *gin.Context) {
 }
 
 // Logout 用户手动退出
-func (u *UserHandle) Logout(ctx *gin.Context) {
+func (uh *user) Logout(ctx *gin.Context) {
 	rt := ctx.GetHeader("SOJ-Refresh-Token")
 	if rt == "" {
 		response.BadRequestErrorWithMsg(ctx, "未携带刷新token")
 		return
 	}
 	//令长token失效
-	err := u.jwt.BanToken(ctx, rt)
+	err := uh.jwt.BanToken(ctx, rt)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
@@ -148,7 +163,7 @@ func (u *UserHandle) Logout(ctx *gin.Context) {
 }
 
 // GetUserInfo 获取用户信息
-func (u *UserHandle) GetUserInfo(ctx *gin.Context) {
+func (uh *user) GetUserInfo(ctx *gin.Context) {
 	tid := ctx.Param("id")
 
 	if tid == "" {
@@ -160,16 +175,16 @@ func (u *UserHandle) GetUserInfo(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	user, err := u.svc.GetUserByID(ctx, id)
+	u, err := uh.svc.GetUserByID(ctx, id)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, user)
+	response.SuccessWithData(ctx, u)
 }
 
 // UploadAvatar 头像上传至cos
-func (u *UserHandle) UploadAvatar(ctx *gin.Context) {
+func (uh *user) UploadAvatar(ctx *gin.Context) {
 	claims := utils.GetAccessClaims(ctx)
 	if claims == nil {
 		response.UnauthorizedErrorWithMsg(ctx, constant.UnauthorizedError)
@@ -181,7 +196,7 @@ func (u *UserHandle) UploadAvatar(ctx *gin.Context) {
 		return
 	}
 
-	if err = u.svc.UploadAvatar(ctx, avatar, claims.ID); err != nil {
+	if err = uh.svc.UploadAvatar(ctx, avatar, claims.ID); err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
@@ -190,13 +205,13 @@ func (u *UserHandle) UploadAvatar(ctx *gin.Context) {
 }
 
 // UpdatePassword 修改密码
-func (u *UserHandle) UpdatePassword(ctx *gin.Context) {
+func (uh *user) UpdatePassword(ctx *gin.Context) {
 	req := entity.UpdatePassword{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	if err := u.svc.UpdatePassword(ctx, &req); err != nil {
+	if err := uh.svc.UpdatePassword(ctx, &req); err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
@@ -204,13 +219,13 @@ func (u *UserHandle) UpdatePassword(ctx *gin.Context) {
 }
 
 // GetUserList 获取用户信息列表
-func (u *UserHandle) GetUserList(ctx *gin.Context) {
+func (uh *user) GetUserList(ctx *gin.Context) {
 	req := &entity.UserInfo{}
 	if err := ctx.ShouldBind(req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	users, err := u.svc.GetUserList(ctx, req)
+	users, err := uh.svc.GetUserList(ctx, req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
@@ -219,7 +234,7 @@ func (u *UserHandle) GetUserList(ctx *gin.Context) {
 }
 
 // UpdateUserInfo 用户信息更新
-func (u *UserHandle) UpdateUserInfo(ctx *gin.Context) {
+func (uh *user) UpdateUserInfo(ctx *gin.Context) {
 	req := &entity.UserUpdate{}
 	if err := ctx.ShouldBind(req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -231,7 +246,7 @@ func (u *UserHandle) UpdateUserInfo(ctx *gin.Context) {
 		response.UnauthorizedErrorWithMsg(ctx, constant.UnauthorizedError)
 		return
 	}
-	err := u.svc.UpdateUserInfo(ctx, req, claims.Auth == 3)
+	err := uh.svc.UpdateUserInfo(ctx, req, claims.Auth == 3)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
@@ -240,13 +255,13 @@ func (u *UserHandle) UpdateUserInfo(ctx *gin.Context) {
 }
 
 // ResetPassword 重置密码
-func (u *UserHandle) ResetPassword(ctx *gin.Context) {
-	email := ctx.Param("email")
-	if email == "" {
+func (uh *user) ResetPassword(ctx *gin.Context) {
+	e := ctx.Param("email")
+	if e == "" {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	err := u.svc.ResetPassword(ctx, email)
+	err := uh.svc.ResetPassword(ctx, e)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
@@ -256,14 +271,14 @@ func (u *UserHandle) ResetPassword(ctx *gin.Context) {
 }
 
 // Delete 用户删除
-func (u *UserHandle) Delete(ctx *gin.Context) {
+func (uh *user) Delete(ctx *gin.Context) {
 	t := ctx.Param("id")
 	id, err := strconv.Atoi(t)
 	if err != nil || id <= 0 {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	err = u.svc.DeleteByID(ctx, id)
+	err = uh.svc.DeleteByID(ctx, id)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return

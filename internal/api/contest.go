@@ -5,7 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func ContestRoute(r *gin.RouterGroup, c *handle.ContestHandle, mid []gin.HandlerFunc) {
+func ContestRoute(r *gin.RouterGroup, c handle.ContestHandle, mid []gin.HandlerFunc) {
 	contest := r.Group("contest").Use(mid[1])
 	{
 		contest.GET("/:cid", c.GetInfoByID)       //获取比赛详情
