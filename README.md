@@ -5,14 +5,16 @@
 
 ## 技术栈
 - Golang
-- gin
-- gorm
-- RabbitMQ
-- MySQL
-- MongoDB
-- redis
-- judge0
-- 腾讯云COS
+- gin web框架
+- gorm ORM框架
+- wire 依赖注入
+- RabbitMQ 消息队列
+- MySQL 关系数据库
+- MongoDB 文档数据库
+- redis 缓存数据库
+- judge0 测评+沙箱
+- 腾讯云COS 对象存储
+- Docker 容器化
 - ...(项目还没写完)
 
 ## Contribute
