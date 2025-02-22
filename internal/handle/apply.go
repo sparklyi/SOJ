@@ -10,35 +10,44 @@ import (
 	"strconv"
 )
 
-type ApplyHandle struct {
-	log *zap.Logger
-	svc *service.ApplyService
+type ApplyHandle interface {
+	CreateApply(ctx *gin.Context)
+	UpdateApply(ctx *gin.Context)
+	DeleteApply(ctx *gin.Context)
+	GetListByUserID(ctx *gin.Context)
+	GetList(ctx *gin.Context)
+	GetInfoByID(ctx *gin.Context)
 }
 
-func NewApplyHandle(log *zap.Logger, svc *service.ApplyService) *ApplyHandle {
-	return &ApplyHandle{
+type apply struct {
+	log *zap.Logger
+	svc service.ApplyService
+}
+
+func NewApplyHandle(log *zap.Logger, svc service.ApplyService) ApplyHandle {
+	return &apply{
 		log: log,
 		svc: svc,
 	}
 }
 
 // CreateApply 创建报名
-func (ah *ApplyHandle) CreateApply(ctx *gin.Context) {
+func (ah *apply) CreateApply(ctx *gin.Context) {
 	req := entity.Apply{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	apply, err := ah.svc.CreateApply(ctx, &req)
+	a, err := ah.svc.CreateApply(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, apply)
+	response.SuccessWithData(ctx, a)
 }
 
 // UpdateApply 更新报名
-func (ah *ApplyHandle) UpdateApply(ctx *gin.Context) {
+func (ah *apply) UpdateApply(ctx *gin.Context) {
 	req := entity.Apply{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -54,7 +63,7 @@ func (ah *ApplyHandle) UpdateApply(ctx *gin.Context) {
 }
 
 // DeleteApply 取消报名
-func (ah *ApplyHandle) DeleteApply(ctx *gin.Context) {
+func (ah *apply) DeleteApply(ctx *gin.Context) {
 	t := ctx.Param("aid")
 	aid, err := strconv.Atoi(t)
 	if err != nil || aid <= 0 {
@@ -70,7 +79,7 @@ func (ah *ApplyHandle) DeleteApply(ctx *gin.Context) {
 }
 
 // GetListByUserID 获取用户报名信息
-func (ah *ApplyHandle) GetListByUserID(ctx *gin.Context) {
+func (ah *apply) GetListByUserID(ctx *gin.Context) {
 
 	page, err := strconv.Atoi(ctx.DefaultQuery("page", "1"))
 	if err != nil {
@@ -92,7 +101,7 @@ func (ah *ApplyHandle) GetListByUserID(ctx *gin.Context) {
 }
 
 // GetList 获取报名列表
-func (ah *ApplyHandle) GetList(ctx *gin.Context) {
+func (ah *apply) GetList(ctx *gin.Context) {
 	req := entity.ApplyList{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -108,17 +117,17 @@ func (ah *ApplyHandle) GetList(ctx *gin.Context) {
 }
 
 // GetInfoByID 根据报名id获取详情
-func (ah *ApplyHandle) GetInfoByID(ctx *gin.Context) {
+func (ah *apply) GetInfoByID(ctx *gin.Context) {
 	t := ctx.Param("aid")
 	aid, err := strconv.Atoi(t)
 	if err != nil || aid <= 0 {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	apply, err := ah.svc.GetInfoByID(ctx, aid)
+	a, err := ah.svc.GetInfoByID(ctx, aid)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, apply)
+	response.SuccessWithData(ctx, a)
 }

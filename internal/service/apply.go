@@ -12,14 +12,24 @@ import (
 	"time"
 )
 
-type ApplyService struct {
-	log         *zap.Logger
-	repo        *repository.ApplyRepository
-	contestRepo *repository.ContestRepository
+type ApplyService interface {
+	CreateApply(ctx *gin.Context, req *entity.Apply) (*model.Apply, error)
+	UpdateApply(ctx *gin.Context, req *entity.Apply) error
+	DeleteApply(ctx *gin.Context, aid int) error
+	GetListByUserID(ctx *gin.Context, page int, pageSize int) ([]*model.Apply, error)
+	GetList(ctx *gin.Context, req *entity.ApplyList) ([]*model.Apply, error)
+	GetInfoByID(ctx *gin.Context, aid int) (*model.Apply, error)
+	GetInfoByUserAndContest(ctx *gin.Context, uid uint, cid uint) (*model.Apply, error)
 }
 
-func NewApplyService(log *zap.Logger, repo *repository.ApplyRepository, c *repository.ContestRepository) *ApplyService {
-	return &ApplyService{
+type apply struct {
+	log         *zap.Logger
+	repo        repository.ApplyRepository
+	contestRepo repository.ContestRepository
+}
+
+func NewApplyService(log *zap.Logger, repo repository.ApplyRepository, c repository.ContestRepository) ApplyService {
+	return &apply{
 		log:         log,
 		repo:        repo,
 		contestRepo: c,
@@ -27,65 +37,65 @@ func NewApplyService(log *zap.Logger, repo *repository.ApplyRepository, c *repos
 }
 
 // CreateApply 创建报名
-func (as *ApplyService) CreateApply(ctx *gin.Context, req *entity.Apply) (*model.Apply, error) {
+func (as *apply) CreateApply(ctx *gin.Context, req *entity.Apply) (*model.Apply, error) {
 
 	claims := utils.GetAccessClaims(ctx)
 
-	apply := &model.Apply{
+	a := &model.Apply{
 		UserID:    uint(claims.ID),
 		ContestID: req.ContestID,
 		Name:      req.Name,
 	}
-	a, err := as.repo.GetInfoByUserAndContest(ctx, apply.UserID, apply.ContestID)
-	//已经报名
-	if a != nil && err == nil {
+	applyResp, err := as.repo.GetInfoByUserAndContest(ctx, a.UserID, a.ContestID)
+	//已经报名Resp
+	if applyResp != nil && err == nil {
 		return nil, errors.New(constant.AlreadyExistError)
 	} else if err != nil && err.Error() != constant.NotFoundError {
 		return nil, err
 	}
 	//比赛已结束或不存在
-	c, err := as.contestRepo.GetContestInfoByID(ctx, int(apply.ContestID))
+	c, err := as.contestRepo.GetContestInfoByID(ctx, int(a.ContestID))
 	if err != nil {
 		return nil, err
 	}
 	if c.EndTime.Unix() < time.Now().Unix() {
 		return nil, errors.New(constant.DisableError)
 	}
-	err = as.repo.CreateApply(ctx, apply)
+	err = as.repo.CreateApply(ctx, applyResp)
 	if err != nil {
 		return nil, err
 	}
-	return apply, nil
+	return applyResp, nil
 
 }
 
 // UpdateApply 更新报名
-func (as *ApplyService) UpdateApply(ctx *gin.Context, req *entity.Apply) error {
+func (as *apply) UpdateApply(ctx *gin.Context, req *entity.Apply) error {
 
-	apply, err := as.repo.GetInfoByID(ctx, req.ID)
+	applyResp, err := as.repo.GetInfoByID(ctx, req.ID)
 	if err != nil {
 		return err
 	}
 	claims := utils.GetAccessClaims(ctx)
-	if apply.UserID != uint(claims.ID) && claims.Auth < constant.AdminLevel {
+	if applyResp.UserID != uint(claims.ID) && claims.Auth < constant.AdminLevel {
 		return errors.New(constant.UnauthorizedError)
 	}
 	if req.Name != "" {
-		apply.Name = req.Name
+		applyResp.Name = req.Name
 	}
-	return as.repo.UpdateApply(ctx, apply)
+	return as.repo.UpdateApply(ctx, applyResp)
 
 }
 
 // DeleteApply 取消报名
-func (as *ApplyService) DeleteApply(ctx *gin.Context, aid int) error {
+func (as *apply) DeleteApply(ctx *gin.Context, aid int) error {
 	claims := utils.GetAccessClaims(ctx)
-	apply, err := as.repo.GetInfoByID(ctx, aid)
+	applyResp, err := as.repo.GetInfoByID(ctx, aid)
 	if err != nil {
 		return err
 	}
 	//非本人且非管理员
-	if apply.UserID != uint(claims.ID) && claims.Auth < constant.AdminLevel {
+	if applyResp.UserID != uint(claims.ID) && claims.Auth < constant.AdminLevel {
 		return errors.New(constant.UnauthorizedError)
 	}
 	return as.repo.DeleteApply(ctx, aid)
@@ -93,22 +103,22 @@ func (as *ApplyService) DeleteApply(ctx *gin.Context, aid int) error {
 }
 
 // GetListByUserID 获取用户报名信息
-func (as *ApplyService) GetListByUserID(ctx *gin.Context, page, pageSize int) ([]*model.Apply, error) {
+func (as *apply) GetListByUserID(ctx *gin.Context, page, pageSize int) ([]*model.Apply, error) {
 	claims := utils.GetAccessClaims(ctx)
 	return as.repo.GetListByUserID(ctx, claims.ID, page, pageSize)
 }
 
 // GetList 获取报名列表
-func (as *ApplyService) GetList(ctx *gin.Context, req *entity.ApplyList) ([]*model.Apply, error) {
+func (as *apply) GetList(ctx *gin.Context, req *entity.ApplyList) ([]*model.Apply, error) {
 	return as.repo.GetList(ctx, req)
 }
 
 // GetInfoByID 根据报名id获取详情
-func (as *ApplyService) GetInfoByID(ctx *gin.Context, aid int) (*model.Apply, error) {
+func (as *apply) GetInfoByID(ctx *gin.Context, aid int) (*model.Apply, error) {
 	return as.repo.GetInfoByID(ctx, aid)
 }
 
 // GetInfoByUserAndContest 根据用户id和比赛id获取报名详情
-func (as *ApplyService) GetInfoByUserAndContest(ctx *gin.Context, uid, cid uint) (*model.Apply, error) {
+func (as *apply) GetInfoByUserAndContest(ctx *gin.Context, uid, cid uint) (*model.Apply, error) {
 	return as.repo.GetInfoByUserAndContest(ctx, uid, cid)
 }

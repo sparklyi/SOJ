@@ -10,21 +10,28 @@ import (
 	"strconv"
 )
 
-type SubmissionHandle struct {
+type SubmissionHandle interface {
+	Run(ctx *gin.Context)
+	Judge(ctx *gin.Context)
+	List(ctx *gin.Context)
+	GetInfoByID(ctx *gin.Context)
+}
+
+type submission struct {
 	log *zap.Logger
-	svc *service.SubmissionService
+	svc service.SubmissionService
 }
 
 // NewSubmissionHandle 依赖注入
-func NewSubmissionHandle(log *zap.Logger, svc *service.SubmissionService) *SubmissionHandle {
-	return &SubmissionHandle{
+func NewSubmissionHandle(log *zap.Logger, svc service.SubmissionService) SubmissionHandle {
+	return &submission{
 		log: log,
 		svc: svc,
 	}
 }
 
 // Run 自测运行
-func (sh *SubmissionHandle) Run(ctx *gin.Context) {
+func (sh *submission) Run(ctx *gin.Context) {
 	req := entity.Run{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -39,7 +46,7 @@ func (sh *SubmissionHandle) Run(ctx *gin.Context) {
 }
 
 // Judge 提交运行
-func (sh *SubmissionHandle) Judge(ctx *gin.Context) {
+func (sh *submission) Judge(ctx *gin.Context) {
 	req := entity.Run{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -54,7 +61,7 @@ func (sh *SubmissionHandle) Judge(ctx *gin.Context) {
 }
 
 // List 获取测评列表
-func (sh *SubmissionHandle) List(ctx *gin.Context) {
+func (sh *submission) List(ctx *gin.Context) {
 	req := entity.SubmissionList{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -69,7 +76,7 @@ func (sh *SubmissionHandle) List(ctx *gin.Context) {
 }
 
 // GetInfoByID 获取测评信息
-func (sh *SubmissionHandle) GetInfoByID(ctx *gin.Context) {
+func (sh *submission) GetInfoByID(ctx *gin.Context) {
 	t := ctx.Param("sid")
 	id, err := strconv.Atoi(t)
 	if err != nil || id <= 0 {

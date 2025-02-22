@@ -14,15 +14,33 @@ import (
 	"gorm.io/gorm"
 )
 
-type ProblemRepository struct {
+type ProblemRepository interface {
+	GetTransaction(ctx *gin.Context) *gorm.DB
+	MongoCreate(ctx *gin.Context, req *entity.Problem) (primitive.ObjectID, error)
+	MySQLCreate(ctx *gin.Context, problem *model.Problem) error
+	Count(ctx *gin.Context) (int64, error)
+	GetProblemList(ctx *gin.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, error)
+	GetInfoByID(ctx *gin.Context, id int) (*model.Problem, error)
+	GetInfoByObjID(ctx *gin.Context, obj primitive.ObjectID) (*bson.M, error)
+	MysqlUpdateInfoByID(ctx *gin.Context, tx *gorm.DB, problem *model.Problem) error
+	MongoUpdateInfoByObjID(ctx *gin.Context, req *entity.Problem, objID primitive.ObjectID) error
+	MysqlDeleteProblem(ctx *gin.Context, tx *gorm.DB, id int) error
+	MongoDeleteProblem(ctx *gin.Context, objID primitive.ObjectID) error
+	GetTestCaseInfo(ctx *gin.Context, objID primitive.ObjectID) (*bson.M, error)
+	CreateTestCase(ctx *gin.Context, req *entity.TestCase) (primitive.ObjectID, error)
+	UpdateTestCase(ctx *gin.Context, req *entity.TestCase, objID primitive.ObjectID) error
+	DeleteTestCase(ctx *gin.Context, objID primitive.ObjectID) error
+}
+
+type problem struct {
 	log          *zap.Logger
 	db           *gorm.DB
 	ProblemColl  *mongo.Collection
 	TestCaseColl *mongo.Collection
 }
 
-func NewProblemRepository(log *zap.Logger, db *gorm.DB, m *mongo.Database) *ProblemRepository {
-	return &ProblemRepository{
+func NewProblemRepository(log *zap.Logger, db *gorm.DB, m *mongo.Database) ProblemRepository {
+	return &problem{
 		log:          log,
 		db:           db,
 		ProblemColl:  m.Collection("problem"),
@@ -30,12 +48,12 @@ func NewProblemRepository(log *zap.Logger, db *gorm.DB, m *mongo.Database) *Prob
 	}
 }
 
-func (pr *ProblemRepository) GetTransaction(ctx *gin.Context) *gorm.DB {
+func (pr *problem) GetTransaction(ctx *gin.Context) *gorm.DB {
 	return pr.db.WithContext(ctx).Begin()
 }
 
 // MongoCreate 创建mongo记录
-func (pr *ProblemRepository) MongoCreate(ctx *gin.Context, req *entity.Problem) (primitive.ObjectID, error) {
+func (pr *problem) MongoCreate(ctx *gin.Context, req *entity.Problem) (primitive.ObjectID, error) {
 	res, err := pr.ProblemColl.InsertOne(ctx, req)
 	if err != nil {
 		pr.log.Error("mongo写入失败", zap.Error(err))
@@ -46,7 +64,7 @@ func (pr *ProblemRepository) MongoCreate(ctx *gin.Context, req *entity.Problem) 
 }
 
 // MySQLCreate 创建mysql记录
-func (pr *ProblemRepository) MySQLCreate(ctx *gin.Context, problem *model.Problem) error {
+func (pr *problem) MySQLCreate(ctx *gin.Context, problem *model.Problem) error {
 	err := pr.db.WithContext(ctx).Create(problem).Error
 	if err != nil {
 		pr.log.Error("数据库插入失败", zap.Error(err))
@@ -57,7 +75,7 @@ func (pr *ProblemRepository) MySQLCreate(ctx *gin.Context, problem *model.Proble
 }
 
 // Count 题目数量
-func (pr *ProblemRepository) Count(ctx *gin.Context) (int64, error) {
+func (pr *problem) Count(ctx *gin.Context) (int64, error) {
 	var total int64
 	if err := pr.db.WithContext(ctx).Model(&model.Problem{}).Count(&total).Error; err != nil {
 		pr.log.Error("数据库查询失败", zap.Error(err))
@@ -67,7 +85,7 @@ func (pr *ProblemRepository) Count(ctx *gin.Context) (int64, error) {
 }
 
 // GetProblemList 获取题目列表(条件筛选+分页)
-func (pr *ProblemRepository) GetProblemList(ctx *gin.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, error) {
+func (pr *problem) GetProblemList(ctx *gin.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, error) {
 	var sets []*model.Problem
 	db := pr.db.WithContext(ctx).Model(&model.Problem{})
 	if req.ID != 0 {
@@ -92,7 +110,7 @@ func (pr *ProblemRepository) GetProblemList(ctx *gin.Context, req *entity.Proble
 }
 
 // GetInfoByID 根据ID获取数据库信息
-func (pr *ProblemRepository) GetInfoByID(ctx *gin.Context, id int) (*model.Problem, error) {
+func (pr *problem) GetInfoByID(ctx *gin.Context, id int) (*model.Problem, error) {
 	p := model.Problem{Model: gorm.Model{ID: uint(id)}}
 	if err := pr.db.WithContext(ctx).First(&p).Error; errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New(constant.NotFoundError)
@@ -105,7 +123,7 @@ func (pr *ProblemRepository) GetInfoByID(ctx *gin.Context, id int) (*model.Probl
 }
 
 // GetInfoByObjID 通过对象id获取对应的文档内容
-func (pr *ProblemRepository) GetInfoByObjID(ctx *gin.Context, obj primitive.ObjectID) (*bson.M, error) {
+func (pr *problem) GetInfoByObjID(ctx *gin.Context, obj primitive.ObjectID) (*bson.M, error) {
 	var res bson.M
 	err := pr.ProblemColl.FindOne(ctx, bson.M{"_id": obj}).Decode(&res)
 	if err != nil {
@@ -120,7 +138,7 @@ func (pr *ProblemRepository) GetInfoByObjID(ctx *gin.Context, obj primitive.Obje
 }
 
 // MysqlUpdateInfoByID 题目信息更新
-func (pr *ProblemRepository) MysqlUpdateInfoByID(ctx *gin.Context, tx *gorm.DB, problem *model.Problem) error {
+func (pr *problem) MysqlUpdateInfoByID(ctx *gin.Context, tx *gorm.DB, problem *model.Problem) error {
 	if tx == nil {
 		tx = pr.db
 	}
@@ -133,7 +151,7 @@ func (pr *ProblemRepository) MysqlUpdateInfoByID(ctx *gin.Context, tx *gorm.DB, 
 }
 
 // MongoUpdateInfoByObjID mongo中的信息更新
-func (pr *ProblemRepository) MongoUpdateInfoByObjID(ctx *gin.Context, req *entity.Problem, objID primitive.ObjectID) error {
+func (pr *problem) MongoUpdateInfoByObjID(ctx *gin.Context, req *entity.Problem, objID primitive.ObjectID) error {
 	filter := bson.M{"_id": objID}
 	update := bson.M{"$set": req}
 	res, err := pr.ProblemColl.UpdateOne(ctx, filter, update)
@@ -148,7 +166,7 @@ func (pr *ProblemRepository) MongoUpdateInfoByObjID(ctx *gin.Context, req *entit
 }
 
 // MysqlDeleteProblem mysql中的题目删除
-func (pr *ProblemRepository) MysqlDeleteProblem(ctx *gin.Context, tx *gorm.DB, id int) error {
+func (pr *problem) MysqlDeleteProblem(ctx *gin.Context, tx *gorm.DB, id int) error {
 	err := tx.WithContext(ctx).Where("id = ?", id).Delete(&model.Problem{}).Error
 	if err != nil {
 		pr.log.Error("数据库删除记录失败", zap.Error(err))
@@ -158,7 +176,7 @@ func (pr *ProblemRepository) MysqlDeleteProblem(ctx *gin.Context, tx *gorm.DB, i
 }
 
 // MongoDeleteProblem mongo中的题目删除
-func (pr *ProblemRepository) MongoDeleteProblem(ctx *gin.Context, objID primitive.ObjectID) error {
+func (pr *problem) MongoDeleteProblem(ctx *gin.Context, objID primitive.ObjectID) error {
 	filter := bson.M{"_id": objID}
 	_, err := pr.ProblemColl.DeleteOne(ctx, filter)
 	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
@@ -172,7 +190,7 @@ func (pr *ProblemRepository) MongoDeleteProblem(ctx *gin.Context, objID primitiv
 }
 
 // GetTestCaseInfo 获取测试点
-func (pr *ProblemRepository) GetTestCaseInfo(ctx *gin.Context, objID primitive.ObjectID) (*bson.M, error) {
+func (pr *problem) GetTestCaseInfo(ctx *gin.Context, objID primitive.ObjectID) (*bson.M, error) {
 
 	var res *bson.M
 	err := pr.TestCaseColl.FindOne(ctx, bson.M{"_id": objID}).Decode(&res)
@@ -187,7 +205,7 @@ func (pr *ProblemRepository) GetTestCaseInfo(ctx *gin.Context, objID primitive.O
 }
 
 // CreateTestCase 创建测试点
-func (pr *ProblemRepository) CreateTestCase(ctx *gin.Context, req *entity.TestCase) (primitive.ObjectID, error) {
+func (pr *problem) CreateTestCase(ctx *gin.Context, req *entity.TestCase) (primitive.ObjectID, error) {
 	res, err := pr.TestCaseColl.InsertOne(ctx, req)
 	if err != nil {
 		pr.log.Error("测试点写入失败", zap.Error(err))
@@ -198,7 +216,7 @@ func (pr *ProblemRepository) CreateTestCase(ctx *gin.Context, req *entity.TestCa
 }
 
 // UpdateTestCase 更新测试点
-func (pr *ProblemRepository) UpdateTestCase(ctx *gin.Context, req *entity.TestCase, objID primitive.ObjectID) error {
+func (pr *problem) UpdateTestCase(ctx *gin.Context, req *entity.TestCase, objID primitive.ObjectID) error {
 	filter := bson.M{"_id": objID}
 	update := bson.M{"$set": req}
 	res, err := pr.TestCaseColl.UpdateOne(ctx, filter, update)
@@ -213,7 +231,7 @@ func (pr *ProblemRepository) UpdateTestCase(ctx *gin.Context, req *entity.TestCa
 }
 
 // DeleteTestCase 删除测试点
-func (pr *ProblemRepository) DeleteTestCase(ctx *gin.Context, objID primitive.ObjectID) error {
+func (pr *problem) DeleteTestCase(ctx *gin.Context, objID primitive.ObjectID) error {
 	filter := bson.M{"_id": objID}
 	_, err := pr.TestCaseColl.DeleteOne(ctx, filter)
 	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {

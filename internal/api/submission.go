@@ -5,7 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SubmissionRoute(r *gin.RouterGroup, s *handle.SubmissionHandle, mid []gin.HandlerFunc) {
+func SubmissionRoute(r *gin.RouterGroup, s handle.SubmissionHandle, mid []gin.HandlerFunc) {
 
 	submission := r.Group("submission").Use(mid[1])
 	{

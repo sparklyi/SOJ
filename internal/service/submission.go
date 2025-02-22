@@ -10,24 +10,33 @@ import (
 	"context"
 	"errors"
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
 	"strconv"
 )
 
-type SubmissionService struct {
+type SubmissionService interface {
+	GetLimit(ctx *gin.Context, pid int, lid int, oid string, s *model.Submission) (*entity.Limit, error)
+	Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResult, error)
+	Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error)
+	GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error)
+	DeletePostgresJudgeHistory(ctx context.Context) error
+	GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error)
+	GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error)
+}
+
+type submission struct {
 	log         *zap.Logger
-	repo        *repository.SubmissionRepository
-	problemRepo *repository.ProblemRepository
-	langRepo    *repository.LanguageRepository
-	userRepo    *repository.UserRepository
-	applyRepo   *repository.ApplyRepository
+	repo        repository.SubmissionRepository
+	problemRepo repository.ProblemRepository
+	langRepo    repository.LanguageRepository
+	userRepo    repository.UserRepository
+	applyRepo   repository.ApplyRepository
 	judge       *judge0.Judge
 }
 
-func NewSubmissionService(log *zap.Logger, a *repository.ApplyRepository, repo *repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge, u *repository.UserRepository) *SubmissionService {
-	return &SubmissionService{
+func NewSubmissionService(log *zap.Logger, a repository.ApplyRepository, repo repository.SubmissionRepository, p repository.ProblemRepository, l repository.LanguageRepository, j *judge0.Judge, u repository.UserRepository) SubmissionService {
+	return &submission{
 		log:         log,
 		repo:        repo,
 		problemRepo: p,
@@ -39,7 +48,7 @@ func NewSubmissionService(log *zap.Logger, a *repository.ApplyRepository, repo *
 }
 
 // GetLimit 获取相关语言的时空限制
-func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string, s *model.Submission) (*entity.Limit, error) {
+func (ss *submission) GetLimit(ctx *gin.Context, pid, lid int, oid string, s *model.Submission) (*entity.Limit, error) {
 	//检查语言是否可用
 	l, err := ss.langRepo.GetByID(ctx, lid)
 	if err != nil {
@@ -64,18 +73,18 @@ func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string
 	if err != nil {
 		return nil, err
 	}
-	//正反序列化后得到时空限制
-	bd, _ := bson.Marshal(data)
+	//序列化后得到时空限制
 	t := entity.Problem{}
-	err = bson.Unmarshal(bd, &t)
+	err = utils.UnmarshalBSON(data, &t)
+
 	if err != nil {
 		return nil, err
 	}
 
 	//默认限制
 	limit := entity.Limit{
-		CpuTimeLimit:   2.0,        //s
-		CpuMemoryLimit: 512 * 1024, //KB
+		CpuTimeLimit:   constant.DefaultJudgeTimeLimit,
+		CpuMemoryLimit: constant.DefaultJudgeMemoryLimit,
 	}
 	//存在当前测评语言的限制
 	if v, ok := t.LangLimit[strconv.Itoa(lid)]; ok {
@@ -89,7 +98,7 @@ func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string
 }
 
 // Run 自测运行
-func (ss *SubmissionService) Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResult, error) {
+func (ss *submission) Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResult, error) {
 
 	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID, nil)
 	if err != nil {
@@ -105,7 +114,7 @@ func (ss *SubmissionService) Run(ctx *gin.Context, req *entity.Run) (*entity.Jud
 }
 
 // Judge 提交运行
-func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error) {
+func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error) {
 	s := &model.Submission{}
 	//获取当前测评语言的限制
 	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID, s)
@@ -128,13 +137,14 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 		return nil, err
 	}
 
-	//正反序列化得到测试点
-	tc, _ := bson.Marshal(t)
+	//序列化得到测试点
 	var testcase entity.TestCase
-	err = bson.Unmarshal(tc, &testcase)
+	err = utils.UnmarshalBSON(t, &testcase)
 	if err != nil {
 		return nil, err
 	}
+
+	ss.log.Info("提交测评", zap.Any("request:", req))
 
 	//并发提交每个测试点
 	n := len(testcase.Content)
@@ -191,9 +201,9 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 			s.Status, s.Stderr, s.CompileOut = v.Description, v.Stderr, v.CompileOutput
 		}
 		//未通过直接返回,后续测试点不再检查(ACM模式, 其他模式后续扩展)
-		//if mxid != constant.JudgeAccepted {
-		//	break
-		//}
+		if mxid != constant.JudgeAC {
+			break
+		}
 	}
 	//测评机请求时间过长会导致上下文过长，gorm会警告慢sql
 	err = ss.repo.CreateSubmission(ctx, s)
@@ -205,17 +215,17 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 }
 
 // GetSubmissionInfoByID  根据ID获取测评详情
-func (ss *SubmissionService) GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
+func (ss *submission) GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
 	return ss.repo.GetInfoByID(ctx, id)
 }
 
 // DeletePostgresJudgeHistory 删除postgres的测评历史记录
-func (ss *SubmissionService) DeletePostgresJudgeHistory(ctx context.Context) error {
+func (ss *submission) DeletePostgresJudgeHistory(ctx context.Context) error {
 	return ss.repo.DeleteAllJudgeHistory(ctx)
 }
 
 // GetSubmissionList 获取测评列表
-func (ss *SubmissionService) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
+func (ss *submission) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
 	s, err := ss.repo.GetSubmissionList(ctx, req)
 	for _, v := range s {
 		v.SourceCode = ""
@@ -226,7 +236,7 @@ func (ss *SubmissionService) GetSubmissionList(ctx *gin.Context, req *entity.Sub
 }
 
 // GetSubmissionByID 根据测评id获取详情
-func (ss *SubmissionService) GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error) {
+func (ss *submission) GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error) {
 	s, err := ss.repo.GetInfoByID(ctx, id)
 	if err != nil {
 		return nil, err
