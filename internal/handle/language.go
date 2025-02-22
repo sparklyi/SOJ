@@ -11,21 +11,28 @@ import (
 	"strconv"
 )
 
-type LanguageHandle struct {
+type LanguageHandle interface {
+	GetInfo(ctx *gin.Context)
+	List(ctx *gin.Context)
+	Update(ctx *gin.Context)
+	SyncLanguage(ctx *gin.Context)
+}
+
+type language struct {
 	log *zap.Logger
-	svc *service.LanguageService
+	svc service.LanguageService
 }
 
 // NewLanguageHandle 依赖注入
-func NewLanguageHandle(log *zap.Logger, svc *service.LanguageService) *LanguageHandle {
-	return &LanguageHandle{
+func NewLanguageHandle(log *zap.Logger, svc service.LanguageService) LanguageHandle {
+	return &language{
 		log: log,
 		svc: svc,
 	}
 }
 
 // GetInfo 获取测评语言信息
-func (lh *LanguageHandle) GetInfo(ctx *gin.Context) {
+func (lh *language) GetInfo(ctx *gin.Context) {
 	t := ctx.Param("lid")
 	lid, err := strconv.Atoi(t)
 	if err != nil || lid <= 0 {
@@ -42,7 +49,7 @@ func (lh *LanguageHandle) GetInfo(ctx *gin.Context) {
 }
 
 // List 获取语言列表
-func (lh *LanguageHandle) List(ctx *gin.Context) {
+func (lh *language) List(ctx *gin.Context) {
 	req := entity.Language{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -64,7 +71,7 @@ func (lh *LanguageHandle) List(ctx *gin.Context) {
 }
 
 // Update 测评语言更新
-func (lh *LanguageHandle) Update(ctx *gin.Context) {
+func (lh *language) Update(ctx *gin.Context) {
 	req := entity.Language{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -79,7 +86,7 @@ func (lh *LanguageHandle) Update(ctx *gin.Context) {
 }
 
 // SyncLanguage 同步judge0的测评语言
-func (lh *LanguageHandle) SyncLanguage(ctx *gin.Context) {
+func (lh *language) SyncLanguage(ctx *gin.Context) {
 	err := lh.svc.SyncJudge0Lang(ctx)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())

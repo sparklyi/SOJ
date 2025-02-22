@@ -7,7 +7,7 @@ import (
 )
 
 type Cmd struct {
-	G             *gin.Engine
-	EmailConsumer *mq.EmailConsumer
-	Cron          *cron.Cron
+	G        *gin.Engine
+	Consumer mq.Consumer
+	Cron     *cron.Cron
 }

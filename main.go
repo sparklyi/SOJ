@@ -14,7 +14,7 @@ func main() {
 	f := initialize.InitServer()
 
 	//启动消费者
-	go f.EmailConsumer.Consume(context.Background())
+	go f.Consumer.Consume(context.Background())
 
 	//启动定时任务
 	f.Cron.Start()

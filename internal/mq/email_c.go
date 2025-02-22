@@ -14,7 +14,7 @@ const (
 	MaxRetry = 5 //最大重试消费次数
 )
 
-type EmailConsumer struct {
+type emailConsumer struct {
 	log   *zap.Logger
 	email *email.Email
 	*EmailProducer
@@ -22,8 +22,8 @@ type EmailConsumer struct {
 }
 
 // NewEmailConsumer 依赖注入方法
-func NewEmailConsumer(log *zap.Logger, email *email.Email, p *EmailProducer, rs *redis.Client) *EmailConsumer {
-	return &EmailConsumer{
+func NewEmailConsumer(log *zap.Logger, email *email.Email, p *EmailProducer, rs *redis.Client) Consumer {
+	return &emailConsumer{
 		log:           log,
 		email:         email,
 		EmailProducer: p,
@@ -33,7 +33,7 @@ func NewEmailConsumer(log *zap.Logger, email *email.Email, p *EmailProducer, rs 
 }
 
 // Consume 消费队列消息
-func (c *EmailConsumer) Consume(ctx context.Context) {
+func (c *emailConsumer) Consume(ctx context.Context) {
 	c.log.Info("start consume email")
 	defer c.log.Info("end consume email")
 
