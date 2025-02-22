@@ -5,7 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func LanguageRoute(r *gin.RouterGroup, l *handle.LanguageHandle, mid []gin.HandlerFunc) {
+func LanguageRoute(r *gin.RouterGroup, l handle.LanguageHandle, mid []gin.HandlerFunc) {
 	lang := r.Group("language").Use(mid[1])
 	{
 		lang.POST("", l.List)                      //获取测评语言列表

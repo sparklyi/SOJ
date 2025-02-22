@@ -12,15 +12,24 @@ import (
 	"go.uber.org/zap"
 )
 
-type ContestService struct {
+type ContestService interface {
+	CreateContest(ctx *gin.Context, req *entity.Contest) (*model.Contest, error)
+	UpdateContest(ctx *gin.Context, req *entity.Contest) error
+	GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, error)
+	GetListByUserID(ctx *gin.Context, id int, page int, pageSize int) ([]*model.Contest, error)
+	GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error)
+	DeleteContest(ctx *gin.Context, id int) error
+}
+
+type contest struct {
 	log       *zap.Logger
-	repo      *repository.ContestRepository
-	applyRepo *repository.ApplyRepository
+	repo      repository.ContestRepository
+	applyRepo repository.ApplyRepository
 }
 
 // NewContestService 依赖注入
-func NewContestService(logger *zap.Logger, repo *repository.ContestRepository, a *repository.ApplyRepository) *ContestService {
-	return &ContestService{
+func NewContestService(logger *zap.Logger, repo repository.ContestRepository, a repository.ApplyRepository) ContestService {
+	return &contest{
 		log:       logger,
 		repo:      repo,
 		applyRepo: a,
@@ -29,7 +38,7 @@ func NewContestService(logger *zap.Logger, repo *repository.ContestRepository, a
 }
 
 // CreateContest 创建比赛
-func (cs *ContestService) CreateContest(ctx *gin.Context, req *entity.Contest) (*model.Contest, error) {
+func (cs *contest) CreateContest(ctx *gin.Context, req *entity.Contest) (*model.Contest, error) {
 	problemSet, _ := json.Marshal(req.ProblemSet)
 	if req.Public == nil || *req.Public == false {
 		req.Code = utils.GenerateRandCode(6)
@@ -53,7 +62,7 @@ func (cs *ContestService) CreateContest(ctx *gin.Context, req *entity.Contest) (
 }
 
 // UpdateContest 更新比赛信息
-func (cs *ContestService) UpdateContest(ctx *gin.Context, req *entity.Contest) error {
+func (cs *contest) UpdateContest(ctx *gin.Context, req *entity.Contest) error {
 	c, err := cs.repo.GetContestInfoByID(ctx, req.ID)
 	if err != nil {
 		return err
@@ -92,7 +101,7 @@ func (cs *ContestService) UpdateContest(ctx *gin.Context, req *entity.Contest) e
 }
 
 // GetContestList 获取比赛列表
-func (cs *ContestService) GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, error) {
+func (cs *contest) GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, error) {
 	claims := utils.GetAccessClaims(ctx)
 	admin := claims != nil && claims.Auth > constant.UserLevel
 
@@ -110,12 +119,12 @@ func (cs *ContestService) GetContestList(ctx *gin.Context, req *entity.ContestLi
 }
 
 // GetListByUserID 获取用户比赛列表
-func (cs *ContestService) GetListByUserID(ctx *gin.Context, id, page, pageSize int) ([]*model.Contest, error) {
+func (cs *contest) GetListByUserID(ctx *gin.Context, id, page, pageSize int) ([]*model.Contest, error) {
 	return cs.repo.GetListByUserID(ctx, id, page, pageSize)
 }
 
 // GetContestInfoByID 获取比赛详情
-func (cs *ContestService) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error) {
+func (cs *contest) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error) {
 	c, err := cs.repo.GetContestInfoByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -128,7 +137,7 @@ func (cs *ContestService) GetContestInfoByID(ctx *gin.Context, id int) (*model.C
 }
 
 // DeleteContest 删除比赛
-func (cs *ContestService) DeleteContest(ctx *gin.Context, id int) error {
+func (cs *contest) DeleteContest(ctx *gin.Context, id int) error {
 	c, err := cs.repo.GetContestInfoByID(ctx, id)
 	if err != nil {
 		return err

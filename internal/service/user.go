@@ -22,42 +22,58 @@ import (
 	"strings"
 )
 
-type UserService struct {
+type UserService interface {
+	EncryptPassword(raw string) string
+	CheckPassword(raw string, encrypt string) bool
+	CheckCode(ctx *gin.Context, email string, code string) (bool, error)
+	Register(ctx *gin.Context, req *entity.Register) (*model.User, error)
+	LoginByEmail(ctx *gin.Context, req *entity.LoginByEmail) (*model.User, error)
+	LoginByPassword(ctx *gin.Context, req *entity.LoginByPassword) (*model.User, error)
+	GetUserByID(ctx *gin.Context, id int) (*model.User, error)
+	UploadAvatar(ctx *gin.Context, fh *multipart.FileHeader, ID int) error
+	UpdatePassword(ctx *gin.Context, req *entity.UpdatePassword) error
+	GetUserList(ctx *gin.Context, req *entity.UserInfo) ([]*model.User, error)
+	UpdateUserInfo(ctx *gin.Context, req *entity.UserUpdate, admin bool) error
+	ResetPassword(ctx *gin.Context, email string) error
+	DeleteByID(ctx *gin.Context, id int) error
+}
+
+type user struct {
 	log     *zap.Logger
-	repo    *repository.UserRepository
+	repo    repository.UserRepository
 	rs      *redis.Client
 	cs      *cos.Client
-	Email   *EmailService
+	email   *mq.EmailProducer
 	captcha *captcha.Captcha
 }
 
-func NewUserService(log *zap.Logger, repo *repository.UserRepository, rs *redis.Client, cs *cos.Client, e *EmailService, c *captcha.Captcha) *UserService {
-	return &UserService{
+func NewUserService(log *zap.Logger, repo repository.UserRepository, rs *redis.Client, cs *cos.Client, e *mq.EmailProducer, c *captcha.Captcha) UserService {
+	return &user{
 		log:     log,
 		repo:    repo,
 		rs:      rs,
 		cs:      cs,
-		Email:   e,
+		email:   e,
 		captcha: c,
 	}
 }
 
 // EncryptPassword 密码加密(盐+hash)
-func (us *UserService) EncryptPassword(raw string) string {
+func (us *user) EncryptPassword(raw string) string {
 	option := &password.Options{SaltLen: 16, Iterations: 100, KeyLen: 32, HashFunction: sha512.New}
 	salt, encode := password.Encode(raw, option)
 	return fmt.Sprintf("pbkdf2-sha512$%s$%s", salt, encode)
 }
 
 // CheckPassword 密码检查
-func (us *UserService) CheckPassword(raw, encrypt string) bool {
+func (us *user) CheckPassword(raw, encrypt string) bool {
 	//与加密保持一致
 	option := &password.Options{SaltLen: 16, Iterations: 100, KeyLen: 32, HashFunction: sha512.New}
 	list := strings.Split(encrypt, "$")
 	return password.Verify(raw, list[1], list[2], option)
 }
 
-func (us *UserService) CheckCode(ctx *gin.Context, email string, code string) (bool, error) {
+func (us *user) CheckCode(ctx *gin.Context, email string, code string) (bool, error) {
 	check, err := us.rs.Get(ctx, email).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		us.log.Error("redis获取失败", zap.Error(err))
@@ -68,7 +84,7 @@ func (us *UserService) CheckCode(ctx *gin.Context, email string, code string) (b
 }
 
 // Register 注册
-func (us *UserService) Register(ctx *gin.Context, req *entity.Register) (*model.User, error) {
+func (us *user) Register(ctx *gin.Context, req *entity.Register) (*model.User, error) {
 
 	if check, err := us.CheckCode(ctx, req.Email, req.Code); err != nil {
 		return nil, err
@@ -76,20 +92,20 @@ func (us *UserService) Register(ctx *gin.Context, req *entity.Register) (*model.
 		return nil, errors.New(constant.CodeError)
 	}
 
-	user := model.User{
+	u := model.User{
 		Username: "用户" + req.Email,
 		Email:    req.Email,
 		Password: us.EncryptPassword(req.Password),
 	}
 	//转repository层
-	if err := us.repo.CreateUserByEmail(ctx, &user); err != nil {
+	if err := us.repo.CreateUserByEmail(ctx, &u); err != nil {
 		return nil, err
 	}
-	return &user, nil
+	return &u, nil
 }
 
 // LoginByEmail 使用邮箱登录
-func (us *UserService) LoginByEmail(ctx *gin.Context, req *entity.LoginByEmail) (*model.User, error) {
+func (us *user) LoginByEmail(ctx *gin.Context, req *entity.LoginByEmail) (*model.User, error) {
 	if check, err := us.CheckCode(ctx, req.Email, req.Code); err != nil {
 		return nil, err
 	} else if !check {
@@ -99,35 +115,35 @@ func (us *UserService) LoginByEmail(ctx *gin.Context, req *entity.LoginByEmail) 
 }
 
 // LoginByPassword 密码登录
-func (us *UserService) LoginByPassword(ctx *gin.Context, req *entity.LoginByPassword) (*model.User, error) {
+func (us *user) LoginByPassword(ctx *gin.Context, req *entity.LoginByPassword) (*model.User, error) {
 	//验证码验证
 	if !us.captcha.Verify(req.CaptchaID, req.Captcha, true) {
 		return nil, errors.New(constant.CodeError)
 	}
-	user, err := us.repo.GetUserByEmail(ctx, req.Email)
+	u, err := us.repo.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, err
 	}
-	if !us.CheckPassword(req.Password, user.Password) {
+	if !us.CheckPassword(req.Password, u.Password) {
 		return nil, errors.New("密码错误")
 	}
-	return user, nil
+	return u, nil
 }
 
 // GetUserByID 通过ID获取用户信息
-func (us *UserService) GetUserByID(ctx *gin.Context, id int) (*model.User, error) {
-	user, err := us.repo.GetUserByID(ctx, id)
+func (us *user) GetUserByID(ctx *gin.Context, id int) (*model.User, error) {
+	u, err := us.repo.GetUserByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	//去敏
-	user.Password = ""
-	user.Email = ""
-	return user, nil
+	u.Password = ""
+	u.Email = ""
+	return u, nil
 }
 
 // UploadAvatar 头像上传
-func (us *UserService) UploadAvatar(ctx *gin.Context, fh *multipart.FileHeader, ID int) error {
+func (us *user) UploadAvatar(ctx *gin.Context, fh *multipart.FileHeader, ID int) error {
 	f, err := fh.Open()
 	if err != nil {
 		return err
@@ -146,30 +162,30 @@ func (us *UserService) UploadAvatar(ctx *gin.Context, fh *multipart.FileHeader, 
 		return errors.New("上传失败")
 	}
 	//将头像地址存入数据库
-	user := model.User{
+	u := model.User{
 		Model:  gorm.Model{ID: uint(ID)},
 		Avatar: us.cs.BaseURL.BucketURL.String() + "/" + name,
 	}
-	return us.repo.UpdateUserByID(ctx, &user)
+	return us.repo.UpdateUserByID(ctx, &u)
 }
 
 // UpdatePassword 密码重置
-func (us *UserService) UpdatePassword(ctx *gin.Context, req *entity.UpdatePassword) error {
+func (us *user) UpdatePassword(ctx *gin.Context, req *entity.UpdatePassword) error {
 	if check, err := us.CheckCode(ctx, req.Email, req.Code); err != nil {
 		return err
 	} else if !check {
 		return errors.New(constant.CodeError)
 	}
 	//密码加密存入数据库
-	user := &model.User{
+	u := &model.User{
 		Email:    req.Email,
 		Password: us.EncryptPassword(req.Password),
 	}
-	return us.repo.UpdateUserByEmail(ctx, user)
+	return us.repo.UpdateUserByEmail(ctx, u)
 }
 
 // GetUserList 获取用户列表
-func (us *UserService) GetUserList(ctx *gin.Context, req *entity.UserInfo) ([]*model.User, error) {
+func (us *user) GetUserList(ctx *gin.Context, req *entity.UserInfo) ([]*model.User, error) {
 	users, err := us.repo.GetUserList(ctx, req)
 	if err != nil {
 		return nil, err
@@ -182,25 +198,25 @@ func (us *UserService) GetUserList(ctx *gin.Context, req *entity.UserInfo) ([]*m
 }
 
 // UpdateUserInfo 更新用户信息
-func (us *UserService) UpdateUserInfo(ctx *gin.Context, req *entity.UserUpdate, admin bool) error {
-	var user model.User
+func (us *user) UpdateUserInfo(ctx *gin.Context, req *entity.UserUpdate, admin bool) error {
+	var u model.User
 	if admin {
-		user = model.User{
+		u = model.User{
 			Email: req.Email,
 			Role:  req.Role,
 		}
 	}
-	user.Username = req.Username
-	user.ID = uint(req.ID)
+	u.Username = req.Username
+	u.ID = uint(req.ID)
 	//修改角色权限为-1则直接删除用户
-	if user.Role == constant.BanLevel {
+	if u.Role == constant.BanLevel {
 		return us.repo.DeleteUserByID(ctx, req.ID)
 	}
-	return us.repo.UpdateUserByID(ctx, &user)
+	return us.repo.UpdateUserByID(ctx, &u)
 }
 
 // ResetPassword 重置密码
-func (us *UserService) ResetPassword(ctx *gin.Context, email string) error {
+func (us *user) ResetPassword(ctx *gin.Context, email string) error {
 	//生成随机密码
 	pwd := utils.GenerateRandCode(10)
 	err := us.repo.UpdateUserByEmail(ctx, &model.User{Email: email, Password: us.EncryptPassword(pwd)})
@@ -209,7 +225,7 @@ func (us *UserService) ResetPassword(ctx *gin.Context, email string) error {
 	}
 	//向重置密码的用户发送新密码
 	go func() {
-		us.Email.emailProducer.Send(ctx, mq.EmailContent{
+		us.email.Send(ctx, mq.EmailContent{
 			Target:  []string{email},
 			Subject: "密码重置",
 			Content: "你的密码已被管理员重置,新密码为<a>" + pwd + "</a>,请妥善保管或及时修改",
@@ -221,6 +237,6 @@ func (us *UserService) ResetPassword(ctx *gin.Context, email string) error {
 }
 
 // DeleteByID 删除用户
-func (us *UserService) DeleteByID(ctx *gin.Context, id int) error {
+func (us *user) DeleteByID(ctx *gin.Context, id int) error {
 	return us.repo.DeleteUserByID(ctx, id)
 }

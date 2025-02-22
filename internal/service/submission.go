@@ -15,18 +15,28 @@ import (
 	"strconv"
 )
 
-type SubmissionService struct {
+type SubmissionService interface {
+	GetLimit(ctx *gin.Context, pid int, lid int, oid string, s *model.Submission) (*entity.Limit, error)
+	Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResult, error)
+	Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error)
+	GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error)
+	DeletePostgresJudgeHistory(ctx context.Context) error
+	GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error)
+	GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error)
+}
+
+type submission struct {
 	log         *zap.Logger
 	repo        repository.SubmissionRepository
-	problemRepo *repository.ProblemRepository
-	langRepo    *repository.LanguageRepository
-	userRepo    *repository.UserRepository
-	applyRepo   *repository.ApplyRepository
+	problemRepo repository.ProblemRepository
+	langRepo    repository.LanguageRepository
+	userRepo    repository.UserRepository
+	applyRepo   repository.ApplyRepository
 	judge       *judge0.Judge
 }
 
-func NewSubmissionService(log *zap.Logger, a *repository.ApplyRepository, repo repository.SubmissionRepository, p *repository.ProblemRepository, l *repository.LanguageRepository, j *judge0.Judge, u *repository.UserRepository) *SubmissionService {
-	return &SubmissionService{
+func NewSubmissionService(log *zap.Logger, a repository.ApplyRepository, repo repository.SubmissionRepository, p repository.ProblemRepository, l repository.LanguageRepository, j *judge0.Judge, u repository.UserRepository) SubmissionService {
+	return &submission{
 		log:         log,
 		repo:        repo,
 		problemRepo: p,
@@ -38,7 +48,7 @@ func NewSubmissionService(log *zap.Logger, a *repository.ApplyRepository, repo r
 }
 
 // GetLimit 获取相关语言的时空限制
-func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string, s *model.Submission) (*entity.Limit, error) {
+func (ss *submission) GetLimit(ctx *gin.Context, pid, lid int, oid string, s *model.Submission) (*entity.Limit, error) {
 	//检查语言是否可用
 	l, err := ss.langRepo.GetByID(ctx, lid)
 	if err != nil {
@@ -88,7 +98,7 @@ func (ss *SubmissionService) GetLimit(ctx *gin.Context, pid, lid int, oid string
 }
 
 // Run 自测运行
-func (ss *SubmissionService) Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResult, error) {
+func (ss *submission) Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResult, error) {
 
 	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID, nil)
 	if err != nil {
@@ -104,7 +114,7 @@ func (ss *SubmissionService) Run(ctx *gin.Context, req *entity.Run) (*entity.Jud
 }
 
 // Judge 提交运行
-func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error) {
+func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error) {
 	s := &model.Submission{}
 	//获取当前测评语言的限制
 	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID, s)
@@ -205,17 +215,17 @@ func (ss *SubmissionService) Judge(ctx *gin.Context, req *entity.Run) (*model.Su
 }
 
 // GetSubmissionInfoByID  根据ID获取测评详情
-func (ss *SubmissionService) GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
+func (ss *submission) GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
 	return ss.repo.GetInfoByID(ctx, id)
 }
 
 // DeletePostgresJudgeHistory 删除postgres的测评历史记录
-func (ss *SubmissionService) DeletePostgresJudgeHistory(ctx context.Context) error {
+func (ss *submission) DeletePostgresJudgeHistory(ctx context.Context) error {
 	return ss.repo.DeleteAllJudgeHistory(ctx)
 }
 
 // GetSubmissionList 获取测评列表
-func (ss *SubmissionService) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
+func (ss *submission) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
 	s, err := ss.repo.GetSubmissionList(ctx, req)
 	for _, v := range s {
 		v.SourceCode = ""
@@ -226,7 +236,7 @@ func (ss *SubmissionService) GetSubmissionList(ctx *gin.Context, req *entity.Sub
 }
 
 // GetSubmissionByID 根据测评id获取详情
-func (ss *SubmissionService) GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error) {
+func (ss *submission) GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error) {
 	s, err := ss.repo.GetInfoByID(ctx, id)
 	if err != nil {
 		return nil, err
