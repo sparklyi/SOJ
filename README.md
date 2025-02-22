@@ -19,7 +19,7 @@
 欢迎任何形式的贡献
 
 ## License
-本项目使用MIT许可
+本项目使用[MIT](https://github.com/sparklyi/SOJ?tab=MIT-1-ov-file)许可
 
 ## 联系方式
 - QQ: 513254687
