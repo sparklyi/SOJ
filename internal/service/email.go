@@ -12,23 +12,28 @@ import (
 	"go.uber.org/zap"
 )
 
-type EmailService struct {
+type EmailService interface {
+	SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCode) error
+	CheckCaptcha(c *gin.Context, req *entity.SendEmailCode) bool
+}
+
+type email struct {
 	log           *zap.Logger
 	rs            *redis.Client
-	emailProducer *mq.EmailProducer
+	EmailProducer *mq.EmailProducer
 	captcha       *captcha.Captcha
 }
 
-func NewEmailService(log *zap.Logger, rs *redis.Client, e *mq.EmailProducer, c *captcha.Captcha) *EmailService {
-	return &EmailService{
+func NewEmailService(log *zap.Logger, rs *redis.Client, e *mq.EmailProducer, c *captcha.Captcha) EmailService {
+	return &email{
 		log:           log,
 		rs:            rs,
-		emailProducer: e,
+		EmailProducer: e,
 		captcha:       c,
 	}
 }
 
-func (es *EmailService) SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCode) error {
+func (es *email) SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCode) error {
 	//随机生成
 	code := utils.GenerateRandCode(6)
 	fmt.Println(code)
@@ -46,7 +51,7 @@ func (es *EmailService) SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCo
 	if exist != 0 {
 		return errors.New("验证码未过期")
 	}
-	err = es.emailProducer.Send(ctx, data, 0)
+	err = es.EmailProducer.Send(ctx, data, 0)
 	if err != nil {
 		es.log.Error("生产者消息生产失败", zap.Error(err))
 		return errors.New("验证码发送失败")
@@ -55,6 +60,6 @@ func (es *EmailService) SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCo
 }
 
 // CheckCaptcha 图形验证码校验
-func (es *EmailService) CheckCaptcha(c *gin.Context, req *entity.SendEmailCode) bool {
+func (es *email) CheckCaptcha(c *gin.Context, req *entity.SendEmailCode) bool {
 	return es.captcha.Verify(req.CaptchaID, req.Captcha, true)
 }

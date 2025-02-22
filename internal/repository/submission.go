@@ -54,15 +54,15 @@ func (sr *submission) CreateSubmission(ctx *gin.Context, s *model.Submission) er
 
 // GetInfoByID 根据id获取测评记录
 func (sr *submission) GetInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
-	var submission model.Submission
-	err := sr.db.WithContext(ctx).First(&submission, id).Error
+	var s model.Submission
+	err := sr.db.WithContext(ctx).First(&s, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New(constant.NotFoundError)
 	} else if err != nil {
 		sr.log.Error("查询数据库失败", zap.Error(err))
 		return nil, errors.New(constant.ServerError)
 	}
-	return &submission, nil
+	return &s, nil
 }
 
 // GetSubmissionList 获取测评列表

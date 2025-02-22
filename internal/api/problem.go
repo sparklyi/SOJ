@@ -5,7 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func ProblemRoute(r *gin.RouterGroup, p *handle.ProblemHandle, mid []gin.HandlerFunc) {
+func ProblemRoute(r *gin.RouterGroup, p handle.ProblemHandle, mid []gin.HandlerFunc) {
 	problem := r.Group("problem")
 	{
 		//problem.GET("/set/:tag")
