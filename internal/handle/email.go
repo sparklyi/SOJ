@@ -7,16 +7,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type EmailHandle struct {
-	svc *service.EmailService
+type EmailHandle interface {
+	SendVerifyCode(c *gin.Context)
 }
 
-func NewEmailHandle(se *service.EmailService) *EmailHandle {
-	return &EmailHandle{se}
+type email struct {
+	svc service.EmailService
+}
+
+func NewEmailHandle(se service.EmailService) EmailHandle {
+	return &email{se}
 }
 
 // SendVerifyCode 验证码发送
-func (e *EmailHandle) SendVerifyCode(c *gin.Context) {
+func (e *email) SendVerifyCode(c *gin.Context) {
 	req := entity.SendEmailCode{}
 	if err := c.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(c, "参数无效")

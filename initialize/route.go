@@ -8,13 +8,13 @@ import (
 
 func InitRoute(
 	captcha *handle.CaptchaHandle,
-	email *handle.EmailHandle,
-	user *handle.UserHandle,
-	problem *handle.ProblemHandle,
-	language *handle.LanguageHandle,
-	submission *handle.SubmissionHandle,
-	contest *handle.ContestHandle,
-	apply *handle.ApplyHandle,
+	email handle.EmailHandle,
+	user handle.UserHandle,
+	problem handle.ProblemHandle,
+	language handle.LanguageHandle,
+	submission handle.SubmissionHandle,
+	contest handle.ContestHandle,
+	apply handle.ApplyHandle,
 	mid []gin.HandlerFunc,
 ) *gin.Engine {
 	r := gin.Default()

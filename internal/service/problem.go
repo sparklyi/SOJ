@@ -14,49 +14,61 @@ import (
 	"sync"
 )
 
-type ProblemService struct {
-	log  *zap.Logger
-	repo *repository.ProblemRepository
+type ProblemService interface {
+	Create(ctx *gin.Context, req *entity.Problem) (*model.Problem, error)
+	Count(ctx *gin.Context) (int64, error)
+	GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, error)
+	GetProblemInfo(ctx *gin.Context, id int) (*bson.M, error)
+	UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) error
+	DeleteProblem(ctx *gin.Context, id int) error
+	GetTestCaseInfo(ctx *gin.Context, id int) (*bson.M, error)
+	CreateTestCase(ctx *gin.Context, req *entity.TestCase, pid int) error
+	UpdateTestCase(ctx *gin.Context, req *entity.TestCase, pid int) error
 }
 
-func NewProblemService(log *zap.Logger, r *repository.ProblemRepository) *ProblemService {
-	return &ProblemService{
+type problem struct {
+	log  *zap.Logger
+	repo repository.ProblemRepository
+}
+
+func NewProblemService(log *zap.Logger, r repository.ProblemRepository) ProblemService {
+	return &problem{
 		log:  log,
 		repo: r,
 	}
 }
 
 // Create 题目创建
-func (ps *ProblemService) Create(ctx *gin.Context, req *entity.Problem) (*model.Problem, error) {
+func (ps *problem) Create(ctx *gin.Context, req *entity.Problem) (*model.Problem, error) {
 	//插入mongo
 
 	pid, err := ps.repo.MongoCreate(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	problem := model.Problem{
+	p := model.Problem{
 		ObjectID: pid.Hex(),
 		Name:     req.Name,
 		Level:    req.Level,
 		Status:   req.Visible,
 		Owner:    req.Owner,
 	}
-	return &problem, ps.repo.MySQLCreate(ctx, &problem)
+	return &p, ps.repo.MySQLCreate(ctx, &p)
 }
 
 // Count 获取题目数量
-func (ps *ProblemService) Count(ctx *gin.Context) (int64, error) {
+func (ps *problem) Count(ctx *gin.Context) (int64, error) {
 	return ps.repo.Count(ctx)
 }
 
 // GetProblemList 获取题目列表
-func (ps *ProblemService) GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, error) {
+func (ps *problem) GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, error) {
 
 	return ps.repo.GetProblemList(ctx, req, utils.GetAccessClaims(ctx).Auth == constant.RootLevel)
 }
 
 // GetProblemInfo 获取题目详情
-func (ps *ProblemService) GetProblemInfo(ctx *gin.Context, id int) (*bson.M, error) {
+func (ps *problem) GetProblemInfo(ctx *gin.Context, id int) (*bson.M, error) {
 	p, err := ps.repo.GetInfoByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -83,7 +95,7 @@ func (ps *ProblemService) GetProblemInfo(ctx *gin.Context, id int) (*bson.M, err
 }
 
 // UpdateProblemInfo 更新题目内容
-func (ps *ProblemService) UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) error {
+func (ps *problem) UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) error {
 	tx := ps.repo.GetTransaction(ctx)
 
 	p, err := ps.repo.GetInfoByID(ctx, int(req.ID))
@@ -123,7 +135,7 @@ func (ps *ProblemService) UpdateProblemInfo(ctx *gin.Context, req *entity.Proble
 }
 
 // DeleteProblem 题目删除
-func (ps *ProblemService) DeleteProblem(ctx *gin.Context, id int) error {
+func (ps *problem) DeleteProblem(ctx *gin.Context, id int) error {
 	tx := ps.repo.GetTransaction(ctx)
 
 	p, err := ps.repo.GetInfoByID(ctx, id)
@@ -167,7 +179,7 @@ func (ps *ProblemService) DeleteProblem(ctx *gin.Context, id int) error {
 }
 
 // GetTestCaseInfo 获取测试点信息
-func (ps *ProblemService) GetTestCaseInfo(ctx *gin.Context, id int) (*bson.M, error) {
+func (ps *problem) GetTestCaseInfo(ctx *gin.Context, id int) (*bson.M, error) {
 	//获取objID
 	p, err := ps.repo.GetInfoByID(ctx, id)
 	if err != nil {
@@ -185,7 +197,7 @@ func (ps *ProblemService) GetTestCaseInfo(ctx *gin.Context, id int) (*bson.M, er
 }
 
 // CreateTestCase 创建测试点
-func (ps *ProblemService) CreateTestCase(ctx *gin.Context, req *entity.TestCase, pid int) error {
+func (ps *problem) CreateTestCase(ctx *gin.Context, req *entity.TestCase, pid int) error {
 	p, err := ps.repo.GetInfoByID(ctx, pid)
 	if err != nil {
 		return err
@@ -203,7 +215,7 @@ func (ps *ProblemService) CreateTestCase(ctx *gin.Context, req *entity.TestCase,
 }
 
 // UpdateTestCase 更新测试点
-func (ps *ProblemService) UpdateTestCase(ctx *gin.Context, req *entity.TestCase, pid int) error {
+func (ps *problem) UpdateTestCase(ctx *gin.Context, req *entity.TestCase, pid int) error {
 	p, err := ps.repo.GetInfoByID(ctx, pid)
 	if err != nil {
 		return err

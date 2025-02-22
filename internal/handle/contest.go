@@ -10,14 +10,23 @@ import (
 	"strconv"
 )
 
-type ContestHandle struct {
+type ContestHandle interface {
+	CreateContest(ctx *gin.Context)
+	UpdateContest(ctx *gin.Context)
+	GetContestList(ctx *gin.Context)
+	GetListByUserID(ctx *gin.Context)
+	GetInfoByID(ctx *gin.Context)
+	DeleteContest(ctx *gin.Context)
+}
+
+type contest struct {
 	log *zap.Logger
-	svc *service.ContestService
+	svc service.ContestService
 }
 
 // NewContestHandle 依赖注入
-func NewContestHandle(log *zap.Logger, svc *service.ContestService) *ContestHandle {
-	return &ContestHandle{
+func NewContestHandle(log *zap.Logger, svc service.ContestService) ContestHandle {
+	return &contest{
 		log: log,
 		svc: svc,
 	}
@@ -25,7 +34,7 @@ func NewContestHandle(log *zap.Logger, svc *service.ContestService) *ContestHand
 }
 
 // CreateContest 创建比赛
-func (ch *ContestHandle) CreateContest(ctx *gin.Context) {
+func (ch *contest) CreateContest(ctx *gin.Context) {
 	req := entity.Contest{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -45,7 +54,7 @@ func (ch *ContestHandle) CreateContest(ctx *gin.Context) {
 }
 
 // UpdateContest 更新比赛
-func (ch *ContestHandle) UpdateContest(ctx *gin.Context) {
+func (ch *contest) UpdateContest(ctx *gin.Context) {
 
 	req := entity.Contest{}
 	if err := ctx.ShouldBind(&req); err != nil {
@@ -65,7 +74,7 @@ func (ch *ContestHandle) UpdateContest(ctx *gin.Context) {
 }
 
 // GetContestList 获取比赛列表
-func (ch *ContestHandle) GetContestList(ctx *gin.Context) {
+func (ch *contest) GetContestList(ctx *gin.Context) {
 	req := entity.ContestList{}
 	if err := ctx.ShouldBind(&req); err != nil {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
@@ -80,7 +89,7 @@ func (ch *ContestHandle) GetContestList(ctx *gin.Context) {
 }
 
 // GetListByUserID 获取用户的比赛列表
-func (ch *ContestHandle) GetListByUserID(ctx *gin.Context) {
+func (ch *contest) GetListByUserID(ctx *gin.Context) {
 	t := ctx.Param("uid")
 	uid, err := strconv.Atoi(t)
 	if err != nil || uid <= 0 {
@@ -106,7 +115,7 @@ func (ch *ContestHandle) GetListByUserID(ctx *gin.Context) {
 }
 
 // GetInfoByID 获取比赛详情
-func (ch *ContestHandle) GetInfoByID(ctx *gin.Context) {
+func (ch *contest) GetInfoByID(ctx *gin.Context) {
 	t := ctx.Param("cid")
 	id, err := strconv.Atoi(t)
 	if err != nil || id <= 0 {
@@ -122,7 +131,7 @@ func (ch *ContestHandle) GetInfoByID(ctx *gin.Context) {
 }
 
 // DeleteContest 删除比赛
-func (ch *ContestHandle) DeleteContest(ctx *gin.Context) {
+func (ch *contest) DeleteContest(ctx *gin.Context) {
 	t := ctx.Param("cid")
 	id, err := strconv.Atoi(t)
 	if err != nil || id <= 0 {
