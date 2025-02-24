@@ -3,7 +3,7 @@ package entity
 type Apply struct {
 	ID        int    `json:"id,omitempty"`
 	ContestID uint   `json:"contest_id,omitempty" binding:"required,number"`
-	Name      string `json:"name,omitempty" binding:"required"`
+	Name      string `json:"name,omitempty" binding:"required,min=1"`
 }
 
 type ApplyList struct {
