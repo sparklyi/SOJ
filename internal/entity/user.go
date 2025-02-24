@@ -35,10 +35,12 @@ type UserInfo struct {
 // UserUpdate 用户信息更新
 type UserUpdate struct {
 	ID       int    `json:"id" binding:"required,number"`
-	Username string `json:"username" binding:"omitempty"`
+	Username string `json:"username" binding:"required"`
 	Email    string `json:"email" binding:"omitempty,email"`
 	Tel      string `json:"tel" binding:"omitempty"`
 	Role     int    `json:"role" binding:"omitempty,oneof=-1 1 2 3"`
+	Profile  string `json:"profile" binding:"omitempty"`
+	Notify   *int   `json:"notify" binding:"omitempty,oneof=0 1 2"`
 }
 
 // UpdatePassword 用户密码更新

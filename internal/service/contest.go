@@ -71,32 +71,27 @@ func (cs *contest) UpdateContest(ctx *gin.Context, req *entity.Contest) error {
 	if c.UserID != uint(claims.ID) && claims.Auth < constant.AdminLevel {
 		return errors.New(constant.UnauthorizedError)
 	}
-	if req.Name != "" {
-		c.Name = req.Name
+	j, _ := json.Marshal(req.ProblemSet)
+	if req.Public != nil && *req.Public != *c.Public {
+		if *req.Public == false {
+			req.Code = utils.GenerateRandCode(6)
+		}
 	}
-	if req.Description != "" {
-		c.Description = req.Description
+	data := map[string]interface{}{
+		"name":        req.Name,
+		"tag":         req.Tag,
+		"description": req.Description,
+		"publish":     req.Publish,
+		"sponsor":     req.Sponsor,
+		"start_time":  req.StartTime,
+		"end_time":    req.EndTime,
+		"freeze_time": req.FreezeTime,
+		"problem_set": string(j),
+		"public":      req.Public,
+		"code":        req.Code,
 	}
-	if req.Publish != nil {
-		c.Publish = req.Publish
-	}
-	if req.Sponsor != "" {
-		c.Sponsor = req.Sponsor
-	}
-	if req.StartTime != nil {
-		c.StartTime = req.StartTime
-	}
-	if req.EndTime != nil {
-		c.EndTime = req.EndTime
-	}
-	if req.FreezeTime != nil {
-		c.FreezeTime = req.FreezeTime
-	}
-	if req.ProblemSet != nil {
-		data, _ := json.Marshal(req.ProblemSet)
-		c.ProblemSet = string(data)
-	}
-	return cs.repo.UpdateContest(ctx, c)
+
+	return cs.repo.UpdateContest(ctx, data, c.ID)
 
 }
 
