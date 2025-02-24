@@ -56,7 +56,7 @@ func (lr *language) Create(ctx *gin.Context, lang *model.Language) (*model.Langu
 
 // Update 语言更新(名字 是否可用)
 func (lr *language) Update(ctx *gin.Context, lang *model.Language) error {
-	err := lr.db.WithContext(ctx).Save(lang).Error
+	err := lr.db.Debug().WithContext(ctx).Updates(lang).Error
 	if err != nil {
 		lr.log.Error("update language error", zap.Error(err))
 		return errors.New(constant.ServerError)

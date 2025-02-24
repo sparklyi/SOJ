@@ -47,7 +47,7 @@ func (ar *apply) CreateApply(ctx *gin.Context, apply *model.Apply) error {
 
 // UpdateApply 更新报名
 func (ar *apply) UpdateApply(ctx *gin.Context, apply *model.Apply) error {
-	err := ar.db.WithContext(ctx).Save(apply).Error
+	err := ar.db.WithContext(ctx).Updates(apply).Error
 	if err != nil {
 		ar.log.Error("报名信息更新失败", zap.Error(err), zap.Any("apply info", apply))
 		return errors.New(constant.ServerError)
