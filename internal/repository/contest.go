@@ -15,7 +15,7 @@ import (
 type ContestRepository interface {
 	CreateContest(ctx *gin.Context, contest *model.Contest) (*model.Contest, error)
 	GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error)
-	UpdateContest(ctx *gin.Context, contest *model.Contest) error
+	UpdateContest(ctx *gin.Context, data map[string]interface{}, id uint) error
 	GetContestList(ctx *gin.Context, req *entity.ContestList, admin bool) ([]*model.Contest, error)
 	DeleteContest(ctx *gin.Context, id int) error
 	GetListByUserID(ctx *gin.Context, uid int, page int, pageSize int) ([]*model.Contest, error)
@@ -60,8 +60,11 @@ func (cr *contest) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest,
 }
 
 // UpdateContest 更新比赛
-func (cr *contest) UpdateContest(ctx *gin.Context, contest *model.Contest) error {
-	err := cr.db.WithContext(ctx).Save(contest).Error
+func (cr *contest) UpdateContest(ctx *gin.Context, data map[string]interface{}, id uint) error {
+	err := cr.db.WithContext(ctx).
+		Model(&model.Contest{}).
+		Where("id = ?", id).
+		Updates(data).Error
 	if err != nil {
 		cr.log.Error("比赛更新失败", zap.Error(err))
 		return errors.New(constant.ServerError)
