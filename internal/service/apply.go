@@ -80,9 +80,7 @@ func (as *apply) UpdateApply(ctx *gin.Context, req *entity.Apply) error {
 	if applyResp.UserID != uint(claims.ID) && claims.Auth < constant.AdminLevel {
 		return errors.New(constant.UnauthorizedError)
 	}
-	if req.Name != "" {
-		applyResp.Name = req.Name
-	}
+	applyResp.Name = req.Name
 	return as.repo.UpdateApply(ctx, applyResp)
 
 }
