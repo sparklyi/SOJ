@@ -5,8 +5,8 @@ import (
 	"SOJ/internal/entity"
 	"SOJ/internal/model"
 	"SOJ/utils"
+	"context"
 	"errors"
-	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -18,14 +18,14 @@ const (
 )
 
 type UserRepository interface {
-	CreateUserByEmail(c *gin.Context, user *model.User) error
-	GetUserByEmail(c *gin.Context, email string) (*model.User, error)
-	GetUserByID(c *gin.Context, id int) (*model.User, error)
-	UpdateUserByID(c *gin.Context, user *model.User) error
-	DeleteUserByID(c *gin.Context, id int) error
-	DeleteUserByEmail(c *gin.Context, email string) error
-	GetUserList(c *gin.Context, user *entity.UserInfo) ([]*model.User, error)
-	UpdateUserByEmail(c *gin.Context, user *model.User) error
+	CreateUserByEmail(ctx context.Context, user *model.User) error
+	GetUserByEmail(ctx context.Context, email string) (*model.User, error)
+	GetUserByID(ctx context.Context, id int) (*model.User, error)
+	UpdateUserByID(ctx context.Context, user *model.User) error
+	DeleteUserByID(ctx context.Context, id int) error
+	DeleteUserByEmail(ctx context.Context, email string) error
+	GetUserList(ctx context.Context, user *entity.UserInfo) ([]*model.User, error)
+	UpdateUserByEmail(ctx context.Context, user *model.User) error
 }
 
 type user struct {
@@ -44,8 +44,8 @@ func NewUserRepository(log *zap.Logger, db *gorm.DB, rs *redis.Client) UserRepos
 }
 
 // CreateUserByEmail 使用邮箱注册用户
-func (ur *user) CreateUserByEmail(c *gin.Context, user *model.User) error {
-	err := ur.db.WithContext(c).Create(user).Error
+func (ur *user) CreateUserByEmail(ctx context.Context, user *model.User) error {
+	err := ur.db.WithContext(ctx).Create(user).Error
 	var mysqlErr *mysql.MySQLError
 
 	if errors.As(err, &mysqlErr) && mysqlErr.Number == MysqlDuplicateError {
@@ -60,9 +60,9 @@ func (ur *user) CreateUserByEmail(c *gin.Context, user *model.User) error {
 }
 
 // GetUserByEmail 根据邮箱获取用户信息
-func (ur *user) GetUserByEmail(c *gin.Context, email string) (*model.User, error) {
+func (ur *user) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
 	u := &model.User{}
-	err := ur.db.WithContext(c).Where("email = ?", email).First(u).Error
+	err := ur.db.WithContext(ctx).Where("email = ?", email).First(u).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("此邮箱未注册或已被封禁")
 	} else if err != nil {
@@ -73,9 +73,9 @@ func (ur *user) GetUserByEmail(c *gin.Context, email string) (*model.User, error
 }
 
 // GetUserByID 根据id获取用户信息
-func (ur *user) GetUserByID(c *gin.Context, id int) (*model.User, error) {
+func (ur *user) GetUserByID(ctx context.Context, id int) (*model.User, error) {
 	u := &model.User{}
-	err := ur.db.WithContext(c).Where("id = ?", id).First(u).Error
+	err := ur.db.WithContext(ctx).Where("id = ?", id).First(u).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("ID不存在")
 	} else if err != nil {
@@ -86,9 +86,9 @@ func (ur *user) GetUserByID(c *gin.Context, id int) (*model.User, error) {
 }
 
 // UpdateUserByID 通过id更新用户信息
-func (ur *user) UpdateUserByID(c *gin.Context, user *model.User) error {
+func (ur *user) UpdateUserByID(ctx context.Context, user *model.User) error {
 	var mysqlErr *mysql.MySQLError
-	err := ur.db.WithContext(c).Updates(user).Error
+	err := ur.db.WithContext(ctx).Updates(user).Error
 	if errors.As(err, &mysqlErr) && mysqlErr.Number == MysqlDuplicateError {
 		return errors.New("唯一索引冲突")
 	} else if err != nil {
@@ -99,8 +99,8 @@ func (ur *user) UpdateUserByID(c *gin.Context, user *model.User) error {
 }
 
 // DeleteUserByID 根据id删除用户
-func (ur *user) DeleteUserByID(c *gin.Context, id int) error {
-	err := ur.db.WithContext(c).Where("id = ?", id).Delete(&model.User{}).Error
+func (ur *user) DeleteUserByID(ctx context.Context, id int) error {
+	err := ur.db.WithContext(ctx).Where("id = ?", id).Delete(&model.User{}).Error
 	if err != nil {
 		ur.log.Error("数据库异常", zap.Error(err))
 		return errors.New(constant.ServerError)
@@ -109,8 +109,8 @@ func (ur *user) DeleteUserByID(c *gin.Context, id int) error {
 }
 
 // DeleteUserByEmail 根据邮箱删除用户
-func (ur *user) DeleteUserByEmail(c *gin.Context, email string) error {
-	err := ur.db.WithContext(c).Where("email = ?", email).Delete(&model.User{}).Error
+func (ur *user) DeleteUserByEmail(ctx context.Context, email string) error {
+	err := ur.db.WithContext(ctx).Where("email = ?", email).Delete(&model.User{}).Error
 	if err != nil {
 		ur.log.Error("数据库异常", zap.Error(err))
 		return errors.New(constant.ServerError)
@@ -119,8 +119,8 @@ func (ur *user) DeleteUserByEmail(c *gin.Context, email string) error {
 }
 
 // GetUserList 获取用户列表(条件分页)
-func (ur *user) GetUserList(c *gin.Context, user *entity.UserInfo) ([]*model.User, error) {
-	db := ur.db.WithContext(c).Model(&model.User{})
+func (ur *user) GetUserList(ctx context.Context, user *entity.UserInfo) ([]*model.User, error) {
+	db := ur.db.WithContext(ctx).Model(&model.User{})
 	if user.ID != 0 {
 		db = db.Where("id = ?", user.ID)
 	}
@@ -146,9 +146,9 @@ func (ur *user) GetUserList(c *gin.Context, user *entity.UserInfo) ([]*model.Use
 }
 
 // UpdateUserByEmail 使用email更新用户信息
-func (ur *user) UpdateUserByEmail(c *gin.Context, user *model.User) error {
+func (ur *user) UpdateUserByEmail(ctx context.Context, user *model.User) error {
 	var mysqlErr *mysql.MySQLError
-	err := ur.db.WithContext(c).Where("email = ? ", user.Email).Updates(user).Error
+	err := ur.db.WithContext(ctx).Where("email = ? ", user.Email).Updates(user).Error
 	if errors.As(err, &mysqlErr) && mysqlErr.Number == MysqlDuplicateError {
 		return errors.New("唯一索引冲突")
 	} else if err != nil {
