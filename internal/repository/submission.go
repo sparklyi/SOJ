@@ -7,7 +7,6 @@ import (
 	"SOJ/utils"
 	"context"
 	"errors"
-	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
@@ -15,10 +14,10 @@ import (
 )
 
 type SubmissionRepository interface {
-	CreateSubmission(ctx *gin.Context, s *model.Submission) error
-	GetInfoByID(ctx *gin.Context, id int) (*model.Submission, error)
-	GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error)
-	DeleteJudgeByToken(ctx *gin.Context, token string) error
+	CreateSubmission(ctx context.Context, s *model.Submission) error
+	GetInfoByID(ctx context.Context, id int) (*model.Submission, error)
+	GetSubmissionList(ctx context.Context, req *entity.SubmissionList) ([]*model.Submission, error)
+	DeleteJudgeByToken(ctx context.Context, token string) error
 	DeleteAllJudgeHistory(ctx context.Context) error
 }
 
@@ -43,7 +42,7 @@ func NewSubmissionRepository(log *zap.Logger, db *gorm.DB) SubmissionRepository 
 }
 
 // CreateSubmission 创建测评记录
-func (sr *submission) CreateSubmission(ctx *gin.Context, s *model.Submission) error {
+func (sr *submission) CreateSubmission(ctx context.Context, s *model.Submission) error {
 	err := sr.db.WithContext(ctx).Create(s).Error
 	if err != nil {
 		sr.log.Error("创建测评记录失败", zap.Error(err))
@@ -53,7 +52,7 @@ func (sr *submission) CreateSubmission(ctx *gin.Context, s *model.Submission) er
 }
 
 // GetInfoByID 根据id获取测评记录
-func (sr *submission) GetInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
+func (sr *submission) GetInfoByID(ctx context.Context, id int) (*model.Submission, error) {
 	var s model.Submission
 	err := sr.db.WithContext(ctx).First(&s, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -66,7 +65,7 @@ func (sr *submission) GetInfoByID(ctx *gin.Context, id int) (*model.Submission, 
 }
 
 // GetSubmissionList 获取测评列表
-func (sr *submission) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
+func (sr *submission) GetSubmissionList(ctx context.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
 	db := sr.db.WithContext(ctx).Model(&model.Submission{})
 	if req.UserID != 0 {
 		db = db.Where("user_id = ?", req.UserID)
@@ -94,7 +93,7 @@ func (sr *submission) GetSubmissionList(ctx *gin.Context, req *entity.Submission
 }
 
 // DeleteJudgeByToken 删除postgresql的测评记录
-func (sr *submission) DeleteJudgeByToken(ctx *gin.Context, token string) error {
+func (sr *submission) DeleteJudgeByToken(ctx context.Context, token string) error {
 	err := sr.postgresql.WithContext(ctx).Table("submissions").Where("token = ?", token).Delete(nil).Error
 	if err != nil {
 		sr.log.Error("删除postgres测评记录失败", zap.Error(err))
