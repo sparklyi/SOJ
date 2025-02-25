@@ -25,7 +25,7 @@ type Problem struct {
 	Level             string           `json:"level" binding:"required,oneof=easy mid hard" bson:"level"`
 	Example           []Case           `json:"example" bson:"example"`
 	LangLimit         map[string]Limit `json:"lang_limit" bson:"lang_limit"`
-	ReMark            string           `json:"remark" bson:"re_mark"`
+	ReMark            string           `json:"remark" bson:"remark"`
 	Visible           *bool            `json:"visible" binding:"omitempty,boolean" bson:"visible"`
 	Owner             *uint            `json:"owner" binding:"omitempty,number" bson:"owner"`
 }
