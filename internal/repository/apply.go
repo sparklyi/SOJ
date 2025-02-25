@@ -88,6 +88,9 @@ func (ar *apply) GetList(ctx context.Context, req *entity.ApplyList) ([]*model.A
 	if req.ContestID != 0 {
 		db = db.Where("contest_id = ?", req.ContestID)
 	}
+	if req.Email != "" {
+		db = db.Where("email = ?", req.Email)
+	}
 	var a []*model.Apply
 	err := db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&a).Error
 	if err != nil {

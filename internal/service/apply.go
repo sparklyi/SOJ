@@ -86,6 +86,7 @@ func (as *apply) UpdateApply(ctx *gin.Context, req *entity.Apply) error {
 		return errors.New(constant.UnauthorizedError)
 	}
 	applyResp.Name = req.Name
+	applyResp.Email = req.Email
 	return as.repo.UpdateApply(ctx, applyResp)
 
 }
