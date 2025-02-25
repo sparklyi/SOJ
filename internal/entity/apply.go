@@ -4,6 +4,7 @@ type Apply struct {
 	ID        int    `json:"id,omitempty"`
 	ContestID uint   `json:"contest_id,omitempty" binding:"required,number"`
 	Name      string `json:"name,omitempty" binding:"required,min=1"`
+	Code      string `json:"code,omitempty" binding:"omitempty,len=6"`
 }
 
 type ApplyList struct {
