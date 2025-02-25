@@ -5,20 +5,20 @@ import (
 	"SOJ/internal/entity"
 	"SOJ/internal/model"
 	"SOJ/utils"
+	"context"
 	"errors"
-	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 type ContestRepository interface {
-	CreateContest(ctx *gin.Context, contest *model.Contest) (*model.Contest, error)
-	GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error)
-	UpdateContest(ctx *gin.Context, data map[string]interface{}, id uint) error
-	GetContestList(ctx *gin.Context, req *entity.ContestList, admin bool) ([]*model.Contest, error)
-	DeleteContest(ctx *gin.Context, id int) error
-	GetListByUserID(ctx *gin.Context, uid int, page int, pageSize int) ([]*model.Contest, error)
+	CreateContest(ctx context.Context, contest *model.Contest) (*model.Contest, error)
+	GetContestInfoByID(ctx context.Context, id int) (*model.Contest, error)
+	UpdateContest(ctx context.Context, data map[string]interface{}, id uint) error
+	GetContestList(ctx context.Context, req *entity.ContestList, admin bool) ([]*model.Contest, error)
+	DeleteContest(ctx context.Context, id int) error
+	GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Contest, error)
 }
 
 type contest struct {
@@ -36,7 +36,7 @@ func NewContestRepository(log *zap.Logger, db *gorm.DB, m *mongo.Database) Conte
 }
 
 // CreateContest 比赛创建
-func (cr *contest) CreateContest(ctx *gin.Context, contest *model.Contest) (*model.Contest, error) {
+func (cr *contest) CreateContest(ctx context.Context, contest *model.Contest) (*model.Contest, error) {
 	err := cr.db.WithContext(ctx).Create(contest).Error
 	if err != nil {
 		cr.log.Error("比赛创建失败", zap.Error(err))
@@ -46,7 +46,7 @@ func (cr *contest) CreateContest(ctx *gin.Context, contest *model.Contest) (*mod
 }
 
 // GetContestInfoByID 获取比赛信息
-func (cr *contest) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error) {
+func (cr *contest) GetContestInfoByID(ctx context.Context, id int) (*model.Contest, error) {
 	c := &model.Contest{}
 	err := cr.db.WithContext(ctx).First(c, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -60,7 +60,7 @@ func (cr *contest) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest,
 }
 
 // UpdateContest 更新比赛
-func (cr *contest) UpdateContest(ctx *gin.Context, data map[string]interface{}, id uint) error {
+func (cr *contest) UpdateContest(ctx context.Context, data map[string]interface{}, id uint) error {
 	err := cr.db.WithContext(ctx).
 		Model(&model.Contest{}).
 		Where("id = ?", id).
@@ -73,7 +73,7 @@ func (cr *contest) UpdateContest(ctx *gin.Context, data map[string]interface{}, 
 }
 
 // GetContestList 获取比赛列表
-func (cr *contest) GetContestList(ctx *gin.Context, req *entity.ContestList, admin bool) ([]*model.Contest, error) {
+func (cr *contest) GetContestList(ctx context.Context, req *entity.ContestList, admin bool) ([]*model.Contest, error) {
 	db := cr.db.WithContext(ctx).Model(&model.Contest{})
 	if !admin {
 		req.Publish = new(bool)
@@ -102,7 +102,7 @@ func (cr *contest) GetContestList(ctx *gin.Context, req *entity.ContestList, adm
 }
 
 // DeleteContest 删除比赛
-func (cr *contest) DeleteContest(ctx *gin.Context, id int) error {
+func (cr *contest) DeleteContest(ctx context.Context, id int) error {
 	err := cr.db.WithContext(ctx).Delete(&model.Contest{}, id).Error
 	if err != nil {
 		cr.log.Error("删除比赛失败", zap.Error(err))
@@ -112,7 +112,7 @@ func (cr *contest) DeleteContest(ctx *gin.Context, id int) error {
 }
 
 // GetListByUserID 获取用户创建的比赛
-func (cr *contest) GetListByUserID(ctx *gin.Context, uid int, page int, pageSize int) ([]*model.Contest, error) {
+func (cr *contest) GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Contest, error) {
 	var list []*model.Contest
 	err := cr.db.WithContext(ctx).Scopes(utils.Paginate(page, pageSize)).Find(&list).Error
 	if err != nil {

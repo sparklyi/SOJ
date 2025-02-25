@@ -61,11 +61,16 @@ func (as *apply) CreateApply(ctx *gin.Context, req *entity.Apply) (*model.Apply,
 	if c.EndTime.Unix() < time.Now().Unix() {
 		return nil, errors.New(constant.DisableError)
 	}
-	err = as.repo.CreateApply(ctx, applyResp)
+
+	//私有比赛检查code
+	if !*c.Public && c.Code != req.Code {
+		return nil, errors.New(constant.CodeError)
+	}
+	err = as.repo.CreateApply(ctx, a)
 	if err != nil {
 		return nil, err
 	}
-	return applyResp, nil
+	return a, nil
 
 }
 
@@ -80,9 +85,8 @@ func (as *apply) UpdateApply(ctx *gin.Context, req *entity.Apply) error {
 	if applyResp.UserID != uint(claims.ID) && claims.Auth < constant.AdminLevel {
 		return errors.New(constant.UnauthorizedError)
 	}
-	if req.Name != "" {
-		applyResp.Name = req.Name
-	}
+	applyResp.Name = req.Name
+	applyResp.Email = req.Email
 	return as.repo.UpdateApply(ctx, applyResp)
 
 }
