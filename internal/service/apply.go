@@ -45,6 +45,7 @@ func (as *apply) CreateApply(ctx *gin.Context, req *entity.Apply) (*model.Apply,
 		UserID:    uint(claims.ID),
 		ContestID: req.ContestID,
 		Name:      req.Name,
+		Email:     req.Email,
 	}
 	applyResp, err := as.repo.GetInfoByUserAndContest(ctx, a.UserID, a.ContestID)
 	//已经报名Resp
@@ -58,7 +59,7 @@ func (as *apply) CreateApply(ctx *gin.Context, req *entity.Apply) (*model.Apply,
 	if err != nil {
 		return nil, err
 	}
-	if c.EndTime.Unix() < time.Now().Unix() {
+	if c.EndTime.Unix() < time.Now().Unix() || *c.Publish == false {
 		return nil, errors.New(constant.DisableError)
 	}
 
