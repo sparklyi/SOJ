@@ -1,4 +1,4 @@
-package mq
+package producer
 
 import (
 	"context"
@@ -8,9 +8,8 @@ import (
 	"go.uber.org/zap"
 )
 
-type EmailProducer struct {
+type Email struct {
 	log          *zap.Logger
-	Conn         *amqp.Connection
 	Channel      *amqp.Channel
 	ExchangeName string
 	QueueName    string
@@ -24,14 +23,9 @@ type EmailContent struct {
 	Code    string   `json:"code"`
 }
 
-func NewEmailProducer(log *zap.Logger) *EmailProducer {
+func NewEmailProducer(log *zap.Logger, conn *amqp.Connection) *Email {
 	exchangeName := viper.GetString("rabbitmq.exchange_email")
 	QueueName := viper.GetString("rabbitmq.queue_email")
-	conn, err := amqp.Dial(viper.GetString("rabbitmq.url"))
-	if err != nil {
-		panic("rabbitmq连接失败")
-		return nil
-	}
 	ch, err := conn.Channel()
 	if err != nil {
 		panic("rabbitmq信道创建失败")
@@ -59,9 +53,8 @@ func NewEmailProducer(log *zap.Logger) *EmailProducer {
 		panic("rabbitmq交换机绑定失败")
 		return nil
 	}
-	return &EmailProducer{
+	return &Email{
 		log:          log,
-		Conn:         conn,
 		Channel:      ch,
 		ExchangeName: exchangeName,
 		QueueName:    QueueName,
@@ -69,7 +62,7 @@ func NewEmailProducer(log *zap.Logger) *EmailProducer {
 
 }
 
-func (p *EmailProducer) Send(ctx context.Context, content EmailContent, DelaySeconds int64) error {
+func (p *Email) Send(ctx context.Context, content EmailContent, DelaySeconds int64) error {
 	c, err := json.Marshal(content)
 	if err != nil {
 		p.log.Error("json序列化失败", zap.Error(err))
