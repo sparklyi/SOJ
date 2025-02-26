@@ -76,10 +76,13 @@ func (j *JWT) CreateAccessToken(ctx *gin.Context, id int, auth int) (string, err
 
 // CreateRefreshToken 创建长token
 func (j *JWT) CreateRefreshToken(id int, auth int) (string, error) {
+	now := time.Now()
+	//设置过期时间为RefreshExpire后的1点
+	startTime := time.Date(now.Year(), now.Month(), now.Day(), 1, 0, 0, 0, now.Location())
 	claims := &RefreshClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    j.Issuer,
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(j.RefreshExpire)),
+			ExpiresAt: jwt.NewNumericDate(startTime.Add(j.RefreshExpire)),
 		},
 		ID:   id,
 		Auth: auth,
