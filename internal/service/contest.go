@@ -4,12 +4,14 @@ import (
 	"SOJ/internal/constant"
 	"SOJ/internal/entity"
 	"SOJ/internal/model"
+	"SOJ/internal/mq/producer"
 	"SOJ/internal/repository"
 	"SOJ/utils"
 	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"time"
 )
 
 type ContestService interface {
@@ -25,14 +27,16 @@ type contest struct {
 	log       *zap.Logger
 	repo      repository.ContestRepository
 	applyRepo repository.ApplyRepository
+	producer  *producer.Contest
 }
 
 // NewContestService 依赖注入
-func NewContestService(logger *zap.Logger, repo repository.ContestRepository, a repository.ApplyRepository) ContestService {
+func NewContestService(logger *zap.Logger, repo repository.ContestRepository, a repository.ApplyRepository, p *producer.Contest) ContestService {
 	return &contest{
 		log:       logger,
 		repo:      repo,
 		applyRepo: a,
+		producer:  p,
 	}
 
 }
@@ -41,7 +45,7 @@ func NewContestService(logger *zap.Logger, repo repository.ContestRepository, a 
 func (cs *contest) CreateContest(ctx *gin.Context, req *entity.Contest) (*model.Contest, error) {
 	problemSet, _ := json.Marshal(req.ProblemSet)
 	if req.Public == nil || *req.Public == false {
-		req.Code = utils.GenerateRandCode(6)
+		req.Code = utils.GenerateRandCode(6, true)
 	}
 	c := &model.Contest{
 		Name:        req.Name,
@@ -58,7 +62,29 @@ func (cs *contest) CreateContest(ctx *gin.Context, req *entity.Contest) (*model.
 		FreezeTime:  req.FreezeTime,
 		Publish:     req.Publish,
 	}
-	return cs.repo.CreateContest(ctx, c)
+	_, err := cs.repo.CreateContest(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+
+	//距离开赛还有2天以上允许提前1天发送比赛提醒 且比赛已发布
+	seconds := (*c.StartTime).Sub(time.Now()).Seconds()
+	if seconds >= 48*60*60 && *c.Publish {
+		//发布比赛邮件提醒
+		data := producer.ContestNotify{
+			ContestID: c.ID,
+			Subject:   "比赛通知",
+		}
+		go cs.producer.Producer(ctx, &data, int64(seconds)-24*60*60)
+	}
+	//data := producer.ContestNotify{
+	//	ContestID: c.ID,
+	//	Subject:   "比赛通知",
+	//	Content:   "test",
+	//}
+	//go cs.producer.Producer(ctx, &data, 20)
+	return c, nil
+
 }
 
 // UpdateContest 更新比赛信息
@@ -74,7 +100,7 @@ func (cs *contest) UpdateContest(ctx *gin.Context, req *entity.Contest) error {
 	j, _ := json.Marshal(req.ProblemSet)
 	if req.Public != nil && *req.Public != *c.Public {
 		if *req.Public == false {
-			req.Code = utils.GenerateRandCode(6)
+			req.Code = utils.GenerateRandCode(6, true)
 		}
 	}
 	data := map[string]interface{}{
