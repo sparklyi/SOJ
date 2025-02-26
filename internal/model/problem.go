@@ -4,8 +4,7 @@ import "gorm.io/gorm"
 
 type Problem struct {
 	gorm.Model
-	ObjectID string `gorm:"varchar(30);unique;comment:对应存储在mongo的题目id" json:"object_id,omitempty"`
-	//查询字段
+	ObjectID   string `gorm:"varchar(30);unique;comment:对应存储在mongo的题目id" json:"object_id,omitempty"`
 	Name       string `gorm:"varchar(255);not null" json:"name,omitempty"`
 	Level      string `gorm:"varchar(10);not null" json:"level,omitempty"`
 	Status     *bool  `gorm:"default:false;comment:题目是否可见" json:"status,omitempty"`
