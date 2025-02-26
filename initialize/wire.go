@@ -4,7 +4,8 @@ package initialize
 
 import (
 	"SOJ/internal/handle"
-	"SOJ/internal/mq"
+	"SOJ/internal/mq/consumer"
+	"SOJ/internal/mq/producer"
 	"SOJ/internal/repository"
 	"SOJ/internal/service"
 	"SOJ/pkg/email"
@@ -23,14 +24,18 @@ func InitServer() *Cmd {
 		InitMiddleware,
 		InitDB,
 		InitMongoDB,
+		InitRabbitMQ,
+		InitConsumer,
 		InitCos,
 		jwt.New,
 		captcha.New,
 		captcha.NewRedisStore,
 		email.New,
 		judge0.New,
-		mq.NewEmailProducer,
-		mq.NewEmailConsumer,
+		producer.NewEmailProducer,
+		producer.NewContestProducer,
+		consumer.NewContestConsumer,
+		consumer.NewEmailConsumer,
 		handle.NewEmailHandle,
 		handle.NewUserHandle,
 		handle.NewCaptchaHandle,
