@@ -2,7 +2,7 @@ package service
 
 import (
 	"SOJ/internal/entity"
-	"SOJ/internal/mq"
+	"SOJ/internal/mq/producer"
 	"SOJ/utils"
 	"SOJ/utils/captcha"
 	"errors"
@@ -20,11 +20,11 @@ type EmailService interface {
 type email struct {
 	log           *zap.Logger
 	rs            *redis.Client
-	EmailProducer *mq.EmailProducer
+	EmailProducer *producer.Email
 	captcha       *captcha.Captcha
 }
 
-func NewEmailService(log *zap.Logger, rs *redis.Client, e *mq.EmailProducer, c *captcha.Captcha) EmailService {
+func NewEmailService(log *zap.Logger, rs *redis.Client, e *producer.Email, c *captcha.Captcha) EmailService {
 	return &email{
 		log:           log,
 		rs:            rs,
@@ -35,9 +35,9 @@ func NewEmailService(log *zap.Logger, rs *redis.Client, e *mq.EmailProducer, c *
 
 func (es *email) SendVerifyCode(ctx *gin.Context, req *entity.SendEmailCode) error {
 	//随机生成
-	code := utils.GenerateRandCode(6)
+	code := utils.GenerateRandCode(6, true)
 	fmt.Println(code)
-	data := mq.EmailContent{
+	data := producer.EmailContent{
 		Target:  []string{req.Email},
 		Subject: "验证码",
 		Content: `<h1>SOJ</h1><br>你的验证码为<a>` + code + `</a><br>验证码有效时限为1分钟,请勿泄露于他人!`,
