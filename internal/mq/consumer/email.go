@@ -1,6 +1,8 @@
-package mq
+package consumer
 
 import (
+	"SOJ/internal/mq"
+	"SOJ/internal/mq/producer"
 	"SOJ/pkg/email"
 	"context"
 	"encoding/json"
@@ -10,30 +12,26 @@ import (
 	"time"
 )
 
-const (
-	MaxRetry = 5 //最大重试消费次数
-)
-
-type emailConsumer struct {
+type EmailConsumer struct {
 	log   *zap.Logger
 	email *email.Email
-	*EmailProducer
-	Rs *redis.Client
+	*producer.Email
+	rs *redis.Client
 }
 
 // NewEmailConsumer 依赖注入方法
-func NewEmailConsumer(log *zap.Logger, email *email.Email, p *EmailProducer, rs *redis.Client) Consumer {
-	return &emailConsumer{
-		log:           log,
-		email:         email,
-		EmailProducer: p,
-		Rs:            rs,
+func NewEmailConsumer(log *zap.Logger, email *email.Email, p *producer.Email, rs *redis.Client) *EmailConsumer {
+	return &EmailConsumer{
+		log:   log,
+		email: email,
+		Email: p,
+		rs:    rs,
 	}
 
 }
 
 // Consume 消费队列消息
-func (c *emailConsumer) Consume(ctx context.Context) {
+func (c *EmailConsumer) Consume(ctx context.Context) {
 	c.log.Info("start consume email")
 	defer c.log.Info("end consume email")
 
@@ -47,7 +45,7 @@ func (c *emailConsumer) Consume(ctx context.Context) {
 	for msg := range msgs {
 		//开启协程
 		go func(msg amqp.Delivery) {
-			content := EmailContent{}
+			content := producer.EmailContent{}
 			err = json.Unmarshal(msg.Body, &content)
 			if err != nil {
 				c.log.Error("unmarshal email fail", zap.Error(err))
@@ -58,10 +56,10 @@ func (c *emailConsumer) Consume(ctx context.Context) {
 				return
 			}
 
-			for range MaxRetry {
+			for range mq.MaxRetry {
 				//如果发送的是验证码
 				if content.Code != "" {
-					if err = c.Rs.Set(ctx, content.Target[0], content.Code, time.Minute).Err(); err != nil {
+					if err = c.rs.Set(ctx, content.Target[0], content.Code, time.Minute).Err(); err != nil {
 						c.log.Error("验证码缓存失败", zap.Error(err))
 						continue
 					}
@@ -73,7 +71,7 @@ func (c *emailConsumer) Consume(ctx context.Context) {
 				return
 			}
 			//执行到这 即重试maxRetry次依然失败，直接丢弃并记日志
-			c.log.Error("消费达到最大次数:", zap.Any("content", content))
+			c.log.Error("消费达到最大次数", zap.Any("content", content))
 		}(msg)
 	}
 }
