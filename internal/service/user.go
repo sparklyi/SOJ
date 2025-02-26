@@ -4,7 +4,7 @@ import (
 	"SOJ/internal/constant"
 	"SOJ/internal/entity"
 	"SOJ/internal/model"
-	"SOJ/internal/mq"
+	"SOJ/internal/mq/producer"
 	"SOJ/internal/repository"
 	"SOJ/utils"
 	"SOJ/utils/captcha"
@@ -43,11 +43,11 @@ type user struct {
 	repo    repository.UserRepository
 	rs      *redis.Client
 	cs      *cos.Client
-	email   *mq.EmailProducer
+	email   *producer.Email
 	captcha *captcha.Captcha
 }
 
-func NewUserService(log *zap.Logger, repo repository.UserRepository, rs *redis.Client, cs *cos.Client, e *mq.EmailProducer, c *captcha.Captcha) UserService {
+func NewUserService(log *zap.Logger, repo repository.UserRepository, rs *redis.Client, cs *cos.Client, e *producer.Email, c *captcha.Captcha) UserService {
 	return &user{
 		log:     log,
 		repo:    repo,
@@ -218,14 +218,14 @@ func (us *user) UpdateUserInfo(ctx *gin.Context, req *entity.UserUpdate, admin b
 // ResetPassword 重置密码
 func (us *user) ResetPassword(ctx *gin.Context, email string) error {
 	//生成随机密码
-	pwd := utils.GenerateRandCode(10)
+	pwd := utils.GenerateRandCode(10, false)
 	err := us.repo.UpdateUserByEmail(ctx, &model.User{Email: email, Password: us.EncryptPassword(pwd)})
 	if err != nil {
 		return err
 	}
 	//向重置密码的用户发送新密码
 	go func() {
-		us.email.Send(ctx, mq.EmailContent{
+		us.email.Send(ctx, producer.EmailContent{
 			Target:  []string{email},
 			Subject: "密码重置",
 			Content: "你的密码已被管理员重置,新密码为<a>" + pwd + "</a>,请妥善保管或及时修改",
