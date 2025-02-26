@@ -34,3 +34,25 @@ type ContestList struct {
 	Page     int    `json:"page" binding:"omitempty" bson:"page"`
 	PageSize int    `json:"page_size" binding:"omitempty" bson:"page_size"`
 }
+
+// Result 提交状态, 罚时, 得分
+type Result struct {
+	Status     int     `json:"status,omitempty"  bson:"status"`
+	Score      float64 `json:"score,omitempty"  bson:"score"`
+	WrongCount int     `json:"wrong_count,omitempty"  bson:"wrong_count"`
+	Penalty    float64 `json:"penalty,omitempty"  bson:"penalty"`
+}
+
+// ProblemResult 题目的
+type ProblemResult struct {
+	Actual Result `json:"actual,omitempty" bson:"actual"`
+	Freeze Result `json:"freeze,omitempty" bson:"freeze"`
+}
+
+// ContestResult 比赛状态 题目通过数 总得分  总罚时
+type ContestResult struct {
+	AcceptedCount int                      `json:"accepted_count" bson:"accepted_count"`
+	ScoreCount    float64                  `json:"score_count" bson:"score_count"`
+	PenaltyCount  float64                  `json:"penalty_count" bson:"penalty_count"`
+	Details       map[string]ProblemResult `json:"details,omitempty" bson:"details"`
+}
