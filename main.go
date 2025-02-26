@@ -13,8 +13,11 @@ func main() {
 	//服务初始化
 	f := initialize.InitServer()
 
-	//启动消费者
-	go f.Consumer.Consume(context.Background())
+	//启动消费者组
+
+	for _, c := range f.Consumer {
+		go c.Consume(context.Background())
+	}
 
 	//启动定时任务
 	f.Cron.Start()

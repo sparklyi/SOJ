@@ -11,11 +11,14 @@ import (
 )
 
 // GenerateRandCode 生成长度为length的随机码
-func GenerateRandCode(length int) string {
-	digits := "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+func GenerateRandCode(length int, digit bool) string {
+	tab := "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	if digit {
+		tab = "0123456789"
+	}
 	code := make([]byte, length)
 	for i := 0; i < length; i++ {
-		code[i] = digits[rand.Intn(len(digits))]
+		code[i] = tab[rand.Intn(len(tab))]
 	}
 	return string(code)
 
