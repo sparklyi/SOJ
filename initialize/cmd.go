@@ -8,6 +8,6 @@ import (
 
 type Cmd struct {
 	G        *gin.Engine
-	Consumer mq.Consumer
+	Consumer []mq.Consumer
 	Cron     *cron.Cron
 }
