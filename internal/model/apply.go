@@ -8,7 +8,7 @@ type Apply struct {
 	ContestID uint   `gorm:"index;not null;comment:竞赛id" json:"contest_id"`
 	Name      string `gorm:"type:varchar(255);comment:比赛用户名称" json:"name"`
 	Email     string `gorm:"type:varchar(255);not null;comment:邮箱" json:"email,omitempty"`
-	ObjectID  string `gorm:"type:varchar(30);unique;comment:存在mongo的本次比赛成绩" json:"object_id"`
+	Score     string `gorm:"type:json;default:NULL;comment:比赛成绩" json:"object_id"`
 }
 
 func (Apply) TableName() string {

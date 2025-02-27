@@ -8,11 +8,14 @@ import (
 	"SOJ/pkg/judge0"
 	"SOJ/utils"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 	"strconv"
+	"time"
 )
 
 type SubmissionService interface {
@@ -32,10 +35,11 @@ type submission struct {
 	langRepo    repository.LanguageRepository
 	userRepo    repository.UserRepository
 	applyRepo   repository.ApplyRepository
+	contestRepo repository.ContestRepository
 	judge       *judge0.Judge
 }
 
-func NewSubmissionService(log *zap.Logger, a repository.ApplyRepository, repo repository.SubmissionRepository, p repository.ProblemRepository, l repository.LanguageRepository, j *judge0.Judge, u repository.UserRepository) SubmissionService {
+func NewSubmissionService(log *zap.Logger, a repository.ApplyRepository, repo repository.SubmissionRepository, p repository.ProblemRepository, l repository.LanguageRepository, j *judge0.Judge, u repository.UserRepository, c repository.ContestRepository) SubmissionService {
 	return &submission{
 		log:         log,
 		repo:        repo,
@@ -44,6 +48,7 @@ func NewSubmissionService(log *zap.Logger, a repository.ApplyRepository, repo re
 		judge:       j,
 		userRepo:    u,
 		applyRepo:   a,
+		contestRepo: c,
 	}
 }
 
@@ -92,7 +97,7 @@ func (ss *submission) GetLimit(ctx *gin.Context, pid, lid int, oid string, s *mo
 	}
 	//把部分信息存入
 	if s != nil {
-		s.ProblemName, s.Language = t.Name, l.Name
+		s.Language = l.Name
 	}
 	return &limit, nil
 }
@@ -123,7 +128,7 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 	}
 	req.Limit = *limit
 	req.CpuExtraLimit = req.CpuTimeLimit + 0.01
-	//获取对应的测试点
+	//获取对应的测试点存储id
 	p, err := ss.problemRepo.GetInfoByID(ctx, req.ProblemID)
 	if err != nil {
 		return nil, err
@@ -132,6 +137,7 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 		return nil, errors.New(constant.NotFoundError)
 	}
 	objID, _ := primitive.ObjectIDFromHex(p.TestCaseID)
+	//获取mongo中的测试点详情
 	t, err := ss.problemRepo.GetTestCaseInfo(ctx, objID)
 	if err != nil {
 		return nil, err
@@ -161,21 +167,30 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 	claims := utils.GetAccessClaims(ctx)
 	s.UserID = uint(claims.ID)
 	s.ProblemID = uint(req.ProblemID)
+	s.ProblemName = p.Name
 	s.LanguageID = uint(req.LanguageID)
 	s.ContestID = uint(req.ContestID)
 	s.SourceCode = req.SourceCode
 
 	//当contestId不为空时,从apply表获取用户名, 且记录不可见
 	//反之从user表获取,记录可见
+	var applyInfo *model.Apply
+	var contestInfo *model.Contest
+
 	if req.ContestID != 0 {
 		s.Visible = new(bool)
 		*s.Visible = false
 		//查询apply表
-		a, aErr := ss.applyRepo.GetInfoByUserAndContest(ctx, s.UserID, s.ContestID)
-		if aErr != nil {
-			return nil, aErr
+		applyInfo, err = ss.applyRepo.GetInfoByUserAndContest(ctx, s.UserID, s.ContestID)
+		if err != nil {
+			return nil, err
 		}
-		s.UserName = a.Name
+		//获取比赛信息
+		contestInfo, err = ss.contestRepo.GetContestInfoByID(ctx, int(s.ContestID))
+		if err != nil {
+			return nil, err
+		}
+		s.UserName = applyInfo.Name
 
 	} else {
 		//查询user表
@@ -187,7 +202,8 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 	}
 
 	//测试点检查
-	mxid := 0
+	statusID := 0
+
 	for range n {
 		v := <-resp
 		var jt float64
@@ -196,20 +212,102 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 		}
 		s.Time = max(s.Time, jt)
 		s.Memory = max(s.Memory, v.Memory)
-		if v.ID > mxid {
-			mxid = v.ID
+		if v.ID > statusID {
+			//状态更新
+			statusID = v.ID
 			s.Status, s.Stderr, s.CompileOut = v.Description, v.Stderr, v.CompileOutput
 		}
-		//未通过直接返回,后续测试点不再检查(ACM模式, 其他模式后续扩展)
-		if mxid != constant.JudgeAC {
-			break
+		//未通过直接返回,后续测试点不再检查(ACM模式, 其他模式后续扩展) 提前关闭通道会导致panic
+		//if statusID != constant.JudgeAC {
+		//	break
+		//}
+	}
+
+	var tx *gorm.DB
+	//如果是比赛提交 解析出当前成绩
+	if applyInfo != nil && contestInfo != nil {
+		var res entity.ContestScore
+		//赛时第一次提交 没有个人成绩
+		if applyInfo.Score == "" {
+			res = entity.NewContestScore()
+		} else {
+			err = json.Unmarshal([]byte(applyInfo.Score), &res)
+			if err != nil {
+				return nil, errors.New("json 解析失败")
+			}
+		}
+
+		//实际的所有题目提交情况
+		actual := res.Actual
+		//冻结的所有题目提交情况
+		freeze := res.Freeze
+		//当前题目的提交记录
+		record := actual.Details[s.ProblemID]
+		record.Name = s.ProblemName
+		//之前未通过本题
+		if record.Status != constant.JudgeAC {
+			record.Count++
+			//本次提交通过测评
+			if statusID == constant.JudgeAC {
+				record.Status = constant.JudgeAC
+				//更新总成绩
+				actual.AcceptedCount++
+				actual.PenaltyCount += record.Penalty + time.Since(*contestInfo.StartTime).Minutes()
+				//res.ScoreCount IOI扩展
+
+				//测评状态非系统错误
+			} else if statusID > constant.JudgeAC && statusID < constant.JudgeIE {
+				record.Status = constant.JudgeWA
+				record.Penalty += constant.PenaltyTime
+				//actual.Score IOI扩展
+			}
+			//本次测评结果保存
+			actual.Details[s.ProblemID] = record
+			//freeze.Details[s.ProblemID] = record
+
+			//封榜 状态更新为冻结 记录提交次数 其他不更新
+			if time.Now().Unix() >= contestInfo.FreezeTime.Unix() {
+				tt := freeze.Details[s.ProblemID]
+				tt.Name = s.ProblemName
+				tt.Status = constant.JudgeFreeze
+				tt.Count = record.Count
+				freeze.Details[s.ProblemID] = tt
+
+				//未封榜 同步实际结果
+			} else {
+				freeze = actual
+			}
+			// 更新表数据
+			res.Freeze = freeze
+			res.Actual = actual
+			//生成新的个人成绩json
+			data, _ := json.Marshal(res)
+			applyInfo.Score = string(data)
+
+			//获取事务
+			tx = ss.applyRepo.GetTransaction(ctx)
 		}
 	}
+	if tx != nil {
+		err = ss.applyRepo.UpdateApply(ctx, applyInfo, tx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	//测评机请求时间过长会导致上下文过长，gorm会警告慢sql
-	err = ss.repo.CreateSubmission(ctx, s)
+	err = ss.repo.CreateSubmission(ctx, s, tx)
 	if err != nil {
+		if tx != nil {
+			tx.Rollback()
+		}
+
 		return nil, err
 	}
+	if tx != nil {
+		tx.Commit()
+	}
+
 	return s, nil
 
 }
