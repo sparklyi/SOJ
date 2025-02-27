@@ -46,6 +46,7 @@ func (as *apply) CreateApply(ctx *gin.Context, req *entity.Apply) (*model.Apply,
 		ContestID: req.ContestID,
 		Name:      req.Name,
 		Email:     req.Email,
+		Score:     "",
 	}
 	applyResp, err := as.repo.GetInfoByUserAndContest(ctx, a.UserID, a.ContestID)
 	//已经报名Resp
