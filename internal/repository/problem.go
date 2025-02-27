@@ -140,9 +140,9 @@ func (pr *problem) GetInfoByObjID(ctx context.Context, obj primitive.ObjectID) (
 // MysqlUpdateInfoByID 题目信息更新
 func (pr *problem) MysqlUpdateInfoByID(ctx context.Context, tx *gorm.DB, problem *model.Problem) error {
 	if tx == nil {
-		tx = pr.db
+		tx = pr.db.WithContext(ctx)
 	}
-	err := tx.WithContext(ctx).Save(problem).Error
+	err := tx.Save(problem).Error
 	if err != nil {
 		pr.log.Error("数据库更新失败", zap.Error(err))
 		return errors.New(constant.ServerError)
@@ -167,7 +167,10 @@ func (pr *problem) MongoUpdateInfoByObjID(ctx context.Context, req *entity.Probl
 
 // MysqlDeleteProblem mysql中的题目删除
 func (pr *problem) MysqlDeleteProblem(ctx context.Context, tx *gorm.DB, id int) error {
-	err := tx.WithContext(ctx).Where("id = ?", id).Delete(&model.Problem{}).Error
+	if tx == nil {
+		tx = pr.db.WithContext(ctx)
+	}
+	err := tx.Where("id = ?", id).Delete(&model.Problem{}).Error
 	if err != nil {
 		pr.log.Error("数据库删除记录失败", zap.Error(err))
 		return errors.New(constant.ServerError)

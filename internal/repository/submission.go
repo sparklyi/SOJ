@@ -14,11 +14,12 @@ import (
 )
 
 type SubmissionRepository interface {
-	CreateSubmission(ctx context.Context, s *model.Submission) error
+	CreateSubmission(ctx context.Context, s *model.Submission, tx *gorm.DB) error
 	GetInfoByID(ctx context.Context, id int) (*model.Submission, error)
 	GetSubmissionList(ctx context.Context, req *entity.SubmissionList) ([]*model.Submission, error)
 	DeleteJudgeByToken(ctx context.Context, token string) error
 	DeleteAllJudgeHistory(ctx context.Context) error
+	GetTransaction(ctx context.Context) *gorm.DB
 }
 
 type submission struct {
@@ -42,8 +43,11 @@ func NewSubmissionRepository(log *zap.Logger, db *gorm.DB) SubmissionRepository 
 }
 
 // CreateSubmission 创建测评记录
-func (sr *submission) CreateSubmission(ctx context.Context, s *model.Submission) error {
-	err := sr.db.WithContext(ctx).Create(s).Error
+func (sr *submission) CreateSubmission(ctx context.Context, s *model.Submission, tx *gorm.DB) error {
+	if tx == nil {
+		tx = sr.db.WithContext(ctx)
+	}
+	err := tx.Create(s).Error
 	if err != nil {
 		sr.log.Error("创建测评记录失败", zap.Error(err))
 		return errors.New(constant.ServerError)
@@ -110,4 +114,9 @@ func (sr *submission) DeleteAllJudgeHistory(ctx context.Context) error {
 		return errors.New(constant.ServerError)
 	}
 	return nil
+}
+
+// GetTransaction 获取事务
+func (sr *submission) GetTransaction(ctx context.Context) *gorm.DB {
+	return sr.db.Where(ctx).Begin()
 }

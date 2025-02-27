@@ -35,24 +35,36 @@ type ContestList struct {
 	PageSize int    `json:"page_size" binding:"omitempty" bson:"page_size"`
 }
 
-// Result 提交状态, 罚时, 得分
-type Result struct {
-	Status     int     `json:"status,omitempty"  bson:"status"`
-	Score      float64 `json:"score,omitempty"  bson:"score"`
-	WrongCount int     `json:"wrong_count,omitempty"  bson:"wrong_count"`
-	Penalty    float64 `json:"penalty,omitempty"  bson:"penalty"`
-}
-
-// ProblemResult 题目的
+// ProblemResult 每一题的提交状态, 罚时, 得分
 type ProblemResult struct {
-	Actual Result `json:"actual,omitempty" bson:"actual"`
-	Freeze Result `json:"freeze,omitempty" bson:"freeze"`
+	Name    string  `json:"name"`
+	Status  int     `json:"status"  bson:"status"`
+	Score   float64 `json:"score"  bson:"score"`
+	Count   int     `json:"count"  bson:"count"`
+	Penalty float64 `json:"penalty"  bson:"penalty"`
 }
 
-// ContestResult 比赛状态 题目通过数 总得分  总罚时
-type ContestResult struct {
-	AcceptedCount int                      `json:"accepted_count" bson:"accepted_count"`
-	ScoreCount    float64                  `json:"score_count" bson:"score_count"`
-	PenaltyCount  float64                  `json:"penalty_count" bson:"penalty_count"`
-	Details       map[string]ProblemResult `json:"details,omitempty" bson:"details"`
+// ProblemSetResult 所有题目的提交结果
+type ProblemSetResult struct {
+	AcceptedCount int                    `json:"accepted_count"`
+	ScoreCount    float64                `json:"score_count"`
+	PenaltyCount  float64                `json:"penalty_count"`
+	Details       map[uint]ProblemResult `json:"details"`
+}
+
+// ContestScore 比赛状态 题目通过数 总得分  总罚时
+type ContestScore struct {
+	Actual ProblemSetResult `json:"actual,omitempty" bson:"actual"`
+	Freeze ProblemSetResult `json:"freeze,omitempty" bson:"freeze"`
+}
+
+func NewContestScore() ContestScore {
+	return ContestScore{
+		Actual: ProblemSetResult{
+			Details: make(map[uint]ProblemResult),
+		},
+		Freeze: ProblemSetResult{
+			Details: make(map[uint]ProblemResult),
+		},
+	}
 }
