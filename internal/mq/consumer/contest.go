@@ -43,15 +43,21 @@ func (c *ContestConsumer) Consume(ctx context.Context) {
 		c.log.Error("consume contest error", zap.Error(err))
 		return
 	}
+
+	workerPool := make(chan struct{}, 128)
 	for msg := range contents {
+		workerPool <- struct{}{}
 		go func(msg amqp.Delivery) {
+			defer func() { <-workerPool }()
 			content := producer.ContestNotify{}
 			err = json.Unmarshal(msg.Body, &content)
 			if err != nil {
 				c.log.Error("unmarshal contest error", zap.Error(err))
 				return
 			}
-			for range mq.MaxRetry {
+			for _, seconds := range mq.ReTryDelaySeconds {
+				//延迟重试
+				time.Sleep(time.Duration(seconds) * time.Second)
 				//检查当前比赛是否还存在
 				var contest *model.Contest
 				contest, err = c.contest.GetContestInfoByID(ctx, int(content.ContestID))
@@ -81,11 +87,11 @@ func (c *ContestConsumer) Consume(ctx context.Context) {
 				//公开比赛通知notify=1的用户
 				if *contest.Public {
 					t := make([]string, 0, 256)
-					err = c.db.WithContext(ctx).
-						Model(&model.User{}).
-						Select("email").
-						Where("notify = 1 and email NOT IN (?)", addr).
-						Find(&t).Error
+					db := c.db.WithContext(ctx).Model(&model.User{}).Select("email")
+					if len(addr) > 0 {
+						db = db.Where("email = NOT IN(?)", addr)
+					}
+					err = db.Where("notify = 1").Find(&t).Error
 					if err != nil {
 						c.log.Error("获取用户邮箱失败,开始重试", zap.Error(err))
 						continue

@@ -41,10 +41,15 @@ func (c *EmailConsumer) Consume(ctx context.Context) {
 		c.log.Error("consume email fail", zap.Error(err))
 		return
 	}
-
+	//协程池
+	workerPool := make(chan struct{}, 128)
 	for msg := range msgs {
+		//获取协程
+		workerPool <- struct{}{}
 		//开启协程
 		go func(msg amqp.Delivery) {
+			//释放
+			defer func() { <-workerPool }()
 			content := producer.EmailContent{}
 			err = json.Unmarshal(msg.Body, &content)
 			if err != nil {
@@ -56,7 +61,8 @@ func (c *EmailConsumer) Consume(ctx context.Context) {
 				return
 			}
 
-			for range mq.MaxRetry {
+			for _, second := range mq.ReTryDelaySeconds {
+				time.Sleep(time.Duration(second) * time.Second)
 				//如果发送的是验证码
 				if content.Code != "" {
 					if err = c.rs.Set(ctx, content.Target[0], content.Code, time.Minute).Err(); err != nil {
