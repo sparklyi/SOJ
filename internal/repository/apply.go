@@ -21,7 +21,7 @@ type ApplyRepository interface {
 	GetInfoByUserAndContest(ctx context.Context, uid uint, cid uint) (*model.Apply, error)
 	GetInfoByID(ctx context.Context, id int) (*model.Apply, error)
 	DeleteApplyByContestID(ctx context.Context, cid int) error
-	GetTransaction() *gorm.DB
+	GetTransaction(ctx context.Context) *gorm.DB
 }
 
 type apply struct {
@@ -49,9 +49,9 @@ func (ar *apply) CreateApply(ctx context.Context, apply *model.Apply) error {
 // UpdateApply 更新报名
 func (ar *apply) UpdateApply(ctx context.Context, apply *model.Apply, tx *gorm.DB) error {
 	if tx == nil {
-		tx = ar.db
+		tx = ar.db.WithContext(ctx)
 	}
-	err := tx.WithContext(ctx).Updates(apply).Error
+	err := tx.Updates(apply).Error
 	if err != nil {
 		ar.log.Error("报名信息更新失败", zap.Error(err), zap.Any("apply info", apply))
 		return errors.New(constant.ServerError)
@@ -142,6 +142,6 @@ func (ar *apply) DeleteApplyByContestID(ctx context.Context, cid int) error {
 }
 
 // GetTransaction 获取事务
-func (ar *apply) GetTransaction() *gorm.DB {
-	return ar.db.Begin()
+func (ar *apply) GetTransaction(ctx context.Context) *gorm.DB {
+	return ar.db.WithContext(ctx).Begin()
 }

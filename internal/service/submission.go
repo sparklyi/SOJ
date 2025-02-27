@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 	"strconv"
 	"time"
 )
@@ -96,7 +97,7 @@ func (ss *submission) GetLimit(ctx *gin.Context, pid, lid int, oid string, s *mo
 	}
 	//把部分信息存入
 	if s != nil {
-		s.ProblemName, s.Language = t.Name, l.Name
+		s.Language = l.Name
 	}
 	return &limit, nil
 }
@@ -166,6 +167,7 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 	claims := utils.GetAccessClaims(ctx)
 	s.UserID = uint(claims.ID)
 	s.ProblemID = uint(req.ProblemID)
+	s.ProblemName = p.Name
 	s.LanguageID = uint(req.LanguageID)
 	s.ContestID = uint(req.ContestID)
 	s.SourceCode = req.SourceCode
@@ -215,64 +217,97 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 			statusID = v.ID
 			s.Status, s.Stderr, s.CompileOut = v.Description, v.Stderr, v.CompileOutput
 		}
-		//未通过直接返回,后续测试点不再检查(ACM模式, 其他模式后续扩展)
-		if statusID != constant.JudgeAC {
-			break
-		}
+		//未通过直接返回,后续测试点不再检查(ACM模式, 其他模式后续扩展) 提前关闭通道会导致panic
+		//if statusID != constant.JudgeAC {
+		//	break
+		//}
 	}
 
+	var tx *gorm.DB
 	//如果是比赛提交 解析出当前成绩
 	if applyInfo != nil && contestInfo != nil {
-		var res entity.ContestResult
-
-		err = json.Unmarshal([]byte(applyInfo.Score), &res)
-		if err != nil {
-			return nil, errors.New("json 解析失败")
+		var res entity.ContestScore
+		//赛时第一次提交 没有个人成绩
+		if applyInfo.Score == "" {
+			res = entity.NewContestScore()
+		} else {
+			err = json.Unmarshal([]byte(applyInfo.Score), &res)
+			if err != nil {
+				return nil, errors.New("json 解析失败")
+			}
 		}
-		//实际成绩
-		set := res.Details[s.ProblemName]
 
+		//实际的所有题目提交情况
+		actual := res.Actual
+		//冻结的所有题目提交情况
+		freeze := res.Freeze
+		//当前题目的提交记录
+		record := actual.Details[s.ProblemID]
+		record.Name = s.ProblemName
 		//之前未通过本题
-		if set.Actual.Status != constant.JudgeAC {
-
+		if record.Status != constant.JudgeAC {
+			record.Count++
 			//本次提交通过测评
 			if statusID == constant.JudgeAC {
-				set.Actual.Status = constant.JudgeAC
+				record.Status = constant.JudgeAC
 				//更新总成绩
-				res.AcceptedCount++
-				res.PenaltyCount += set.Actual.Penalty + (time.Now().Sub(*contestInfo.StartTime)).Minutes()
+				actual.AcceptedCount++
+				actual.PenaltyCount += record.Penalty + time.Since(*contestInfo.StartTime).Minutes()
 				//res.ScoreCount IOI扩展
 
 				//测评状态非系统错误
 			} else if statusID > constant.JudgeAC && statusID < constant.JudgeIE {
-				set.Actual.Status = constant.JudgeWA
-				set.Actual.Penalty += constant.PenaltyTime
-				set.Actual.WrongCount++
+				record.Status = constant.JudgeWA
+				record.Penalty += constant.PenaltyTime
 				//actual.Score IOI扩展
 			}
+			//本次测评结果保存
+			actual.Details[s.ProblemID] = record
+			//freeze.Details[s.ProblemID] = record
 
-			set.Freeze.Status = constant.JudgeFreeze
-			//当前未封榜 实际状态和封闭状态一致 反之则保持之前的冻结状态
-			if time.Now().Unix() < contestInfo.FreezeTime.Unix() {
-				set.Freeze = set.Actual
+			//封榜 状态更新为冻结 记录提交次数 其他不更新
+			if time.Now().Unix() >= contestInfo.FreezeTime.Unix() {
+				tt := freeze.Details[s.ProblemID]
+				tt.Name = s.ProblemName
+				tt.Status = constant.JudgeFreeze
+				tt.Count = record.Count
+				freeze.Details[s.ProblemID] = tt
+
+				//未封榜 同步实际结果
+			} else {
+				freeze = actual
 			}
 			// 更新表数据
-			res.Details[s.ProblemName] = set
-
+			res.Freeze = freeze
+			res.Actual = actual
+			//生成新的个人成绩json
 			data, _ := json.Marshal(res)
 			applyInfo.Score = string(data)
-			err = ss.applyRepo.UpdateApply(ctx, applyInfo)
-			if err != nil {
-				return nil, err
-			}
+
+			//获取事务
+			tx = ss.applyRepo.GetTransaction(ctx)
+		}
+	}
+	if tx != nil {
+		err = ss.applyRepo.UpdateApply(ctx, applyInfo, tx)
+		if err != nil {
+			return nil, err
 		}
 	}
 
 	//测评机请求时间过长会导致上下文过长，gorm会警告慢sql
-	err = ss.repo.CreateSubmission(ctx, s)
+	err = ss.repo.CreateSubmission(ctx, s, tx)
 	if err != nil {
+		if tx != nil {
+			tx.Rollback()
+		}
+
 		return nil, err
 	}
+	if tx != nil {
+		tx.Commit()
+	}
+
 	return s, nil
 
 }
