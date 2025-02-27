@@ -14,13 +14,14 @@ import (
 
 type ApplyRepository interface {
 	CreateApply(ctx context.Context, apply *model.Apply) error
-	UpdateApply(ctx context.Context, apply *model.Apply) error
+	UpdateApply(ctx context.Context, apply *model.Apply, tx *gorm.DB) error
 	DeleteApply(ctx context.Context, aid int) error
 	GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Apply, error)
 	GetList(ctx context.Context, req *entity.ApplyList) ([]*model.Apply, error)
 	GetInfoByUserAndContest(ctx context.Context, uid uint, cid uint) (*model.Apply, error)
 	GetInfoByID(ctx context.Context, id int) (*model.Apply, error)
 	DeleteApplyByContestID(ctx context.Context, cid int) error
+	GetTransaction(ctx context.Context) *gorm.DB
 }
 
 type apply struct {
@@ -46,8 +47,11 @@ func (ar *apply) CreateApply(ctx context.Context, apply *model.Apply) error {
 }
 
 // UpdateApply 更新报名
-func (ar *apply) UpdateApply(ctx context.Context, apply *model.Apply) error {
-	err := ar.db.WithContext(ctx).Updates(apply).Error
+func (ar *apply) UpdateApply(ctx context.Context, apply *model.Apply, tx *gorm.DB) error {
+	if tx == nil {
+		tx = ar.db.WithContext(ctx)
+	}
+	err := tx.Updates(apply).Error
 	if err != nil {
 		ar.log.Error("报名信息更新失败", zap.Error(err), zap.Any("apply info", apply))
 		return errors.New(constant.ServerError)
@@ -135,4 +139,9 @@ func (ar *apply) DeleteApplyByContestID(ctx context.Context, cid int) error {
 		return errors.New(constant.ServerError)
 	}
 	return nil
+}
+
+// GetTransaction 获取事务
+func (ar *apply) GetTransaction(ctx context.Context) *gorm.DB {
+	return ar.db.WithContext(ctx).Begin()
 }
