@@ -17,6 +17,10 @@ const (
 	JudgeIE
 	JudgeEFE
 	JudgeUnknown
+	JudgeFreeze
+)
+const (
+	PenaltyTime = 20
 )
 
 var JudgeCode2Details = []string{
@@ -36,6 +40,7 @@ var JudgeCode2Details = []string{
 	"Internal Error",
 	"Exec Format Error",
 	"Unknown Error",
+	"Freeze",
 }
 
 const (
