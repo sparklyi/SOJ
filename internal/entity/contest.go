@@ -68,3 +68,10 @@ func NewContestScore() ContestScore {
 		},
 	}
 }
+
+// RankingList 排行榜
+type RankingList struct {
+	ContestID int `json:"contest_id" binding:"required,number" bson:"contest_id"`
+	//Page int `json:"page" binding:"omitempty" bson:"page"`
+	//PageSize int `json:"page_size" binding:"omitempty" bson:"page_size"`
+}

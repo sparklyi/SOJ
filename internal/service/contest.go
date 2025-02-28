@@ -11,6 +11,7 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"sort"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type ContestService interface {
 	GetListByUserID(ctx *gin.Context, id int, page int, pageSize int) ([]*model.Contest, error)
 	GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error)
 	DeleteContest(ctx *gin.Context, id int) error
+	GetRankingList(ctx *gin.Context, req *entity.RankingList) ([]rank, error)
 }
 
 type contest struct {
@@ -173,4 +175,59 @@ func (cs *contest) DeleteContest(ctx *gin.Context, id int) error {
 	}
 	go cs.applyRepo.DeleteApplyByContestID(ctx, id)
 	return nil
+}
+
+type rank struct {
+	ApplyName string              `json:"apply_name"`
+	Info      entity.ContestScore `json:"info"`
+}
+
+// GetRankingList 获取排行榜
+func (cs *contest) GetRankingList(ctx *gin.Context, req *entity.RankingList) ([]rank, error) {
+	list, err := cs.applyRepo.GetListByContestID(ctx, req.ContestID, 1, 500)
+	if err != nil {
+		return nil, err
+	}
+	c, err := cs.repo.GetContestInfoByID(ctx, req.ContestID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().Unix()
+	//管理员权限可查看实时榜单
+	show := utils.GetAccessClaims(ctx).Auth > constant.UserLevel
+	//比赛未到封榜时间 或 比赛结束一天后 显示实际成绩
+	if now < c.FreezeTime.Unix() || now >= c.EndTime.Add(time.Hour*constant.ReliveTime).Unix() {
+		show = true
+	}
+
+	score := make([]rank, len(list))
+	for i, v := range list {
+		score[i].ApplyName = v.Name
+		//有成绩则解析
+		if v.Score != "" {
+			err = json.Unmarshal([]byte(v.Score), &score[i].Info)
+			if err != nil {
+				cs.log.Error("json 解析失败", zap.Error(err), zap.Any("score", v.Score))
+				return nil, errors.New(constant.ServerError)
+			}
+			if show {
+				score[i].Info.Freeze = score[i].Info.Actual
+			}
+			score[i].Info.Actual = entity.ProblemSetResult{}
+		}
+
+	}
+	// ACM模式排序
+	sort.Slice(score, func(i, j int) bool {
+		a, b := score[i].Info.Freeze, score[j].Info.Freeze
+		if a.AcceptedCount == b.AcceptedCount {
+			return a.PenaltyCount < b.PenaltyCount
+		}
+		return a.AcceptedCount > b.AcceptedCount
+	})
+	//部分信息清空
+
+	return score, nil
+
 }
