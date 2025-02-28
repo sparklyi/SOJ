@@ -143,7 +143,15 @@ func (cs *contest) GetContestList(ctx *gin.Context, req *entity.ContestList) ([]
 
 // GetListByUserID 获取用户比赛列表
 func (cs *contest) GetListByUserID(ctx *gin.Context, id, page, pageSize int) ([]*model.Contest, error) {
-	return cs.repo.GetListByUserID(ctx, id, page, pageSize)
+	list, err := cs.repo.GetListByUserID(ctx, id, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range list {
+		v.ProblemSet = ""
+		v.Description = ""
+	}
+	return list, nil
 }
 
 // GetContestInfoByID 获取比赛详情
@@ -155,6 +163,7 @@ func (cs *contest) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest,
 	claims := utils.GetAccessClaims(ctx)
 	if claims.Auth < constant.AdminLevel && c.UserID != uint(claims.ID) {
 		c.Code = ""
+		c.ProblemSet = ""
 	}
 	return c, nil
 }
