@@ -18,7 +18,7 @@ type ProblemRepository interface {
 	GetTransaction(ctx context.Context) *gorm.DB
 	MongoCreate(ctx context.Context, req *entity.Problem) (primitive.ObjectID, error)
 	MySQLCreate(ctx context.Context, problem *model.Problem) error
-	Count(ctx context.Context) (int64, error)
+	Count(ctx context.Context, admin bool) (int64, error)
 	GetProblemList(ctx context.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, error)
 	GetInfoByID(ctx context.Context, id int) (*model.Problem, error)
 	GetInfoByObjID(ctx context.Context, obj primitive.ObjectID) (*bson.M, error)
@@ -75,9 +75,13 @@ func (pr *problem) MySQLCreate(ctx context.Context, problem *model.Problem) erro
 }
 
 // Count 题目数量
-func (pr *problem) Count(ctx context.Context) (int64, error) {
+func (pr *problem) Count(ctx context.Context, admin bool) (int64, error) {
 	var total int64
-	if err := pr.db.WithContext(ctx).Model(&model.Problem{}).Count(&total).Error; err != nil {
+	db := pr.db.WithContext(ctx).Model(&model.Problem{})
+	if !admin {
+		db = db.Where("status = true and owner=0")
+	}
+	if err := db.Count(&total).Error; err != nil {
 		pr.log.Error("数据库查询失败", zap.Error(err))
 		return -1, errors.New(constant.ServerError)
 	}
@@ -99,7 +103,7 @@ func (pr *problem) GetProblemList(ctx context.Context, req *entity.ProblemList, 
 	}
 	//管理员可查看所有类型题目 普通用户只可查看公开题目
 	if !admin {
-		db = db.Where("status = true adn owner = 0")
+		db = db.Where("status = true and owner = 0")
 	}
 	err := db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&sets).Error
 	if err != nil {

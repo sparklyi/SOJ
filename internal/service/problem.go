@@ -58,13 +58,15 @@ func (ps *problem) Create(ctx *gin.Context, req *entity.Problem) (*model.Problem
 
 // Count 获取题目数量
 func (ps *problem) Count(ctx *gin.Context) (int64, error) {
-	return ps.repo.Count(ctx)
+	claims := utils.GetAccessClaims(ctx)
+	return ps.repo.Count(ctx, claims != nil && claims.Auth == constant.RootLevel)
 }
 
 // GetProblemList 获取题目列表
 func (ps *problem) GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, error) {
+	claims := utils.GetAccessClaims(ctx)
 
-	return ps.repo.GetProblemList(ctx, req, utils.GetAccessClaims(ctx).Auth == constant.RootLevel)
+	return ps.repo.GetProblemList(ctx, req, claims != nil && claims.Auth == constant.RootLevel)
 }
 
 // GetProblemInfo 获取题目详情
