@@ -21,6 +21,7 @@ const (
 )
 const (
 	PenaltyTime = 20
+	ReliveTime  = 24 //解榜时间默认为比赛结束24h后
 )
 
 var JudgeCode2Details = []string{

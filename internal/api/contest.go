@@ -14,6 +14,6 @@ func ContestRoute(r *gin.RouterGroup, c handle.ContestHandle, mid []gin.HandlerF
 		contest.POST("/create", c.CreateContest)  //创建比赛
 		contest.PUT("/update", c.UpdateContest)   //更新比赛信息
 		contest.DELETE("/:cid", c.DeleteContest)  //删除比赛
-
+		contest.POST("/rank", c.GetRankingList)   //比赛成绩排行榜
 	}
 }
