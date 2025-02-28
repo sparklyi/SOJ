@@ -121,6 +121,20 @@ func (ss *submission) Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResul
 // Judge 提交运行
 func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error) {
 	s := &model.Submission{}
+	var contestInfo *model.Contest
+
+	if req.ContestID != 0 {
+		//获取比赛信息
+		var err error
+		contestInfo, err = ss.contestRepo.GetContestInfoByID(ctx, req.ContestID)
+		if err != nil {
+			return nil, err
+		}
+		if time.Now().Unix() < contestInfo.StartTime.Unix() {
+			return nil, errors.New("比赛未开始")
+		}
+	}
+
 	//获取当前测评语言的限制
 	limit, err := ss.GetLimit(ctx, req.ProblemID, req.LanguageID, req.ProblemObjID, s)
 	if err != nil {
@@ -175,18 +189,12 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 	//当contestId不为空时,从apply表获取用户名, 且记录不可见
 	//反之从user表获取,记录可见
 	var applyInfo *model.Apply
-	var contestInfo *model.Contest
 
 	if req.ContestID != 0 {
 		s.Visible = new(bool)
 		*s.Visible = false
 		//查询apply表
 		applyInfo, err = ss.applyRepo.GetInfoByUserAndContest(ctx, s.UserID, s.ContestID)
-		if err != nil {
-			return nil, err
-		}
-		//获取比赛信息
-		contestInfo, err = ss.contestRepo.GetContestInfoByID(ctx, int(s.ContestID))
 		if err != nil {
 			return nil, err
 		}
@@ -225,7 +233,7 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 
 	var tx *gorm.DB
 	//如果是比赛提交 解析出当前成绩
-	if applyInfo != nil && contestInfo != nil {
+	if applyInfo != nil && contestInfo != nil && time.Now().Unix() <= contestInfo.EndTime.Unix() {
 		var res entity.ContestScore
 		//赛时第一次提交 没有个人成绩
 		if applyInfo.Score == "" {
@@ -268,6 +276,7 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 			//封榜 状态更新为冻结 记录提交次数 其他不更新
 			if time.Now().Unix() >= contestInfo.FreezeTime.Unix() {
 				tt := freeze.Details[s.ProblemID]
+				//首次提交需要记录题目
 				tt.Name = s.ProblemName
 				tt.Status = constant.JudgeFreeze
 				tt.Count = record.Count

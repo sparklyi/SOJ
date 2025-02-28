@@ -21,6 +21,7 @@ type ApplyRepository interface {
 	GetInfoByUserAndContest(ctx context.Context, uid uint, cid uint) (*model.Apply, error)
 	GetInfoByID(ctx context.Context, id int) (*model.Apply, error)
 	DeleteApplyByContestID(ctx context.Context, cid int) error
+	GetListByContestID(ctx context.Context, cid int, page, pageSize int) ([]model.Apply, error)
 	GetTransaction(ctx context.Context) *gorm.DB
 }
 
@@ -139,6 +140,20 @@ func (ar *apply) DeleteApplyByContestID(ctx context.Context, cid int) error {
 		return errors.New(constant.ServerError)
 	}
 	return nil
+}
+
+// GetListByContestID 根据竞赛id获取报名列表
+func (ar *apply) GetListByContestID(ctx context.Context, cid int, page, pageSize int) ([]model.Apply, error) {
+	var List []model.Apply
+	err := ar.db.WithContext(ctx).
+		Scopes(utils.Paginate(page, pageSize)).
+		Where("contest_id =?", cid).
+		Find(&List).Error
+	if err != nil {
+		ar.log.Error("获取报名列表失败", zap.Error(err), zap.Any("contest_id", cid))
+		return nil, errors.New(constant.ServerError)
+	}
+	return List, nil
 }
 
 // GetTransaction 获取事务

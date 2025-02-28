@@ -17,6 +17,7 @@ type ContestHandle interface {
 	GetListByUserID(ctx *gin.Context)
 	GetInfoByID(ctx *gin.Context)
 	DeleteContest(ctx *gin.Context)
+	GetRankingList(ctx *gin.Context)
 }
 
 type contest struct {
@@ -143,4 +144,20 @@ func (ch *contest) DeleteContest(ctx *gin.Context) {
 		return
 	}
 	response.SuccessNoContent(ctx)
+}
+
+// GetRankingList 获取排行榜
+func (ch *contest) GetRankingList(ctx *gin.Context) {
+	req := entity.RankingList{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	ranks, err := ch.svc.GetRankingList(ctx, &req)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, ranks)
+
 }
