@@ -5,4 +5,6 @@ const (
 	UserLevel = iota
 	AdminLevel
 	RootLevel
+
+	ExpireTime = 5 //过期时间
 )

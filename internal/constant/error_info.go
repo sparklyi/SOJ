@@ -8,4 +8,5 @@ const (
 	UnauthorizedError = "无操作权限"
 	DisableError      = "不可用"
 	AlreadyExistError = "已存在相同数据"
+	PasswordError     = "密码错误"
 )
