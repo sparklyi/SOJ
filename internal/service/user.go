@@ -20,6 +20,7 @@ import (
 	"mime/multipart"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type UserService interface {
@@ -120,12 +121,40 @@ func (us *user) LoginByPassword(ctx *gin.Context, req *entity.LoginByPassword) (
 	if !us.captcha.Verify(req.CaptchaID, req.Captcha, true) {
 		return nil, errors.New(constant.CodeError)
 	}
-	u, err := us.repo.GetUserByEmail(ctx, req.Email)
-	if err != nil {
+
+	//检查是否缓存在redis中
+	checkEmail := "password:" + req.Email
+	seg := ":"
+	pass, err := us.rs.Get(ctx, checkEmail).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
+	//缓存过密码或者特殊值
+	if list := strings.Split(pass, seg); len(list) == 2 {
+		if !us.CheckPassword(req.Password, list[1]) {
+			return nil, errors.New(constant.PasswordError)
+		} else {
+			id, _ := strconv.Atoi(list[0])
+			u := model.User{Model: gorm.Model{ID: uint(id)}}
+			return &u, nil
+		}
+	}
+	//未缓存在redis中
+	u, err := us.repo.GetUserByEmail(ctx, req.Email)
+	//未找到对应邮箱
+	if err != nil {
+		if err.Error() != constant.ServerError {
+			//设置随机值 防止恶意调用
+			us.rs.Set(ctx, checkEmail,
+				"0"+seg+us.EncryptPassword(utils.GenerateRandCode(20, false)),
+				time.Minute*constant.ExpireTime)
+		}
+		return nil, err
+	}
+	//邮箱存在, 缓存真实密码
+	us.rs.Set(ctx, checkEmail, fmt.Sprintf("%v:%s", u.ID, u.Password), time.Minute*constant.ExpireTime)
 	if !us.CheckPassword(req.Password, u.Password) {
-		return nil, errors.New("密码错误")
+		return nil, errors.New(constant.PasswordError)
 	}
 	return u, nil
 }
