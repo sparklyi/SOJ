@@ -77,7 +77,7 @@ func (ur *user) GetUserByID(ctx context.Context, id int) (*model.User, error) {
 	u := &model.User{}
 	err := ur.db.WithContext(ctx).Where("id = ?", id).First(u).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errors.New("ID不存在")
+		return nil, errors.New(constant.NotFoundError)
 	} else if err != nil {
 		ur.log.Error("数据库获取数据失败", zap.Error(err))
 		return nil, errors.New(constant.ServerError)
@@ -90,7 +90,7 @@ func (ur *user) UpdateUserByID(ctx context.Context, user *model.User) error {
 	var mysqlErr *mysql.MySQLError
 	err := ur.db.WithContext(ctx).Updates(user).Error
 	if errors.As(err, &mysqlErr) && mysqlErr.Number == MysqlDuplicateError {
-		return errors.New("唯一索引冲突")
+		return errors.New(constant.AlreadyExistError)
 	} else if err != nil {
 		ur.log.Error("数据库获取数据失败", zap.Error(err))
 		return errors.New(constant.ServerError)
@@ -150,7 +150,7 @@ func (ur *user) UpdateUserByEmail(ctx context.Context, user *model.User) error {
 	var mysqlErr *mysql.MySQLError
 	err := ur.db.WithContext(ctx).Where("email = ? ", user.Email).Updates(user).Error
 	if errors.As(err, &mysqlErr) && mysqlErr.Number == MysqlDuplicateError {
-		return errors.New("唯一索引冲突")
+		return errors.New(constant.AlreadyExistError)
 	} else if err != nil {
 		ur.log.Error("数据库异常", zap.Error(err))
 		return errors.New(constant.ServerError)

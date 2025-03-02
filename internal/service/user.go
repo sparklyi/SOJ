@@ -180,7 +180,7 @@ func (us *user) UploadAvatar(ctx *gin.Context, fh *multipart.FileHeader, ID int)
 	defer f.Close()
 	t := strings.Split(fh.Filename, ".")
 	if len(t) != 2 && t[1] != "jpg" && t[1] != "jpeg" && t[1] != "png" {
-		return errors.New("文件不符")
+		return errors.New(constant.ParamError)
 	}
 	//路径加密
 	t[0] = utils.CryptoSHA1(strconv.Itoa(ID))
@@ -188,7 +188,7 @@ func (us *user) UploadAvatar(ctx *gin.Context, fh *multipart.FileHeader, ID int)
 	_, err = us.cs.Object.Put(ctx, name, f, nil)
 	if err != nil {
 		us.log.Error("上传失败", zap.Error(err))
-		return errors.New("上传失败")
+		return errors.New(constant.UploadError)
 	}
 	//将头像地址存入数据库
 	u := model.User{
