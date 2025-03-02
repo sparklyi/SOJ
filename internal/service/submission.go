@@ -241,7 +241,7 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 		} else {
 			err = json.Unmarshal([]byte(applyInfo.Score), &res)
 			if err != nil {
-				return nil, errors.New("json 解析失败")
+				return nil, errors.New(constant.JsonParseError)
 			}
 		}
 
