@@ -29,12 +29,10 @@ func NewEmailProducer(log *zap.Logger, conn *amqp.Connection) *Email {
 	ch, err := conn.Channel()
 	if err != nil {
 		panic("rabbitmq信道创建失败")
-		return nil
 	}
 	delay, err := ch.QueueDeclare(QueueName, true, false, false, false, nil)
 	if err != nil {
 		panic("rabbitmq队列创建失败")
-		return nil
 	}
 	err = ch.ExchangeDeclare(
 		exchangeName,
@@ -46,12 +44,10 @@ func NewEmailProducer(log *zap.Logger, conn *amqp.Connection) *Email {
 	)
 	if err != nil {
 		panic("rabbitmq交换机创建失败")
-		return nil
 	}
 	err = ch.QueueBind(delay.Name, "", exchangeName, false, nil)
 	if err != nil {
 		panic("rabbitmq交换机绑定失败")
-		return nil
 	}
 	return &Email{
 		log:          log,
