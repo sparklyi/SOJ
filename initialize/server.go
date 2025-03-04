@@ -6,7 +6,7 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-type Cmd struct {
+type Server struct {
 	G        *gin.Engine
 	Consumer []mq.Consumer
 	Cron     *cron.Cron

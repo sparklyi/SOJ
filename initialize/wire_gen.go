@@ -20,7 +20,7 @@ import (
 
 // Injectors from wire.go:
 
-func InitServer() *Cmd {
+func InitServer() *Server {
 	client := InitRedis()
 	logger := InitLogger()
 	redisStore := captcha.NewRedisStore(client, logger)
@@ -49,7 +49,7 @@ func InitServer() *Cmd {
 	contestRepository := repository.NewContestRepository(logger, db, database)
 	submissionService := service.NewSubmissionService(logger, applyRepository, submissionRepository, problemRepository, languageRepository, judge, userRepository, contestRepository)
 	submissionHandle := handle.NewSubmissionHandle(logger, submissionService)
-	contest := producer.NewContestProducer(logger, connection)
+	contest := producer.NewContestProducer(logger, producerEmail)
 	contestService := service.NewContestService(logger, contestRepository, applyRepository, contest)
 	contestHandle := handle.NewContestHandle(logger, contestService)
 	applyService := service.NewApplyService(logger, applyRepository, contestRepository)
@@ -61,10 +61,10 @@ func InitServer() *Cmd {
 	emailConsumer := consumer.NewEmailConsumer(logger, emailEmail, producerEmail, client)
 	v2 := InitConsumer(contestConsumer, emailConsumer)
 	cron := service.NewCronTask(logger, languageService, submissionService)
-	cmd := &Cmd{
+	server := &Server{
 		G:        engine,
 		Consumer: v2,
 		Cron:     cron,
 	}
-	return cmd
+	return server
 }

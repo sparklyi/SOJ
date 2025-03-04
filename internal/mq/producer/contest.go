@@ -3,49 +3,31 @@ package producer
 import (
 	"context"
 	"encoding/json"
-	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
 	"go.uber.org/zap"
 )
 
 type Contest struct {
-	log          *zap.Logger
-	Channel      *amqp.Channel
-	ExchangeName string
-	QueueName    string
+	*Email
+	QueueName string
 }
 
-func NewContestProducer(log *zap.Logger, conn *amqp.Connection) *Contest {
-	exchangeName := viper.GetString("rabbitmq.exchange_contest")
-	QueueName := viper.GetString("rabbitmq.queue_contest")
-	ch, err := conn.Channel()
-	if err != nil {
-		panic("rabbitmq信道创建失败")
-	}
+func NewContestProducer(log *zap.Logger, email *Email) *Contest {
+
+	QueueName := "queue_contest"
+	ch := email.Channel
 	delay, err := ch.QueueDeclare(QueueName, true, false, false, false, nil)
 	if err != nil {
 		panic("rabbitmq队列创建失败")
 	}
-	err = ch.ExchangeDeclare(
-		exchangeName,
-		"x-delayed-message",
-		true, false, false, false,
-		amqp.Table{
-			"x-delayed-type": "direct",
-		},
-	)
+	//绑定到邮件交换机，路由键为contest
+	err = ch.QueueBind(delay.Name, "contest", email.ExchangeName, false, nil)
 	if err != nil {
-		panic("rabbitmq交换机创建失败")
-	}
-	err = ch.QueueBind(delay.Name, "", exchangeName, false, nil)
-	if err != nil {
-		panic("rabbitmq交换机绑定失败")
+		panic("rabbitmq交换机绑定失败" + err.Error())
 	}
 	return &Contest{
-		log:          log,
-		Channel:      ch,
-		ExchangeName: exchangeName,
-		QueueName:    QueueName,
+		email,
+		QueueName,
 	}
 
 }
@@ -56,7 +38,7 @@ type ContestNotify struct {
 	Content   string `json:"content"`
 }
 
-func (c *Contest) Producer(ctx context.Context, req *ContestNotify, delay int64) error {
+func (c *Contest) Producer(ctx context.Context, req ContestNotify, delay int64) error {
 	content, err := json.Marshal(req)
 	if err != nil {
 		c.log.Error("json序列化失败", zap.Error(err))
@@ -65,7 +47,7 @@ func (c *Contest) Producer(ctx context.Context, req *ContestNotify, delay int64)
 
 	err = c.Channel.Publish(
 		c.ExchangeName,
-		"",
+		"contest",
 		false, false,
 		amqp.Publishing{
 			ContentType: "application/json",
