@@ -3,7 +3,6 @@ package producer
 import (
 	"context"
 	"encoding/json"
-	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
 	"go.uber.org/zap"
 )
@@ -24,8 +23,8 @@ type EmailContent struct {
 }
 
 func NewEmailProducer(log *zap.Logger, conn *amqp.Connection) *Email {
-	exchangeName := viper.GetString("rabbitmq.exchange_email")
-	QueueName := viper.GetString("rabbitmq.queue_email")
+	exchangeName := "exchange_email"
+	QueueName := "queue_email"
 	ch, err := conn.Channel()
 	if err != nil {
 		panic("rabbitmq信道创建失败")
@@ -45,7 +44,7 @@ func NewEmailProducer(log *zap.Logger, conn *amqp.Connection) *Email {
 	if err != nil {
 		panic("rabbitmq交换机创建失败")
 	}
-	err = ch.QueueBind(delay.Name, "", exchangeName, false, nil)
+	err = ch.QueueBind(delay.Name, "email", exchangeName, false, nil)
 	if err != nil {
 		panic("rabbitmq交换机绑定失败")
 	}
@@ -67,9 +66,10 @@ func (p *Email) Send(ctx context.Context, content EmailContent, DelaySeconds int
 
 	err = p.Channel.Publish(
 		p.ExchangeName,
-		"",
+		"email",
 		false, false,
 		amqp.Publishing{
+
 			ContentType: "application/json",
 			Body:        c,
 			Headers: amqp.Table{

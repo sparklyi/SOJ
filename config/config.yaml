@@ -15,8 +15,6 @@ redis:
 mongo:
   uri: "mongodb://192.168.65.131:27017"
   db: "soj"
-  collection_problem: "problem"
-  collection_blog: "blog"
 
 postgresql:
   dsn: "host=192.168.65.131 user=soj password=soj dbname=judge0 port=5432 sslmode=disable TimeZone=Asia/Shanghai"
@@ -30,10 +28,7 @@ email:
 
 rabbitmq:
   url: "amqp://admin:admin@192.168.65.131/soj"
-  exchange_email: "email_exchange"
-  queue_email: "email_queue"
-  exchange_contest: "contest_exchange"
-  queue_contest: "contest_queue"
+
 cos:
   url: "https://xxx.cos.ap-hangzhou.myqcloud.com"
   secret_id: ""
