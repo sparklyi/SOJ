@@ -15,7 +15,7 @@ import (
 	"github.com/google/wire"
 )
 
-func InitServer() *Cmd {
+func InitServer() *Server {
 
 	//wire会自动排列初始化顺序
 	wire.Build(
@@ -59,7 +59,7 @@ func InitServer() *Cmd {
 		repository.NewApplyRepository,
 		InitRoute,
 		service.NewCronTask,
-		wire.Struct(new(Cmd), "*"),
+		wire.Struct(new(Server), "*"),
 	)
-	return new(Cmd)
+	return new(Server)
 }

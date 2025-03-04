@@ -77,7 +77,7 @@ func (cs *contest) CreateContest(ctx *gin.Context, req *entity.Contest) (*model.
 			ContestID: c.ID,
 			Subject:   "比赛通知",
 		}
-		go cs.producer.Producer(ctx, &data, int64(seconds)-24*60*60)
+		go cs.producer.Producer(ctx, data, int64(seconds)-24*60*60)
 	}
 	//data := producer.ContestNotify{
 	//	ContestID: c.ID,
