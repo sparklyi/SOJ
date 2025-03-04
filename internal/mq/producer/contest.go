@@ -3,7 +3,6 @@ package producer
 import (
 	"context"
 	"encoding/json"
-	"github.com/spf13/viper"
 	"github.com/streadway/amqp"
 	"go.uber.org/zap"
 )
@@ -16,15 +15,15 @@ type Contest struct {
 }
 
 func NewContestProducer(log *zap.Logger, conn *amqp.Connection) *Contest {
-	exchangeName := viper.GetString("rabbitmq.exchange_contest")
-	QueueName := viper.GetString("rabbitmq.queue_contest")
+	exchangeName := "exchange_contest"
+	QueueName := "rabbitmq.queue_contest"
 	ch, err := conn.Channel()
 	if err != nil {
-		panic("rabbitmq信道创建失败")
+		panic("rabbitmq信道创建失败" + err.Error())
 	}
 	delay, err := ch.QueueDeclare(QueueName, true, false, false, false, nil)
 	if err != nil {
-		panic("rabbitmq队列创建失败")
+		panic("rabbitmq队列创建失败" + err.Error())
 	}
 	err = ch.ExchangeDeclare(
 		exchangeName,
@@ -35,11 +34,11 @@ func NewContestProducer(log *zap.Logger, conn *amqp.Connection) *Contest {
 		},
 	)
 	if err != nil {
-		panic("rabbitmq交换机创建失败")
+		panic("rabbitmq交换机创建失败" + err.Error())
 	}
 	err = ch.QueueBind(delay.Name, "", exchangeName, false, nil)
 	if err != nil {
-		panic("rabbitmq交换机绑定失败")
+		panic("rabbitmq交换机绑定失败" + err.Error())
 	}
 	return &Contest{
 		log:          log,
