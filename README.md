@@ -12,7 +12,7 @@
 - MySQL 关系数据库
 - MongoDB 文档数据库
 - redis 缓存数据库
-- judge0 测评+沙箱
+- judge0 测评+沙箱 -> 正在尝试切换为codenire
 - 腾讯云COS 对象存储
 - Docker 容器化
 - ...(项目还没写完)
