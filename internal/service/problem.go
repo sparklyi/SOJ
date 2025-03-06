@@ -11,7 +11,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
-	"sync"
 )
 
 type ProblemService interface {
@@ -29,6 +28,7 @@ type ProblemService interface {
 type problem struct {
 	log  *zap.Logger
 	repo repository.ProblemRepository
+	//retry *producer.Retry
 }
 
 func NewProblemService(log *zap.Logger, r repository.ProblemRepository) ProblemService {
@@ -106,15 +106,15 @@ func (ps *problem) UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) erro
 	}
 
 	// 并行
-	mongoErrChan := make(chan error, 1)
+	//mongoErrChan := make(chan error, 1)
 	if p.ObjectID == "" {
 		return errors.New(constant.NotFoundError)
 	}
 	objID, _ := primitive.ObjectIDFromHex(p.ObjectID)
-	// 启动Mongo更新协程
-	go func() {
-		mongoErrChan <- ps.repo.MongoUpdateInfoByObjID(ctx, req, objID)
-	}()
+	//// 启动Mongo更新协程
+	//go func() {
+	//	mongoErrChan <- ps.repo.MongoUpdateInfoByObjID(ctx, req, objID)
+	//}()
 
 	p.Level = req.Level
 	p.Owner = req.Owner
@@ -122,14 +122,21 @@ func (ps *problem) UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) erro
 	p.Status = req.Visible
 	if err = ps.repo.MysqlUpdateInfoByID(ctx, tx, p); err != nil {
 		tx.Rollback()
-		//后续引入补偿机制
+		//重试补偿
+		//j, _ := json.Marshal(*req)
+		//data := producer.RetryContent{
+		//	FuncName: "MongoUpdateInfoByObjID",
+		//	ObjectID: objID,
+		//	Params:   string(j),
+		//}
+		//go ps.retry.Send(ctx, data)
 		return err
 	}
 
 	// 等待Mongo结果
-	if mongoErr := <-mongoErrChan; mongoErr != nil {
+	if err = ps.repo.MongoUpdateInfoByObjID(ctx, req, objID); err != nil {
 		tx.Rollback()
-		return mongoErr
+		return err
 	}
 
 	tx.Commit()
@@ -138,8 +145,8 @@ func (ps *problem) UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) erro
 
 // DeleteProblem 题目删除
 func (ps *problem) DeleteProblem(ctx *gin.Context, id int) error {
-	tx := ps.repo.GetTransaction(ctx)
-
+	//tx := ps.repo.GetTransaction(ctx)
+	//题目删除后 不需要关注mongo文档删除成功, id是访问不了的, 后续定时扫描删除即可
 	p, err := ps.repo.GetInfoByID(ctx, id)
 	if err != nil {
 		return err
@@ -148,34 +155,22 @@ func (ps *problem) DeleteProblem(ctx *gin.Context, id int) error {
 		return errors.New(constant.NotFoundError)
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	var perr error
-	var terr error
+	err = ps.repo.MysqlDeleteProblem(ctx, nil, id)
+	if err != nil {
+		return err
+	}
+
 	//删除题目文档
 	go func() {
-		defer wg.Done()
 		objID, _ := primitive.ObjectIDFromHex(p.ObjectID)
-		perr = ps.repo.MongoDeleteProblem(ctx, objID)
+		ps.repo.MongoDeleteProblem(ctx, objID)
 	}()
 	//删除测试点文档
 	go func() {
-		defer wg.Done()
 		objID, _ := primitive.ObjectIDFromHex(p.TestCaseID)
-		terr = ps.repo.DeleteTestCase(ctx, objID)
+		ps.repo.DeleteTestCase(ctx, objID)
 	}()
 
-	err = ps.repo.MysqlDeleteProblem(ctx, tx, id)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	wg.Wait()
-	if perr != nil || terr != nil {
-		tx.Rollback()
-		return errors.New(constant.ServerError)
-	}
-	tx.Commit()
 	return nil
 
 }
