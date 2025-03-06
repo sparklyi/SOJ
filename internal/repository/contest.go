@@ -7,7 +7,6 @@ import (
 	"SOJ/utils"
 	"context"
 	"errors"
-	"go.mongodb.org/mongo-driver/mongo"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -22,16 +21,14 @@ type ContestRepository interface {
 }
 
 type contest struct {
-	log         *zap.Logger
-	db          *gorm.DB
-	ContestColl *mongo.Collection
+	log *zap.Logger
+	db  *gorm.DB
 }
 
-func NewContestRepository(log *zap.Logger, db *gorm.DB, m *mongo.Database) ContestRepository {
+func NewContestRepository(log *zap.Logger, db *gorm.DB) ContestRepository {
 	return &contest{
-		log:         log,
-		db:          db,
-		ContestColl: m.Collection("contest"),
+		log: log,
+		db:  db,
 	}
 }
 
