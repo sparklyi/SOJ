@@ -44,7 +44,7 @@ func NewEmailProducer(log *zap.Logger, conn *amqp.Connection) *Email {
 	if err != nil {
 		panic("rabbitmq交换机创建失败" + err.Error())
 	}
-	err = ch.QueueBind(delay.Name, "email", exchangeName, false, nil)
+	err = ch.QueueBind(delay.Name, "", exchangeName, false, nil)
 	if err != nil {
 		panic("rabbitmq交换机绑定失败" + err.Error())
 	}
@@ -66,7 +66,7 @@ func (p *Email) Send(ctx context.Context, content EmailContent, DelaySeconds int
 
 	err = p.Channel.Publish(
 		p.ExchangeName,
-		"email",
+		"",
 		false, false,
 		amqp.Publishing{
 

@@ -16,7 +16,7 @@ type Contest struct {
 
 func NewContestProducer(log *zap.Logger, conn *amqp.Connection) *Contest {
 	exchangeName := "exchange_contest"
-	QueueName := "rabbitmq.queue_contest"
+	QueueName := "queue_contest"
 	ch, err := conn.Channel()
 	if err != nil {
 		panic("rabbitmq信道创建失败" + err.Error())
@@ -55,7 +55,7 @@ type ContestNotify struct {
 	Content   string `json:"content"`
 }
 
-func (c *Contest) Producer(ctx context.Context, req *ContestNotify, delay int64) error {
+func (c *Contest) Producer(ctx context.Context, req ContestNotify, delay int64) error {
 	content, err := json.Marshal(req)
 	if err != nil {
 		c.log.Error("json序列化失败", zap.Error(err))
