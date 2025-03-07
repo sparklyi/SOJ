@@ -38,6 +38,10 @@ cos:
 judge0:
   addr: "192.168.65.131:2358"
 
+codenire:
+  url: "192.168.65.131:8081"
+
+
 jwt:
   access_secret: "fLz4d8R!1nB6hPqT@2WmK7cJ#3vL0aY9xU"
   refresh_secret: "pQ7oL3Yt*2VgD0bKzJ9x5Zf1GdN8wT4u$"
