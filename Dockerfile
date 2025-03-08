@@ -1,5 +1,5 @@
 FROM golang:1.22.5 AS builder
-LABEL authors="51325"
+LABEL authors="sparkyi@foxmail.com"
 
 WORKDIR /app
 COPY go.mod go.sum ./
