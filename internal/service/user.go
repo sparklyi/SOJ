@@ -236,6 +236,10 @@ func (us *user) UpdateUserInfo(ctx *gin.Context, req *entity.UserUpdate, admin b
 		}
 	}
 	u.Username = req.Username
+	u.Profile = req.Profile
+	if req.Notify != nil {
+		u.Notify = *req.Notify
+	}
 	u.ID = uint(req.ID)
 	//修改角色权限为-1则直接删除用户
 	if u.Role == constant.BanLevel {

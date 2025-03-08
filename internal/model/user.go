@@ -10,7 +10,7 @@ type User struct {
 	Avatar   string `gorm:"type:varchar(512);not null;comment:头像链接" json:"avatar,omitempty"`
 	Role     int    `gorm:"type:int;not null;default:1;comment:-1封禁 1用户 2管理员 3超级管理员" json:"role,omitempty"`
 	Profile  string `gorm:"type:text;comment:简介" json:"profile,omitempty"`
-	Notify   int    `gorm:"type:int;not null;default:0" json:"notify,omitempty"`
+	Notify   int    `gorm:"type:int;not null;default:0" json:"notify"`
 	//外键
 	Submission []Submission `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"submission,omitempty"`
 	Apply      []Apply      `gorm:"constraint:OnUpdate:CASCADE;OnDelete:SET NULL;" json:"apply,omitempty"`
