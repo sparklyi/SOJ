@@ -34,20 +34,20 @@ func NewCronTask(
 	if err != nil {
 		panic(err)
 	}
-	//每月1号2点0分执行
-	_, err = c.AddFunc("0 2 1 * *", func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		err = submission.DeletePostgresJudgeHistory(ctx)
-		if err != nil {
-			log.Error("定时任务-postgres测评记录删除:失败")
-		} else {
-			log.Info("定时任务-postgres测评记录删除:成功")
-		}
-
-	})
-	if err != nil {
-		panic(err)
-	}
+	////每月1号2点0分执行
+	//_, err = c.AddFunc("0 2 1 * *", func() {
+	//	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	//	defer cancel()
+	//	err = submission.DeletePostgresJudgeHistory(ctx)
+	//	if err != nil {
+	//		log.Error("定时任务-postgres测评记录删除:失败")
+	//	} else {
+	//		log.Info("定时任务-postgres测评记录删除:成功")
+	//	}
+	//
+	//})
+	//if err != nil {
+	//	panic(err)
+	//}
 	return c
 }

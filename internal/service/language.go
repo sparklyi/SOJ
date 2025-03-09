@@ -37,8 +37,8 @@ func (ls *language) GetLanguageList(ctx *gin.Context, req *entity.Language) ([]*
 func (ls *language) UpdateLang(ctx *gin.Context, req *entity.Language) error {
 
 	lang := &model.Language{
-		ID:     uint(req.ID),
-		Name:   req.Name,
+		ID: uint(req.ID),
+		//Name:   req.Name,
 		Status: req.Status,
 	}
 	return ls.repo.Update(ctx, lang)

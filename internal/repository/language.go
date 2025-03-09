@@ -6,11 +6,14 @@ import (
 	"SOJ/internal/model"
 	"SOJ/utils"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"io"
+	"net/http"
+	"time"
 )
 
 type LanguageRepository interface {
@@ -24,22 +27,16 @@ type LanguageRepository interface {
 	SyncLanguages(ctx context.Context) error
 }
 type language struct {
-	log        *zap.Logger
-	db         *gorm.DB
-	postgresql *gorm.DB
+	log    *zap.Logger
+	db     *gorm.DB
+	client *http.Client
 }
 
 func NewLanguageRepository(log *zap.Logger, db *gorm.DB) LanguageRepository {
-	//连接postgres
-	dsn := viper.GetString("postgresql.dsn")
-	p, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		panic(err)
-	}
 	return &language{
-		log:        log,
-		db:         db,
-		postgresql: p,
+		log:    log,
+		db:     db,
+		client: &http.Client{Timeout: time.Second * 10},
 	}
 }
 
@@ -124,17 +121,47 @@ func (lr *language) GetTransaction(ctx context.Context) *gorm.DB {
 
 // SyncLanguages 测评语言同步
 func (lr *language) SyncLanguages(ctx context.Context) error {
-	lang := make([]*model.Language, 0)
-	err := lr.postgresql.Table("languages").Where("is_Archived = false").Find(&lang).Error
-	if err != nil {
-		lr.log.Error("测评语言同步失败", zap.Error(err))
+
+	url := viper.GetString("codenire.url") + "/actions"
+
+	resp, err := lr.client.Get(url)
+	if err != nil || resp.Status != "200 OK" {
+		lr.log.Error("同步测评语言失败:", zap.Error(err))
 		return errors.New(constant.ServerError)
 	}
-	//status列不同步，由管理员手动调整
-	err = lr.db.WithContext(ctx).Omit("status").Save(&lang).Error
-	if err != nil {
-		lr.log.Error("测评语言同步失败", zap.Error(err))
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	var respData []entity.LanguageSync
+	if err = json.Unmarshal(data, &respData); err != nil {
+		lr.log.Error("解析沙箱响应失败", zap.Error(err))
 		return errors.New(constant.ServerError)
+	}
+	//会出现几个查看版本的命令
+	//因为语言数量不会很多 没必要设置索引 直接走全表查询
+
+	for _, v := range respData {
+		var lang model.Language
+		err = lr.db.WithContext(ctx).
+			Model(&model.Language{}).
+			Where("action_id = ? and name = ? and template = ?", v.Id, v.Name, v.Template).
+			First(&lang).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			lr.log.Error("查询数据库失败", zap.Error(err))
+			return errors.New(constant.ServerError)
+		}
+		if lang.ID != 0 {
+			continue
+		}
+		lang.ActionID = v.Id
+		lang.Name = v.Name
+		lang.Template = v.Template
+		err = lr.db.WithContext(ctx).Create(&lang).Error
+		if err != nil {
+			lr.log.Error("新增测评语言失败", zap.Error(err))
+			return errors.New(constant.ServerError)
+		}
+
 	}
 	return nil
 }
