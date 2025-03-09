@@ -28,5 +28,10 @@
 - VX: sparkyi1026
 - Email: sparkyi@foxmail.com
 
+## 分支介绍
+- version-judge0 分支已基本完成，使用judge0沙箱测评   
+- version-codrenire 正在转换为codenire沙箱   
+- dev和main分支目前维护judge0   
+
 项目正在开发中，暂未撰写使用手册
 
