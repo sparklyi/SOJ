@@ -7,9 +7,7 @@ import (
 	"SOJ/utils"
 	"context"
 	"errors"
-	"github.com/spf13/viper"
 	"go.uber.org/zap"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -17,28 +15,19 @@ type SubmissionRepository interface {
 	CreateSubmission(ctx context.Context, s *model.Submission, tx *gorm.DB) error
 	GetInfoByID(ctx context.Context, id int) (*model.Submission, error)
 	GetSubmissionList(ctx context.Context, req *entity.SubmissionList) ([]*model.Submission, error)
-	DeleteJudgeByToken(ctx context.Context, token string) error
-	DeleteAllJudgeHistory(ctx context.Context) error
 	GetTransaction(ctx context.Context) *gorm.DB
 }
 
 type submission struct {
-	log        *zap.Logger
-	db         *gorm.DB
-	postgresql *gorm.DB
+	log *zap.Logger
+	db  *gorm.DB
 }
 
 func NewSubmissionRepository(log *zap.Logger, db *gorm.DB) SubmissionRepository {
-	//连接postgres
-	dsn := viper.GetString("postgresql.dsn")
-	p, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		panic(err)
-	}
+
 	return &submission{
-		log:        log,
-		db:         db,
-		postgresql: p,
+		log: log,
+		db:  db,
 	}
 }
 
@@ -94,26 +83,6 @@ func (sr *submission) GetSubmissionList(ctx context.Context, req *entity.Submiss
 	}
 	return submissions, nil
 
-}
-
-// DeleteJudgeByToken 删除postgresql的测评记录
-func (sr *submission) DeleteJudgeByToken(ctx context.Context, token string) error {
-	err := sr.postgresql.WithContext(ctx).Table("submissions").Where("token = ?", token).Delete(nil).Error
-	if err != nil {
-		sr.log.Error("删除postgres测评记录失败", zap.Error(err))
-		return errors.New(constant.ServerError)
-	}
-	return nil
-}
-
-// DeleteAllJudgeHistory 删除postgres的测评历史
-func (sr *submission) DeleteAllJudgeHistory(ctx context.Context) error {
-	err := sr.postgresql.WithContext(ctx).Exec("DELETE FROM submissions;").Error
-	if err != nil {
-		sr.log.Error("删除postgres测评历史失败", zap.Error(err))
-		return errors.New(constant.ServerError)
-	}
-	return nil
 }
 
 // GetTransaction 获取事务

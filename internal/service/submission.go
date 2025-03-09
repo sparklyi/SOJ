@@ -7,7 +7,6 @@ import (
 	"SOJ/internal/repository"
 	"SOJ/pkg/judge0"
 	"SOJ/utils"
-	"context"
 	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
@@ -23,7 +22,6 @@ type SubmissionService interface {
 	Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResult, error)
 	Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error)
 	GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error)
-	DeletePostgresJudgeHistory(ctx context.Context) error
 	GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error)
 	GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error)
 }
@@ -324,11 +322,6 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 // GetSubmissionInfoByID  根据ID获取测评详情
 func (ss *submission) GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error) {
 	return ss.repo.GetInfoByID(ctx, id)
-}
-
-// DeletePostgresJudgeHistory 删除postgres的测评历史记录
-func (ss *submission) DeletePostgresJudgeHistory(ctx context.Context) error {
-	return ss.repo.DeleteAllJudgeHistory(ctx)
 }
 
 // GetSubmissionList 获取测评列表
