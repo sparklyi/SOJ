@@ -115,7 +115,7 @@ func (ss *submission) Run(ctx *gin.Context, req *entity.Run) (*entity.JudgeResul
 	//数据清空, 自测不需要返回测评情况
 	r.JudgeStatus = entity.JudgeStatus{}
 	//go ss.repo.DeleteJudgeByToken(ctx, r.Token)
-	return r, nil
+	return &r, nil
 }
 
 // Judge 提交运行
@@ -173,7 +173,7 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 	for _, v := range testcase.Content {
 		req.Case = v
 		go func(req entity.Run) {
-			resp <- *ss.judge.Run(&req)
+			resp <- ss.judge.Run(&req)
 		}(*req)
 	}
 
