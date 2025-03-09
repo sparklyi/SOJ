@@ -10,7 +10,7 @@ import (
 func InitRabbitMQ() *amqp.Connection {
 	conn, err := amqp.Dial(viper.GetString("rabbitmq.url"))
 	if err != nil {
-		panic("rabbitmq连接失败")
+		panic("rabbitmq连接失败" + err.Error())
 	}
 	return conn
 }
