@@ -17,8 +17,32 @@
 - Docker 容器化
 - ...(项目还没写完)
 
+## 部署流程
+### 克隆项目
+```shell
+git clone https://github.com/sparklyi/SOJ.git
+```
+### 更新配置
+```bash
+cd SOJ
+vi config/config.yaml # 更新代码配置
+vi docker-compose.yaml # 更新容器配置
+
+```
+
+###  运行
+```shell
+cd SOJ
+docker build -t soj_server:1.0 .
+docker-compose up -d 
+docker run -d -p 8888:8888 --name soj_server soj_server:1.0
+```
+**沙箱服务还未加入docker中**
+
 ## Contribute
 欢迎任何形式的贡献
+
+
 
 ## License
 本项目使用[MIT](https://github.com/sparklyi/SOJ?tab=MIT-1-ov-file)许可
