@@ -1,4 +1,62 @@
 version: '3'
+
 services:
-  soj:
-    image: soj:1.0
+  mysql:
+    image: mysql:8
+    container_name: soj_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: your_password
+
+    command:
+      --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - /init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  redis:
+    image: redis:latest
+    container_name: soj_redis
+    restart: always
+    command: redis-server --requirepass your_password
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/var/lib/redis
+
+  mongo:
+    image: mongo:latest
+    container_name: soj_mongo
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: soj
+      MONGO_INITDB_ROOT_PASSWORD: your_password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/var/lib/mongo
+
+# rabbitmq需下载延迟队列插件 (https://github.com/rabbitmq/rabbitmq-delayed-message-exchange)
+  rabbitmq:
+    image: rabbitmq:latest
+    container_name: rabbitmq
+    restart: always
+    hostname: myRabbit
+    environment:
+      RABBITMQ_DEFAULT_VHOST: soj
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: your_password
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    command: ["/bin/bash", "-c", "rabbitmq-plugins enable --offline rabbitmq_management && rabbitmq-server"]
+
+volumes:
+  mysql-data:
+  redis-data:
+  mongo-data:
+  rabbitmq-data:
