@@ -3,6 +3,7 @@ package initialize
 import (
 	"SOJ/internal/api"
 	"SOJ/internal/handle"
+	"SOJ/utils/response"
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,5 +30,9 @@ func InitRoute(
 	api.SubmissionRoute(g, submission, mid)
 	api.ContestRoute(g, contest, mid)
 	api.ApplyRoute(g, apply, mid)
+
+	r.NoRoute(func(c *gin.Context) {
+		response.NotFoundErrorNoContent(c)
+	})
 	return r
 }
