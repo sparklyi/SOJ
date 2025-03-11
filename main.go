@@ -12,7 +12,7 @@ func main() {
 
 	//服务初始化
 	f := initialize.InitServer()
-
+	//gin.SetMode(gin.ReleaseMode)
 	//启动消费者组
 
 	for _, c := range f.Consumer {
