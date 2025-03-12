@@ -19,7 +19,7 @@ type ProblemRepository interface {
 	MongoCreate(ctx context.Context, req *entity.Problem) (primitive.ObjectID, error)
 	MySQLCreate(ctx context.Context, problem *model.Problem) error
 	Count(ctx context.Context, admin bool) (int64, error)
-	GetProblemList(ctx context.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, error)
+	GetProblemList(ctx context.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, int64, error)
 	GetInfoByID(ctx context.Context, id int) (*model.Problem, error)
 	GetInfoByObjID(ctx context.Context, obj primitive.ObjectID) (*bson.M, error)
 	MysqlUpdateInfoByID(ctx context.Context, tx *gorm.DB, problem *model.Problem) error
@@ -89,7 +89,7 @@ func (pr *problem) Count(ctx context.Context, admin bool) (int64, error) {
 }
 
 // GetProblemList 获取题目列表(条件筛选+分页)
-func (pr *problem) GetProblemList(ctx context.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, error) {
+func (pr *problem) GetProblemList(ctx context.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, int64, error) {
 	var sets []*model.Problem
 	db := pr.db.WithContext(ctx).Model(&model.Problem{})
 	if req.ID != 0 {
@@ -105,12 +105,18 @@ func (pr *problem) GetProblemList(ctx context.Context, req *entity.ProblemList, 
 	if !admin {
 		db = db.Where("status = true and owner = 0")
 	}
-	err := db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&sets).Error
+	var count int64
+	err := db.Count(&count).Error
 	if err != nil {
 		pr.log.Error("数据库查询失败", zap.Error(err))
-		return nil, errors.New(constant.ServerError)
+		return nil, 0, errors.New(constant.ServerError)
 	}
-	return sets, nil
+	err = db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&sets).Error
+	if err != nil {
+		pr.log.Error("数据库查询失败", zap.Error(err))
+		return nil, 0, errors.New(constant.ServerError)
+	}
+	return sets, count, nil
 }
 
 // GetInfoByID 根据ID获取数据库信息

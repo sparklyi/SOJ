@@ -81,12 +81,15 @@ func (ch *contest) GetContestList(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	list, err := ch.svc.GetContestList(ctx, &req)
+	list, count, err := ch.svc.GetContestList(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, list)
+	response.SuccessWithData(ctx, gin.H{
+		"detail": list,
+		"count":  count,
+	})
 }
 
 // GetListByUserID 获取用户的比赛列表
@@ -107,12 +110,15 @@ func (ch *contest) GetListByUserID(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	list, err := ch.svc.GetListByUserID(ctx, uid, page, pageSize)
+	list, count, err := ch.svc.GetListByUserID(ctx, uid, page, pageSize)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, list)
+	response.SuccessWithData(ctx, gin.H{
+		"detail": list,
+		"count":  count,
+	})
 }
 
 // GetInfoByID 获取比赛详情
@@ -153,11 +159,14 @@ func (ch *contest) GetRankingList(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	ranks, err := ch.svc.GetRankingList(ctx, &req)
+	ranks, count, err := ch.svc.GetRankingList(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, ranks)
+	response.SuccessWithData(ctx, gin.H{
+		"detail": ranks,
+		"count":  count,
+	})
 
 }

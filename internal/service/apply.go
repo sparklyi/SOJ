@@ -16,8 +16,8 @@ type ApplyService interface {
 	CreateApply(ctx *gin.Context, req *entity.Apply) (*model.Apply, error)
 	UpdateApply(ctx *gin.Context, req *entity.Apply) error
 	DeleteApply(ctx *gin.Context, aid int) error
-	GetListByUserID(ctx *gin.Context, page int, pageSize int) ([]*model.Apply, error)
-	GetList(ctx *gin.Context, req *entity.ApplyList) ([]*model.Apply, error)
+	GetListByUserID(ctx *gin.Context, page int, pageSize int) ([]*model.Apply, int64, error)
+	GetList(ctx *gin.Context, req *entity.ApplyList) ([]*model.Apply, int64, error)
 	GetInfoByID(ctx *gin.Context, aid int) (*model.Apply, error)
 	GetInfoByUserAndContest(ctx *gin.Context, uid uint, cid uint) (*model.Apply, error)
 }
@@ -109,13 +109,13 @@ func (as *apply) DeleteApply(ctx *gin.Context, aid int) error {
 }
 
 // GetListByUserID 获取用户报名信息
-func (as *apply) GetListByUserID(ctx *gin.Context, page, pageSize int) ([]*model.Apply, error) {
+func (as *apply) GetListByUserID(ctx *gin.Context, page, pageSize int) ([]*model.Apply, int64, error) {
 	claims := utils.GetAccessClaims(ctx)
 	return as.repo.GetListByUserID(ctx, claims.ID, page, pageSize)
 }
 
 // GetList 获取报名列表
-func (as *apply) GetList(ctx *gin.Context, req *entity.ApplyList) ([]*model.Apply, error) {
+func (as *apply) GetList(ctx *gin.Context, req *entity.ApplyList) ([]*model.Apply, int64, error) {
 	return as.repo.GetList(ctx, req)
 }
 
