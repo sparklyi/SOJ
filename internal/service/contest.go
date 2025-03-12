@@ -18,11 +18,11 @@ import (
 type ContestService interface {
 	CreateContest(ctx *gin.Context, req *entity.Contest) (*model.Contest, error)
 	UpdateContest(ctx *gin.Context, req *entity.Contest) error
-	GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, error)
-	GetListByUserID(ctx *gin.Context, id int, page int, pageSize int) ([]*model.Contest, error)
+	GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, int64, error)
+	GetListByUserID(ctx *gin.Context, id int, page int, pageSize int) ([]*model.Contest, int64, error)
 	GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest, error)
 	DeleteContest(ctx *gin.Context, id int) error
-	GetRankingList(ctx *gin.Context, req *entity.RankingList) ([]rank, error)
+	GetRankingList(ctx *gin.Context, req *entity.RankingList) ([]rank, int64, error)
 }
 
 type contest struct {
@@ -124,13 +124,13 @@ func (cs *contest) UpdateContest(ctx *gin.Context, req *entity.Contest) error {
 }
 
 // GetContestList 获取比赛列表
-func (cs *contest) GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, error) {
+func (cs *contest) GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, int64, error) {
 	claims := utils.GetAccessClaims(ctx)
 	admin := claims != nil && claims.Auth > constant.UserLevel
 
-	list, err := cs.repo.GetContestList(ctx, req, admin)
+	list, count, err := cs.repo.GetContestList(ctx, req, admin)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	for _, v := range list {
 		v.Code = ""
@@ -138,20 +138,20 @@ func (cs *contest) GetContestList(ctx *gin.Context, req *entity.ContestList) ([]
 		v.Description = ""
 		v.ProblemSet = ""
 	}
-	return list, nil
+	return list, count, nil
 }
 
 // GetListByUserID 获取用户比赛列表
-func (cs *contest) GetListByUserID(ctx *gin.Context, id, page, pageSize int) ([]*model.Contest, error) {
-	list, err := cs.repo.GetListByUserID(ctx, id, page, pageSize)
+func (cs *contest) GetListByUserID(ctx *gin.Context, id, page, pageSize int) ([]*model.Contest, int64, error) {
+	list, count, err := cs.repo.GetListByUserID(ctx, id, page, pageSize)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	for _, v := range list {
 		v.ProblemSet = ""
 		v.Description = ""
 	}
-	return list, nil
+	return list, count, nil
 }
 
 // GetContestInfoByID 获取比赛详情
@@ -192,14 +192,14 @@ type rank struct {
 }
 
 // GetRankingList 获取排行榜
-func (cs *contest) GetRankingList(ctx *gin.Context, req *entity.RankingList) ([]rank, error) {
-	list, err := cs.applyRepo.GetListByContestID(ctx, req.ContestID, 1, 500)
+func (cs *contest) GetRankingList(ctx *gin.Context, req *entity.RankingList) ([]rank, int64, error) {
+	list, count, err := cs.applyRepo.GetListByContestID(ctx, req.ContestID, 1, 500)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	c, err := cs.repo.GetContestInfoByID(ctx, req.ContestID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	now := time.Now().Unix()
@@ -218,7 +218,7 @@ func (cs *contest) GetRankingList(ctx *gin.Context, req *entity.RankingList) ([]
 			err = json.Unmarshal([]byte(v.Score), &score[i].Info)
 			if err != nil {
 				cs.log.Error("json 解析失败", zap.Error(err), zap.Any("score", v.Score))
-				return nil, errors.New(constant.ServerError)
+				return nil, 0, errors.New(constant.ServerError)
 			}
 			if show {
 				score[i].Info.Freeze = score[i].Info.Actual
@@ -237,6 +237,6 @@ func (cs *contest) GetRankingList(ctx *gin.Context, req *entity.RankingList) ([]
 	})
 	//部分信息清空
 
-	return score, nil
+	return score, count, nil
 
 }

@@ -16,7 +16,7 @@ import (
 type ProblemService interface {
 	Create(ctx *gin.Context, req *entity.Problem) (*model.Problem, error)
 	Count(ctx *gin.Context) (int64, error)
-	GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, error)
+	GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, int64, error)
 	GetProblemInfo(ctx *gin.Context, id int) (*bson.M, error)
 	UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) error
 	DeleteProblem(ctx *gin.Context, id int) error
@@ -63,7 +63,7 @@ func (ps *problem) Count(ctx *gin.Context) (int64, error) {
 }
 
 // GetProblemList 获取题目列表
-func (ps *problem) GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, error) {
+func (ps *problem) GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, int64, error) {
 	claims := utils.GetAccessClaims(ctx)
 
 	return ps.repo.GetProblemList(ctx, req, claims != nil && claims.Auth == constant.RootLevel)
