@@ -15,9 +15,9 @@ type ContestRepository interface {
 	CreateContest(ctx context.Context, contest *model.Contest) (*model.Contest, error)
 	GetContestInfoByID(ctx context.Context, id int) (*model.Contest, error)
 	UpdateContest(ctx context.Context, data map[string]interface{}, id uint) error
-	GetContestList(ctx context.Context, req *entity.ContestList, admin bool) ([]*model.Contest, error)
+	GetContestList(ctx context.Context, req *entity.ContestList, admin bool) ([]*model.Contest, int64, error)
 	DeleteContest(ctx context.Context, id int) error
-	GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Contest, error)
+	GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Contest, int64, error)
 }
 
 type contest struct {
@@ -70,7 +70,7 @@ func (cr *contest) UpdateContest(ctx context.Context, data map[string]interface{
 }
 
 // GetContestList 获取比赛列表
-func (cr *contest) GetContestList(ctx context.Context, req *entity.ContestList, admin bool) ([]*model.Contest, error) {
+func (cr *contest) GetContestList(ctx context.Context, req *entity.ContestList, admin bool) ([]*model.Contest, int64, error) {
 	db := cr.db.WithContext(ctx).Model(&model.Contest{})
 	if !admin {
 		req.Publish = new(bool)
@@ -88,13 +88,20 @@ func (cr *contest) GetContestList(ctx context.Context, req *entity.ContestList, 
 	if req.Publish != nil {
 		db = db.Where("publish = ?", req.Publish)
 	}
+
+	var count int64
+	err := db.Count(&count).Error
+	if err != nil {
+		cr.log.Error("数据库查询失败", zap.Error(err))
+		return nil, 0, errors.New(constant.ServerError)
+	}
 	var list []*model.Contest
-	err := db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&list).Error
+	err = db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&list).Error
 	if err != nil {
 		cr.log.Error("获取比赛列表失败", zap.Error(err))
-		return nil, errors.New(constant.ServerError)
+		return nil, 0, errors.New(constant.ServerError)
 	}
-	return list, nil
+	return list, count, nil
 
 }
 
@@ -109,12 +116,19 @@ func (cr *contest) DeleteContest(ctx context.Context, id int) error {
 }
 
 // GetListByUserID 获取用户创建的比赛
-func (cr *contest) GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Contest, error) {
+func (cr *contest) GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Contest, int64, error) {
+
+	var count int64
+	err := cr.db.Count(&count).Error
+	if err != nil {
+		cr.log.Error("数据库查询失败", zap.Error(err))
+		return nil, 0, errors.New(constant.ServerError)
+	}
 	var list []*model.Contest
-	err := cr.db.WithContext(ctx).Scopes(utils.Paginate(page, pageSize)).Find(&list).Error
+	err = cr.db.WithContext(ctx).Scopes(utils.Paginate(page, pageSize)).Where("id = ?", uid).Find(&list).Error
 	if err != nil {
 		cr.log.Error("获取用户比赛列表失败", zap.Error(err))
-		return nil, errors.New(constant.ServerError)
+		return nil, 0, errors.New(constant.ServerError)
 	}
-	return list, nil
+	return list, count, nil
 }

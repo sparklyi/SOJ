@@ -24,7 +24,7 @@ type SubmissionService interface {
 	Judge(ctx *gin.Context, req *entity.Run) (*model.Submission, error)
 	GetSubmissionInfoByID(ctx *gin.Context, id int) (*model.Submission, error)
 	DeletePostgresJudgeHistory(ctx context.Context) error
-	GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error)
+	GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, int64, error)
 	GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error)
 }
 
@@ -332,14 +332,14 @@ func (ss *submission) DeletePostgresJudgeHistory(ctx context.Context) error {
 }
 
 // GetSubmissionList 获取测评列表
-func (ss *submission) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
-	s, err := ss.repo.GetSubmissionList(ctx, req)
+func (ss *submission) GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, int64, error) {
+	s, count, err := ss.repo.GetSubmissionList(ctx, req)
 	for _, v := range s {
 		v.SourceCode = ""
 		v.Visible = nil
 		v.Stderr, v.CompileOut = "", ""
 	}
-	return s, err
+	return s, count, err
 }
 
 // GetSubmissionByID 根据测评id获取详情
