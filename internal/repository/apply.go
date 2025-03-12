@@ -16,12 +16,12 @@ type ApplyRepository interface {
 	CreateApply(ctx context.Context, apply *model.Apply) error
 	UpdateApply(ctx context.Context, apply *model.Apply, tx *gorm.DB) error
 	DeleteApply(ctx context.Context, aid int) error
-	GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Apply, error)
-	GetList(ctx context.Context, req *entity.ApplyList) ([]*model.Apply, error)
+	GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Apply, int64, error)
+	GetList(ctx context.Context, req *entity.ApplyList) ([]*model.Apply, int64, error)
 	GetInfoByUserAndContest(ctx context.Context, uid uint, cid uint) (*model.Apply, error)
 	GetInfoByID(ctx context.Context, id int) (*model.Apply, error)
 	DeleteApplyByContestID(ctx context.Context, cid int) error
-	GetListByContestID(ctx context.Context, cid int, page, pageSize int) ([]model.Apply, error)
+	GetListByContestID(ctx context.Context, cid int, page, pageSize int) ([]model.Apply, int64, error)
 	GetTransaction(ctx context.Context) *gorm.DB
 }
 
@@ -71,18 +71,25 @@ func (ar *apply) DeleteApply(ctx context.Context, aid int) error {
 }
 
 // GetListByUserID 获取用户报名信息
-func (ar *apply) GetListByUserID(ctx context.Context, uid int, page, pageSize int) ([]*model.Apply, error) {
+func (ar *apply) GetListByUserID(ctx context.Context, uid int, page, pageSize int) ([]*model.Apply, int64, error) {
+	var count int64
+	err := ar.db.Count(&count).Error
+	if err != nil {
+		ar.log.Error("数据库查询失败", zap.Error(err))
+		return nil, 0, errors.New(constant.ServerError)
+	}
+
 	var a []*model.Apply
-	err := ar.db.WithContext(ctx).Scopes(utils.Paginate(page, pageSize)).Where("user_id = ?", uid).Find(&a).Error
+	err = ar.db.WithContext(ctx).Scopes(utils.Paginate(page, pageSize)).Where("user_id = ?", uid).Find(&a).Error
 	if err != nil {
 		ar.log.Error("获取报名信息失败", zap.Error(err), zap.Any("user_id", uid))
-		return nil, errors.New(constant.ServerError)
+		return nil, 0, errors.New(constant.ServerError)
 	}
-	return a, nil
+	return a, count, nil
 }
 
 // GetList 获取报名列表
-func (ar *apply) GetList(ctx context.Context, req *entity.ApplyList) ([]*model.Apply, error) {
+func (ar *apply) GetList(ctx context.Context, req *entity.ApplyList) ([]*model.Apply, int64, error) {
 	db := ar.db.WithContext(ctx)
 	if req.ID != 0 {
 		db = db.Where("id = ?", req.ID)
@@ -96,13 +103,21 @@ func (ar *apply) GetList(ctx context.Context, req *entity.ApplyList) ([]*model.A
 	if req.Email != "" {
 		db = db.Where("email = ?", req.Email)
 	}
+
+	var count int64
+	err := ar.db.Count(&count).Error
+	if err != nil {
+		ar.log.Error("数据库查询失败", zap.Error(err))
+		return nil, 0, errors.New(constant.ServerError)
+	}
+
 	var a []*model.Apply
-	err := db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&a).Error
+	err = db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&a).Error
 	if err != nil {
 		ar.log.Error("查询报名列表失败", zap.Error(err), zap.Any("search info", req))
-		return nil, errors.New(constant.ServerError)
+		return nil, 0, errors.New(constant.ServerError)
 	}
-	return a, nil
+	return a, count, nil
 
 }
 
@@ -143,17 +158,25 @@ func (ar *apply) DeleteApplyByContestID(ctx context.Context, cid int) error {
 }
 
 // GetListByContestID 根据竞赛id获取报名列表
-func (ar *apply) GetListByContestID(ctx context.Context, cid int, page, pageSize int) ([]model.Apply, error) {
+func (ar *apply) GetListByContestID(ctx context.Context, cid int, page, pageSize int) ([]model.Apply, int64, error) {
+
+	var count int64
+	err := ar.db.Count(&count).Error
+	if err != nil {
+		ar.log.Error("数据库查询失败", zap.Error(err))
+		return nil, 0, errors.New(constant.ServerError)
+	}
+
 	var List []model.Apply
-	err := ar.db.WithContext(ctx).
+	err = ar.db.WithContext(ctx).
 		Scopes(utils.Paginate(page, pageSize)).
 		Where("contest_id =?", cid).
 		Find(&List).Error
 	if err != nil {
 		ar.log.Error("获取报名列表失败", zap.Error(err), zap.Any("contest_id", cid))
-		return nil, errors.New(constant.ServerError)
+		return nil, 0, errors.New(constant.ServerError)
 	}
-	return List, nil
+	return List, count, nil
 }
 
 // GetTransaction 获取事务
