@@ -16,7 +16,7 @@ import (
 type SubmissionRepository interface {
 	CreateSubmission(ctx context.Context, s *model.Submission, tx *gorm.DB) error
 	GetInfoByID(ctx context.Context, id int) (*model.Submission, error)
-	GetSubmissionList(ctx context.Context, req *entity.SubmissionList) ([]*model.Submission, error)
+	GetSubmissionList(ctx context.Context, req *entity.SubmissionList) ([]*model.Submission, int64, error)
 	DeleteJudgeByToken(ctx context.Context, token string) error
 	DeleteAllJudgeHistory(ctx context.Context) error
 	GetTransaction(ctx context.Context) *gorm.DB
@@ -69,7 +69,7 @@ func (sr *submission) GetInfoByID(ctx context.Context, id int) (*model.Submissio
 }
 
 // GetSubmissionList 获取测评列表
-func (sr *submission) GetSubmissionList(ctx context.Context, req *entity.SubmissionList) ([]*model.Submission, error) {
+func (sr *submission) GetSubmissionList(ctx context.Context, req *entity.SubmissionList) ([]*model.Submission, int64, error) {
 	db := sr.db.WithContext(ctx).Model(&model.Submission{})
 	if req.UserID != 0 {
 		db = db.Where("user_id = ?", req.UserID)
@@ -87,12 +87,19 @@ func (sr *submission) GetSubmissionList(ctx context.Context, req *entity.Submiss
 		db = db.Where("problem_id = ?", req.ProblemID)
 	}
 
-	var submissions []*model.Submission
-	if err := db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&submissions).Error; err != nil {
-		sr.log.Error("查询数据库失败", zap.Error(err))
-		return nil, err
+	var count int64
+	err := db.Count(&count).Error
+	if err != nil {
+		sr.log.Error("数据库查询失败", zap.Error(err))
+		return nil, 0, errors.New(constant.ServerError)
 	}
-	return submissions, nil
+
+	var submissions []*model.Submission
+	if err = db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&submissions).Error; err != nil {
+		sr.log.Error("查询数据库失败", zap.Error(err))
+		return nil, 0, err
+	}
+	return submissions, count, nil
 
 }
 

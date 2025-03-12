@@ -92,12 +92,15 @@ func (ah *apply) GetListByUserID(ctx *gin.Context) {
 		return
 	}
 
-	applies, err := ah.svc.GetListByUserID(ctx, page, pageSize)
+	applies, count, err := ah.svc.GetListByUserID(ctx, page, pageSize)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, applies)
+	response.SuccessWithData(ctx, gin.H{
+		"detail": applies,
+		"count":  count,
+	})
 }
 
 // GetList 获取报名列表
@@ -107,12 +110,15 @@ func (ah *apply) GetList(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	applies, err := ah.svc.GetList(ctx, &req)
+	applies, count, err := ah.svc.GetList(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, applies)
+	response.SuccessWithData(ctx, gin.H{
+		"detail": applies,
+		"count":  count,
+	})
 
 }
 

@@ -67,12 +67,15 @@ func (sh *submission) List(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
 		return
 	}
-	s, err := sh.svc.GetSubmissionList(ctx, &req)
+	s, count, err := sh.svc.GetSubmissionList(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, s)
+	response.SuccessWithData(ctx, gin.H{
+		"detail": s,
+		"count":  count,
+	})
 }
 
 // GetInfoByID 获取测评信息
