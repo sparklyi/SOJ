@@ -19,7 +19,7 @@ func InitRoute(
 	mid []gin.HandlerFunc,
 ) *gin.Engine {
 	r := gin.Default()
-	r.Use(mid[0])
+	r.Use(mid[0], mid[4]) // 携带跨域和限流中间件
 	g := r.Group("/api/v1")
 	//各级路由注册
 	api.CaptchaRoute(g, captcha, mid)

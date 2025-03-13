@@ -43,6 +43,11 @@ func internalError(c *gin.Context, message string, data interface{}) {
 	response(c, http.StatusInternalServerError, message, data)
 }
 
+// tooManyError 请求频繁
+func tooManyError(c *gin.Context, message string, data interface{}) {
+	response(c, http.StatusTooManyRequests, message, data)
+}
+
 // InternalErrorNoContent 内部错误, 无数据返回
 func InternalErrorNoContent(c *gin.Context) {
 	internalError(c, "internal error", map[string]interface{}{})
@@ -186,4 +191,9 @@ func ForbiddenErrorWithMsg(c *gin.Context, msg string) {
 // ForbiddenErrorWithDataAndMsg 禁止, 返回数据和信息
 func ForbiddenErrorWithDataAndMsg(c *gin.Context, data interface{}, msg string) {
 	forbiddenError(c, msg, data)
+}
+
+// TooManyErrorAndMsg 频繁, 返回信息
+func TooManyErrorAndMsg(c *gin.Context, msg string) {
+	tooManyError(c, msg, map[string]interface{}{})
 }
