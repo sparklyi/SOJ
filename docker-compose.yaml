@@ -4,45 +4,43 @@ services:
   mysql:
     image: mysql:8
     container_name: soj_mysql
-    restart: always
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: your_password
-
     command:
       --default-authentication-plugin=mysql_native_password
     ports:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
-      - /init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
   redis:
     image: redis:latest
     container_name: soj_redis
-    restart: always
+    restart: unless-stopped
     command: redis-server --requirepass your_password
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/var/lib/redis
+      - redis-data:/data
 
   mongo:
     image: mongo:latest
     container_name: soj_mongo
-    restart: always
+    restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: soj
       MONGO_INITDB_ROOT_PASSWORD: your_password
     ports:
       - "27017:27017"
     volumes:
-      - mongo-data:/var/lib/mongo
+      - mongo-data:/data/db
 
-# rabbitmq需下载延迟队列插件 (https://github.com/rabbitmq/rabbitmq-delayed-message-exchange)
   rabbitmq:
-    image: rabbitmq:latest
-    container_name: rabbitmq
-    restart: always
+    image: rabbitmq:3-management
+    container_name: soj_rabbitmq
+    restart: unless-stopped
     hostname: myRabbit
     environment:
       RABBITMQ_DEFAULT_VHOST: soj
@@ -55,8 +53,59 @@ services:
       - rabbitmq-data:/var/lib/rabbitmq
     command: ["/bin/bash", "-c", "rabbitmq-plugins enable --offline rabbitmq_management && rabbitmq-server"]
 
+
+  judge0_server:
+    image: 513254687/soj:1.0
+    container_name: soj_judge0_server
+    restart: unless-stopped
+    volumes:
+      - ./judge0.conf:/judge0.conf:ro
+    ports:
+      - "2358:2358"
+    privileged: true
+    depends_on:
+      - judge0_db
+      - judge0_redis
+
+  judge0_workers:
+    image: 513254687/soj:1.0
+    container_name: soj_judge0_workers
+    restart: unless-stopped
+    command: ["./scripts/workers"]
+    volumes:
+      - ./judge0.conf:/judge0.conf:ro
+    privileged: true
+    depends_on:
+      - judge0_server
+
+  judge0_db:
+    image: postgres:16.2
+    container_name: soj_judge0_postgres
+    restart: unless-stopped
+    env_file:
+      - judge0.conf
+    volumes:
+      - judge0_db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  judge0_redis:
+    image: redis:7.2.4
+    container_name: soj_judge0_redis
+    restart: unless-stopped
+    command: [
+      "bash", "-c",
+      'docker-entrypoint.sh --appendonly no --requirepass "$$REDIS_PASSWORD"'
+    ]
+    env_file:
+      - judge0.conf
+    volumes:
+      - judge0_redis_data:/data
+
 volumes:
   mysql-data:
   redis-data:
   mongo-data:
   rabbitmq-data:
+  judge0_db_data:
+  judge0_redis_data:
