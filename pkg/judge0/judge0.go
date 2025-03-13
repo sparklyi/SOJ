@@ -24,7 +24,8 @@ func New(l *zap.Logger) (j *Judge) {
 	j.log = l
 	j.client = &http.Client{Timeout: 10 * time.Second}
 	j.url = "http://" + viper.GetString("judge0.addr")
-	j.judgeUrl = j.url + "/submissions/?wait=true"
+	//加上token密钥验证
+	j.judgeUrl = j.url + "/submissions/?wait=true&" + "X-Auth-Token=" + viper.GetString("judge0.auth")
 	return
 }
 

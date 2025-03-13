@@ -37,9 +37,8 @@ cos:
 
 judge0:
   addr: "192.168.65.131:2358"
+  auth: "soj" # 鉴权密钥
 
-codenire:
-  url: "192.168.65.131:8081"
 
 
 jwt:
