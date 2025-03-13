@@ -25,9 +25,9 @@ git clone https://github.com/sparklyi/SOJ.git
 ### 更新配置
 ```bash
 cd SOJ
-vi config/config.yaml # 更新代码配置
-vi docker-compose.yaml # 更新容器配置
-
+vi config/config.yaml   # 更新代码配置
+vi docker-compose.yaml  # 更新容器配置
+vi judge0.conf          # 更新沙箱配置
 ```
 
 ###  运行
@@ -37,7 +37,6 @@ docker build -t soj_server:1.0 .
 docker-compose up -d 
 docker run -d -p 8888:8888 --name soj_server soj_server:1.0
 ```
-**沙箱服务还未加入docker中**
 
 ## Contribute
 欢迎任何形式的贡献
