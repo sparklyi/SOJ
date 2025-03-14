@@ -15,7 +15,7 @@
 - judge0 测评+沙箱 -> 正在尝试切换为codenire
 - 腾讯云COS 对象存储
 - Docker 容器化
-- ...(项目还没写完)
+
 
 ## 部署流程
 ### 克隆项目
@@ -25,9 +25,9 @@ git clone https://github.com/sparklyi/SOJ.git
 ### 更新配置
 ```bash
 cd SOJ
-vi config/config.yaml   # 更新代码配置
-vi docker-compose.yaml  # 更新容器配置
-vi judge0.conf          # 更新沙箱配置
+vi config/config.yaml   # 更新代码配置(如ip 密码等)
+vi docker-compose.yaml  # 更新容器配置(如名称 密码等)
+vi judge0.conf          # 更新沙箱配置(内存限制等)
 ```
 
 ###  运行
@@ -42,7 +42,6 @@ docker run -d -p 8888:8888 --name soj_server soj_server:1.0
 欢迎任何形式的贡献
 
 
-
 ## License
 本项目使用[MIT](https://github.com/sparklyi/SOJ?tab=MIT-1-ov-file)许可
 
@@ -52,9 +51,7 @@ docker run -d -p 8888:8888 --name soj_server soj_server:1.0
 - Email: sparkyi@foxmail.com
 
 ## 分支介绍
-- version-judge0 分支已基本完成，使用judge0沙箱测评   
+- judge0 分支已基本完成，使用judge0沙箱测评   
 - version-codrenire 正在转换为codenire沙箱   
 - dev和main分支目前维护judge0   
-
-项目正在开发中，暂未撰写使用手册
 
