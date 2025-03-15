@@ -18,10 +18,12 @@
 
 
 ## 部署流程
+
 ### 克隆项目
 ```shell
 git clone https://github.com/sparklyi/SOJ.git
 ```
+
 ### 更新配置
 ```bash
 cd SOJ
@@ -52,6 +54,6 @@ docker run -d -p 8888:8888 --name soj_server soj_server:1.0
 
 ## 分支介绍
 - judge0 分支已基本完成，使用judge0沙箱测评   
-- version-codrenire 正在转换为codenire沙箱   
+- codrenire 正在转换为codenire沙箱   
 - dev和main分支目前维护judge0   
 
