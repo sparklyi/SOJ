@@ -3,6 +3,7 @@
 - SOJ是一款OJ系统!
 - 采取wire依赖注入解耦,采取经典三层架构(handle+service+repository)
 - 支持ACM模式, 支持比赛和封榜功能
+- 基于Judge0沙箱实现
 
 ## 技术栈
 - Golang
