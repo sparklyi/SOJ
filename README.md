@@ -50,7 +50,6 @@ docker run -d -p 8888:8888 --name soj_server soj_server:1.0
 本项目使用[MIT](https://github.com/sparklyi/SOJ?tab=MIT-1-ov-file)许可
 
 ## 联系方式
-- QQ: 513254687
 - VX: sparkyi1026
 - Email: sparkyi@foxmail.com
 
