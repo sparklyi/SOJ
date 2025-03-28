@@ -22,7 +22,7 @@ type RedisStore struct {
 
 func New(s *RedisStore) *Captcha {
 	return &Captcha{
-		base64Captcha.NewCaptcha(base64Captcha.DefaultDriverDigit, s),
+		base64Captcha.NewCaptcha(base64Captcha.NewDriverDigit(80, 240, 6, 0.7, 80), s),
 	}
 
 }
