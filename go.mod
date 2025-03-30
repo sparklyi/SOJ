@@ -1,9 +1,6 @@
 module SOJ
 
 go 1.23.0
-
-toolchain go1.24.1
-
 require (
 	github.com/anaskhan96/go-password-encoder v0.0.0-20201010210601-c765b799fd72
 	github.com/gin-contrib/cors v1.7.3
