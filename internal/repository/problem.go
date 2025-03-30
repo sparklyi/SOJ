@@ -96,7 +96,7 @@ func (pr *problem) GetProblemList(ctx context.Context, req *entity.ProblemList, 
 		db = db.Where("id = ?", req.ID)
 	}
 	if req.Name != "" {
-		db = db.Where("name LIKE ", "%"+req.Name+"%")
+		db = db.Where("name LIKE ?", req.Name+"%")
 	}
 	if req.Level != "" {
 		db = db.Where("level = ?", req.Level)
