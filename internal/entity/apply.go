@@ -17,3 +17,8 @@ type ApplyList struct {
 	Page      int    `json:"page,omitempty" binding:"omitempty,number"`
 	PageSize  int    `json:"page_size,omitempty" binding:"omitempty,number"`
 }
+
+type ApplyCheck struct {
+	ContestID uint `json:"contest_id" binding:"required,number"`
+	UserID    uint `json:"user_id" binding:"required,number"`
+}
