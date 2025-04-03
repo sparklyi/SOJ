@@ -95,7 +95,7 @@ func (sr *submission) GetSubmissionList(ctx context.Context, req *entity.Submiss
 	}
 
 	var submissions []*model.Submission
-	if err = db.Scopes(utils.Paginate(req.Page, req.PageSize)).Find(&submissions).Error; err != nil {
+	if err = db.Scopes(utils.Paginate(req.Page, req.PageSize)).Order("id DESC").Find(&submissions).Error; err != nil {
 		sr.log.Error("查询数据库失败", zap.Error(err))
 		return nil, 0, err
 	}

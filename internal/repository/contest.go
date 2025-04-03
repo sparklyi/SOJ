@@ -9,6 +9,7 @@ import (
 	"errors"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"time"
 )
 
 type ContestRepository interface {
@@ -75,6 +76,7 @@ func (cr *contest) GetContestList(ctx context.Context, req *entity.ContestList, 
 	if !admin {
 		req.Publish = new(bool)
 		*req.Publish = true
+		db = db.Where("end_time >= ?", time.Now())
 	}
 	if req.ID != 0 {
 		db = db.Where("id = ?", req.ID)
@@ -85,8 +87,8 @@ func (cr *contest) GetContestList(ctx context.Context, req *entity.ContestList, 
 	if req.Type != "" {
 		db = db.Where("type = ?", req.Type)
 	}
-	if req.Publish != nil {
-		db = db.Where("publish = ?", req.Publish)
+	if req.Public != nil {
+		db = db.Where("public = ?", req.Public)
 	}
 
 	var count int64
