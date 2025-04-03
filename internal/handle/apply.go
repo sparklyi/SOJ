@@ -17,6 +17,7 @@ type ApplyHandle interface {
 	GetListByUserID(ctx *gin.Context)
 	GetList(ctx *gin.Context)
 	GetInfoByID(ctx *gin.Context)
+	CheckApply(ctx *gin.Context)
 }
 
 type apply struct {
@@ -132,6 +133,22 @@ func (ah *apply) GetInfoByID(ctx *gin.Context) {
 	}
 	a, err := ah.svc.GetInfoByID(ctx, aid)
 	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, a)
+}
+func (ah *apply) CheckApply(ctx *gin.Context) {
+	req := entity.ApplyCheck{}
+	if err := ctx.ShouldBind(&req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	a, err := ah.svc.GetInfoByUserAndContest(ctx, req.UserID, req.ContestID)
+	if err != nil && err.Error() == constant.NotFoundError {
+		response.NotFoundErrorNoContent(ctx)
+		return
+	} else if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
