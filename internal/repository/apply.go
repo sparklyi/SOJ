@@ -73,7 +73,7 @@ func (ar *apply) DeleteApply(ctx context.Context, aid int) error {
 // GetListByUserID 获取用户报名信息
 func (ar *apply) GetListByUserID(ctx context.Context, uid int, page, pageSize int) ([]*model.Apply, int64, error) {
 	var count int64
-	err := ar.db.Count(&count).Error
+	err := ar.db.WithContext(ctx).Model(&model.Apply{}).Count(&count).Error
 	if err != nil {
 		ar.log.Error("数据库查询失败", zap.Error(err))
 		return nil, 0, errors.New(constant.ServerError)
@@ -105,7 +105,7 @@ func (ar *apply) GetList(ctx context.Context, req *entity.ApplyList) ([]*model.A
 	}
 
 	var count int64
-	err := ar.db.Count(&count).Error
+	err := ar.db.WithContext(ctx).Model(&model.Apply{}).Count(&count).Error
 	if err != nil {
 		ar.log.Error("数据库查询失败", zap.Error(err))
 		return nil, 0, errors.New(constant.ServerError)
