@@ -161,7 +161,7 @@ func (ar *apply) DeleteApplyByContestID(ctx context.Context, cid int) error {
 func (ar *apply) GetListByContestID(ctx context.Context, cid int, page, pageSize int) ([]model.Apply, int64, error) {
 
 	var count int64
-	err := ar.db.Count(&count).Error
+	err := ar.db.Model(&model.Apply{}).Count(&count).Error
 	if err != nil {
 		ar.log.Error("数据库查询失败", zap.Error(err))
 		return nil, 0, errors.New(constant.ServerError)
