@@ -161,10 +161,19 @@ func (cs *contest) GetContestInfoByID(ctx *gin.Context, id int) (*model.Contest,
 		return nil, err
 	}
 	claims := utils.GetAccessClaims(ctx)
-	if claims.Auth < constant.AdminLevel && c.UserID != uint(claims.ID) {
+
+	now := time.Now().Unix()
+	// t== true -> 没有权限
+	t := claims.Auth < constant.AdminLevel && c.UserID != uint(claims.ID)
+	// 管理员或自己创建的比赛, 可以查看邀请码
+	if t {
 		c.Code = ""
+	}
+	//非赛时 或 权限不足
+	if (now < c.StartTime.Unix() || now > c.EndTime.Unix()) && t {
 		c.ProblemSet = ""
 	}
+
 	return c, nil
 }
 
