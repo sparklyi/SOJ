@@ -104,6 +104,10 @@ func (pr *problem) GetProblemList(ctx context.Context, req *entity.ProblemList, 
 	//管理员可查看所有类型题目 普通用户只可查看公开题目
 	if !admin {
 		db = db.Where("status = true and owner = 0")
+
+	}
+	if req.UserID != 0 {
+		db = db.Where("user_id = ?", req.UserID)
 	}
 	var count int64
 	err := db.Count(&count).Error
