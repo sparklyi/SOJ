@@ -52,6 +52,7 @@ func (ps *problem) Create(ctx *gin.Context, req *entity.Problem) (*model.Problem
 		Level:    req.Level,
 		Status:   req.Visible,
 		Owner:    req.Owner,
+		UserID:   uint(utils.GetAccessClaims(ctx).ID),
 	}
 	return &p, ps.repo.MySQLCreate(ctx, &p)
 }
@@ -65,7 +66,9 @@ func (ps *problem) Count(ctx *gin.Context) (int64, error) {
 // GetProblemList 获取题目列表
 func (ps *problem) GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, int64, error) {
 	claims := utils.GetAccessClaims(ctx)
-
+	if claims != nil && req.UserID != 0 && claims.Auth < constant.RootLevel {
+		req.UserID = claims.ID
+	}
 	return ps.repo.GetProblemList(ctx, req, claims != nil && claims.Auth == constant.RootLevel)
 }
 

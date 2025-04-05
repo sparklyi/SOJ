@@ -90,6 +90,9 @@ func (cr *contest) GetContestList(ctx context.Context, req *entity.ContestList, 
 	if req.Public != nil {
 		db = db.Where("public = ?", req.Public)
 	}
+	if req.UserID != 0 {
+		db = db.Where("user_id = ?", req.UserID)
+	}
 
 	var count int64
 	err := db.Count(&count).Error
@@ -121,7 +124,7 @@ func (cr *contest) DeleteContest(ctx context.Context, id int) error {
 func (cr *contest) GetListByUserID(ctx context.Context, uid int, page int, pageSize int) ([]*model.Contest, int64, error) {
 
 	var count int64
-	err := cr.db.Count(&count).Error
+	err := cr.db.Model(&model.Contest{}).Count(&count).Error
 	if err != nil {
 		cr.log.Error("数据库查询失败", zap.Error(err))
 		return nil, 0, errors.New(constant.ServerError)

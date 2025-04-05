@@ -31,6 +31,7 @@ type ContestList struct {
 	Type     string `json:"type" binding:"omitempty" bson:"type"`
 	Public   *bool  `json:"public" binding:"omitempty" bson:"public"`
 	Publish  *bool  `json:"publish" binding:"omitempty" bson:"publish"`
+	UserID   int    `json:"user_id" binding:"omitempty,number" bson:"user_id"`
 	Page     int    `json:"page" binding:"omitempty" bson:"page"`
 	PageSize int    `json:"page_size" binding:"omitempty" bson:"page_size"`
 }
