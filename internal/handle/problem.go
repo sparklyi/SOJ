@@ -20,6 +20,7 @@ type ProblemHandle interface {
 	TestCaseInfo(ctx *gin.Context)
 	CreateTestCase(ctx *gin.Context)
 	UpdateTestCase(ctx *gin.Context)
+	GetUserProblemList(ctx *gin.Context)
 }
 
 type problem struct {
@@ -187,4 +188,22 @@ func (ph *problem) UpdateTestCase(ctx *gin.Context) {
 	}
 	response.SuccessNoContent(ctx)
 
+}
+
+// GetUserProblemList 获取用户创建的题目列表
+func (ph *problem) GetUserProblemList(ctx *gin.Context) {
+	req := &entity.ProblemList{}
+	if err := ctx.ShouldBind(req); err != nil {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	list, count, err := ph.svc.GetProblemList(ctx, req)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, gin.H{
+		"detail": list,
+		"count":  count,
+	})
 }
