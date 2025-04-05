@@ -127,7 +127,9 @@ func (cs *contest) UpdateContest(ctx *gin.Context, req *entity.Contest) error {
 func (cs *contest) GetContestList(ctx *gin.Context, req *entity.ContestList) ([]*model.Contest, int64, error) {
 	claims := utils.GetAccessClaims(ctx)
 	admin := claims != nil && claims.Auth > constant.UserLevel
-
+	if claims != nil && claims.Auth != constant.RootLevel && req.UserID != 0 && req.UserID != claims.ID {
+		return nil, 0, errors.New(constant.UnauthorizedError)
+	}
 	list, count, err := cs.repo.GetContestList(ctx, req, admin)
 	if err != nil {
 		return nil, 0, err
