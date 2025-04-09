@@ -2,28 +2,21 @@ version: '3'
 
 services:
   mysql:
-    image: mysql:8
+    image: mysql:8.0.33
     container_name: soj_mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: your_password
+      MYSQL_ROOT_PASSWORD: m81rwSo2rF1wrkhlfYDV
     command:
-      --default-authentication-plugin=mysql_native_password
+      ["--default-authentication-plugin=mysql_native_password"]
     ports:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - soj-net
 
-  redis:
-    image: redis:latest
-    container_name: soj_redis
-    restart: unless-stopped
-    command: redis-server --requirepass your_password
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
 
   mongo:
     image: mongo:latest
@@ -31,28 +24,31 @@ services:
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: soj
-      MONGO_INITDB_ROOT_PASSWORD: your_password
+      MONGO_INITDB_ROOT_PASSWORD: 61Sq8PmDYMDnK090nvpr
     ports:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+    networks:
+      - soj-net
 
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:latest
     container_name: soj_rabbitmq
     restart: unless-stopped
     hostname: myRabbit
     environment:
       RABBITMQ_DEFAULT_VHOST: soj
       RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: your_password
+      RABBITMQ_DEFAULT_PASS: aELzJq0VXxN3fUcTcEDH
     ports:
       - "15672:15672"
       - "5672:5672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     command: ["/bin/bash", "-c", "rabbitmq-plugins enable --offline rabbitmq_management && rabbitmq-server"]
-
+    networks:
+      - soj-net
 
   judge0_server:
     image: 513254687/soj:1.0
@@ -66,6 +62,8 @@ services:
     depends_on:
       - judge0_db
       - judge0_redis
+    networks:
+      - soj-net
 
   judge0_workers:
     image: 513254687/soj:1.0
@@ -77,6 +75,8 @@ services:
     privileged: true
     depends_on:
       - judge0_server
+    networks:
+      - soj-net
 
   judge0_db:
     image: postgres:16.2
@@ -88,6 +88,8 @@ services:
       - judge0_db_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    networks:
+      - soj-net
 
   judge0_redis:
     image: redis:7.2.4
@@ -99,8 +101,29 @@ services:
     ]
     env_file:
       - judge0.conf
+    ports:
+      - "6379:6379"
     volumes:
       - judge0_redis_data:/data
+    networks:
+      - soj-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soj_backend
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./config:/app/config
+    depends_on:
+      - mysql
+      - redis
+      - mongo
+      - rabbitmq
+    networks:
+      - soj-net
 
 volumes:
   mysql-data:
@@ -109,3 +132,7 @@ volumes:
   rabbitmq-data:
   judge0_db_data:
   judge0_redis_data:
+
+networks:
+  soj-net:
+    driver: bridge
