@@ -15,7 +15,7 @@ func ProblemRoute(r *gin.RouterGroup, p handle.ProblemHandle, mid []gin.HandlerF
 		problem.POST("", p.List)                             //获取题目列表
 		problem.POST("/create", mid[1], mid[2], p.Create)    //题目创建
 		problem.PUT("/update", mid[1], mid[2], p.UpdateInfo) //题目更新
-		problem.DELETE("/:pid", mid[1], mid[3], p.Delete)    //题目删除
+		problem.DELETE("/:pid", mid[1], mid[2], p.Delete)    //题目删除
 		//测试点
 		problem.GET("/:pid/case", mid[1], mid[2], p.TestCaseInfo)      //获取题目测试点
 		problem.POST("/:pid/create", mid[1], mid[2], p.CreateTestCase) //创建测试点
