@@ -41,7 +41,6 @@ func NewProblemService(log *zap.Logger, r repository.ProblemRepository) ProblemS
 // Create 题目创建
 func (ps *problem) Create(ctx *gin.Context, req *entity.Problem) (*model.Problem, error) {
 	//插入mongo
-
 	pid, err := ps.repo.MongoCreate(ctx, req)
 	if err != nil {
 		return nil, err
@@ -154,10 +153,14 @@ func (ps *problem) DeleteProblem(ctx *gin.Context, id int) error {
 	if err != nil {
 		return err
 	}
-	if p.TestCaseID == "" || p.ObjectID == "" {
-		return errors.New(constant.NotFoundError)
-	}
+	//if p.TestCaseID == "" || p.ObjectID == "" {
+	//	return errors.New(constant.NotFoundError)
+	//}
+	claims := utils.GetAccessClaims(ctx)
+	if claims.Auth != constant.RootLevel && p.UserID != uint(claims.ID) {
+		return errors.New(constant.UnauthorizedError)
 
+	}
 	err = ps.repo.MysqlDeleteProblem(ctx, nil, id)
 	if err != nil {
 		return err
