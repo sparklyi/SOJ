@@ -20,6 +20,7 @@ type SubmissionRepository interface {
 	DeleteJudgeByToken(ctx context.Context, token string) error
 	DeleteAllJudgeHistory(ctx context.Context) error
 	GetTransaction(ctx context.Context) *gorm.DB
+	GetJudgeRankByProblemID(ctx context.Context, problemID int, page, pageSize int) ([]model.Submission, error)
 }
 
 type submission struct {
@@ -126,4 +127,20 @@ func (sr *submission) DeleteAllJudgeHistory(ctx context.Context) error {
 // GetTransaction 获取事务
 func (sr *submission) GetTransaction(ctx context.Context) *gorm.DB {
 	return sr.db.Where(ctx).Begin()
+}
+
+// GetJudgeRankByProblemID 获取题目时空排行
+func (sr *submission) GetJudgeRankByProblemID(ctx context.Context, problemID int, page, pageSize int) ([]model.Submission, error) {
+	var data []model.Submission
+	err := sr.db.WithContext(ctx).
+		Model(&model.Submission{}).
+		Scopes(utils.Paginate(page, pageSize)).
+		Where("problem_id = ?", problemID).
+		Where("status = ? and visible = true", constant.JudgeCode2Details[constant.JudgeAC]).
+		Order("time, memory").Find(&data).Error
+	if err != nil {
+		sr.log.Error("获取题目时空排行失败", zap.Error(err))
+		return nil, errors.New(constant.ServerError)
+	}
+	return data, nil
 }

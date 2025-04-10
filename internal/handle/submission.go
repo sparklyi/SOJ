@@ -15,6 +15,7 @@ type SubmissionHandle interface {
 	Judge(ctx *gin.Context)
 	List(ctx *gin.Context)
 	GetInfoByID(ctx *gin.Context)
+	GetJudgeRankByProblemID(ctx *gin.Context)
 }
 
 type submission struct {
@@ -92,4 +93,19 @@ func (sh *submission) GetInfoByID(ctx *gin.Context) {
 		return
 	}
 	response.SuccessWithData(ctx, res)
+}
+
+func (sh *submission) GetJudgeRankByProblemID(ctx *gin.Context) {
+	t := ctx.Param("pid")
+	pid, err := strconv.Atoi(t)
+	if err != nil || pid <= 0 {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	data, err := sh.svc.GetJudgeRankByProblemID(ctx, pid, 1, 10)
+	if err != nil {
+		response.InternalErrorWithMsg(ctx, err.Error())
+		return
+	}
+	response.SuccessWithData(ctx, data)
 }

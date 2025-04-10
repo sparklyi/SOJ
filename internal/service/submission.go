@@ -28,6 +28,7 @@ type SubmissionService interface {
 	DeletePostgresJudgeHistory(ctx context.Context) error
 	GetSubmissionList(ctx *gin.Context, req *entity.SubmissionList) ([]*model.Submission, int64, error)
 	GetSubmissionByID(ctx *gin.Context, id int) (*model.Submission, error)
+	GetJudgeRankByProblemID(ctx *gin.Context, problemID int, page, pageSize int) ([]model.Submission, error)
 }
 
 type submission struct {
@@ -371,4 +372,10 @@ func (ss *submission) GetSubmissionByID(ctx *gin.Context, id int) (*model.Submis
 		return nil, errors.New(constant.UnauthorizedError)
 	}
 	return s, nil
+}
+
+// GetJudgeRankByProblemID 获取题目时空排行榜
+func (ss *submission) GetJudgeRankByProblemID(ctx *gin.Context, problemID int, page, pageSize int) ([]model.Submission, error) {
+	return ss.repo.GetJudgeRankByProblemID(ctx, problemID, page, pageSize)
+
 }
