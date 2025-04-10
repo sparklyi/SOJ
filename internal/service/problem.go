@@ -7,7 +7,9 @@ import (
 	"SOJ/internal/repository"
 	"SOJ/utils"
 	"errors"
+	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
@@ -15,7 +17,7 @@ import (
 
 type ProblemService interface {
 	Create(ctx *gin.Context, req *entity.Problem) (*model.Problem, error)
-	Count(ctx *gin.Context) (int64, error)
+	JudgeStatusCount(ctx *gin.Context, id int) (map[string]string, error)
 	GetProblemList(ctx *gin.Context, req *entity.ProblemList) ([]*model.Problem, int64, error)
 	GetProblemInfo(ctx *gin.Context, id int) (*bson.M, error)
 	UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) error
@@ -29,12 +31,14 @@ type problem struct {
 	log  *zap.Logger
 	repo repository.ProblemRepository
 	//retry *producer.Retry
+	rs *redis.Client
 }
 
-func NewProblemService(log *zap.Logger, r repository.ProblemRepository) ProblemService {
+func NewProblemService(log *zap.Logger, r repository.ProblemRepository, rs *redis.Client) ProblemService {
 	return &problem{
 		log:  log,
 		repo: r,
+		rs:   rs,
 	}
 }
 
@@ -45,21 +49,26 @@ func (ps *problem) Create(ctx *gin.Context, req *entity.Problem) (*model.Problem
 	if err != nil {
 		return nil, err
 	}
+	//题目创建默认不可见 必须添加测试点
 	p := model.Problem{
 		ObjectID: pid.Hex(),
 		Name:     req.Name,
 		Level:    req.Level,
-		Status:   req.Visible,
 		Owner:    req.Owner,
 		UserID:   uint(utils.GetAccessClaims(ctx).ID),
 	}
 	return &p, ps.repo.MySQLCreate(ctx, &p)
 }
 
-// Count 获取题目数量
-func (ps *problem) Count(ctx *gin.Context) (int64, error) {
-	claims := utils.GetAccessClaims(ctx)
-	return ps.repo.Count(ctx, claims != nil && claims.Auth == constant.RootLevel)
+// JudgeStatusCount 题目测评数量统计
+func (ps *problem) JudgeStatusCount(ctx *gin.Context, id int) (map[string]string, error) {
+	countName := fmt.Sprintf("%s-%v", constant.ProblemCount, id)
+	res, err := ps.rs.HGetAll(ctx, countName).Result()
+	if err != nil {
+		ps.log.Error("获取题目测评数据失败", zap.Error(err))
+		return nil, errors.New(constant.ServerError)
+	}
+	return res, nil
 }
 
 // GetProblemList 获取题目列表
@@ -106,11 +115,14 @@ func (ps *problem) UpdateProblemInfo(ctx *gin.Context, req *entity.Problem) erro
 	if err != nil {
 		return err
 	}
-
 	// 并行
 	//mongoErrChan := make(chan error, 1)
 	if p.ObjectID == "" {
 		return errors.New(constant.NotFoundError)
+	}
+	//公开题目时必须存在测试点
+	if *p.Status == false && req.Visible != nil && *req.Visible == true && p.TestCaseID == "" {
+		return errors.New(constant.DisableError)
 	}
 	objID, _ := primitive.ObjectIDFromHex(p.ObjectID)
 	//// 启动Mongo更新协程
