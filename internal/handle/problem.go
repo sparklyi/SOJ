@@ -13,7 +13,7 @@ import (
 type ProblemHandle interface {
 	List(ctx *gin.Context)
 	Detail(ctx *gin.Context)
-	Count(ctx *gin.Context)
+	JudgeStatusCount(ctx *gin.Context)
 	Create(ctx *gin.Context)
 	UpdateInfo(ctx *gin.Context)
 	Delete(ctx *gin.Context)
@@ -71,14 +71,20 @@ func (ph *problem) Detail(ctx *gin.Context) {
 
 }
 
-// Count 题目总数
-func (ph *problem) Count(ctx *gin.Context) {
-	total, err := ph.svc.Count(ctx)
+// JudgeStatusCount 题目总数
+func (ph *problem) JudgeStatusCount(ctx *gin.Context) {
+	t := ctx.Param("pid")
+	pid, err := strconv.Atoi(t)
+	if err != nil || pid <= 0 {
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		return
+	}
+	data, err := ph.svc.JudgeStatusCount(ctx, pid)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
 		return
 	}
-	response.SuccessWithData(ctx, total)
+	response.SuccessWithData(ctx, data)
 
 }
 
