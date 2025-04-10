@@ -18,7 +18,6 @@ type ProblemRepository interface {
 	GetTransaction(ctx context.Context) *gorm.DB
 	MongoCreate(ctx context.Context, req *entity.Problem) (primitive.ObjectID, error)
 	MySQLCreate(ctx context.Context, problem *model.Problem) error
-	Count(ctx context.Context, admin bool) (int64, error)
 	GetProblemList(ctx context.Context, req *entity.ProblemList, admin bool) ([]*model.Problem, int64, error)
 	GetInfoByID(ctx context.Context, id int) (*model.Problem, error)
 	GetInfoByObjID(ctx context.Context, obj primitive.ObjectID) (*bson.M, error)
@@ -72,20 +71,6 @@ func (pr *problem) MySQLCreate(ctx context.Context, problem *model.Problem) erro
 
 	}
 	return nil
-}
-
-// Count 题目数量
-func (pr *problem) Count(ctx context.Context, admin bool) (int64, error) {
-	var total int64
-	db := pr.db.WithContext(ctx).Model(&model.Problem{})
-	if !admin {
-		db = db.Where("status = true and owner=0")
-	}
-	if err := db.Count(&total).Error; err != nil {
-		pr.log.Error("数据库查询失败", zap.Error(err))
-		return -1, errors.New(constant.ServerError)
-	}
-	return total, nil
 }
 
 // GetProblemList 获取题目列表(条件筛选+分页)

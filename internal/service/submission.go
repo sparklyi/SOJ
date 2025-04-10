@@ -10,7 +10,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -37,9 +39,10 @@ type submission struct {
 	applyRepo   repository.ApplyRepository
 	contestRepo repository.ContestRepository
 	judge       *judge0.Judge
+	rs          *redis.Client
 }
 
-func NewSubmissionService(log *zap.Logger, a repository.ApplyRepository, repo repository.SubmissionRepository, p repository.ProblemRepository, l repository.LanguageRepository, j *judge0.Judge, u repository.UserRepository, c repository.ContestRepository) SubmissionService {
+func NewSubmissionService(log *zap.Logger, a repository.ApplyRepository, repo repository.SubmissionRepository, p repository.ProblemRepository, l repository.LanguageRepository, j *judge0.Judge, u repository.UserRepository, c repository.ContestRepository, rs *redis.Client) SubmissionService {
 	return &submission{
 		log:         log,
 		repo:        repo,
@@ -49,6 +52,7 @@ func NewSubmissionService(log *zap.Logger, a repository.ApplyRepository, repo re
 		userRepo:    u,
 		applyRepo:   a,
 		contestRepo: c,
+		rs:          rs,
 	}
 }
 
@@ -230,6 +234,20 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 		//	break
 		//}
 	}
+	//更新统计数据
+	go func() {
+		//对题目的statusID状态+1
+		countName := fmt.Sprintf("%s-%v", constant.ProblemCount, s.ProblemID)
+		err = ss.rs.HIncrBy(ctx, countName, constant.JudgeCode2Details[statusID], 1).Err()
+		if err != nil {
+			ss.log.Error("题目统计数据状态+1失败:", zap.Any("judge_info", s), zap.Error(err))
+		}
+		err = ss.rs.HIncrBy(ctx, countName, "count", 1).Err()
+		if err != nil {
+			ss.log.Error("题目统计数据+1失败:", zap.Any("judge_info", s), zap.Error(err))
+		}
+
+	}()
 
 	var tx *gorm.DB
 	//如果是比赛提交 解析出当前成绩
