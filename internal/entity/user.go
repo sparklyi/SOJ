@@ -29,7 +29,7 @@ type UserInfo struct {
 	Tel      string `json:"tel" binding:"omitempty"`
 	Role     int    `json:"role" binding:"omitempty,oneof=-1 1 2 3"`
 	Page     int    `json:"page" binding:"omitempty,number,min=1"`
-	PageSize int    `json:"page_size" binding:"omitempty,number,min=20,max=100"`
+	PageSize int    `json:"page_size" binding:"omitempty,number,min=10,max=100"`
 }
 
 // UserUpdate 用户信息更新
