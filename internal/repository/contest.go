@@ -90,6 +90,9 @@ func (cr *contest) GetContestList(ctx context.Context, req *entity.ContestList, 
 	if req.Public != nil {
 		db = db.Where("public = ?", req.Public)
 	}
+	if req.Publish != nil {
+		db = db.Where("publish = ?", req.Publish)
+	}
 	if req.UserID != 0 {
 		db = db.Where("user_id = ?", req.UserID)
 	}
