@@ -42,6 +42,7 @@ func (ph *problem) List(ctx *gin.Context) {
 		response.BadRequestErrorWithMsg(ctx, "参数无效")
 		return
 	}
+
 	ps, count, err := ph.svc.GetProblemList(ctx, &req)
 	if err != nil {
 		response.InternalErrorWithMsg(ctx, err.Error())
