@@ -5,7 +5,9 @@ import (
 	"SOJ/internal/entity"
 	"SOJ/internal/service"
 	"SOJ/utils/response"
+	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"go.uber.org/zap"
 	"strconv"
 )
@@ -58,8 +60,9 @@ func (ch *contest) CreateContest(ctx *gin.Context) {
 func (ch *contest) UpdateContest(ctx *gin.Context) {
 
 	req := entity.Contest{}
+	fmt.Println(binding.Default(ctx.Request.Method, ctx.ContentType()))
 	if err := ctx.ShouldBind(&req); err != nil {
-		response.BadRequestErrorWithMsg(ctx, constant.ParamError)
+		response.BadRequestErrorWithMsg(ctx, constant.ParamError+err.Error())
 		return
 	}
 	if req.StartTime.Unix() > req.EndTime.Unix() {
