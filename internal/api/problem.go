@@ -13,6 +13,7 @@ func ProblemRoute(r *gin.RouterGroup, p handle.ProblemHandle, mid []gin.HandlerF
 		problem.POST("/user", mid[1], p.GetUserProblemList)  //获取用户题目
 		problem.GET("/:pid", mid[1], p.Detail)               //获取题目详情
 		problem.POST("", p.List)                             //获取题目列表
+		problem.POST("/list", mid[1], p.List)                //带token的题目列表查询
 		problem.POST("/create", mid[1], mid[2], p.Create)    //题目创建
 		problem.PUT("/update", mid[1], mid[2], p.UpdateInfo) //题目更新
 		problem.DELETE("/:pid", mid[1], mid[2], p.Delete)    //题目删除
