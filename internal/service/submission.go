@@ -368,7 +368,8 @@ func (ss *submission) GetSubmissionByID(ctx *gin.Context, id int) (*model.Submis
 		return nil, err
 	}
 	claims := utils.GetAccessClaims(ctx)
-	if *s.Visible == false && (claims.ID != int(s.UserID) || claims.Auth < constant.AdminLevel) {
+
+	if *s.Visible == false && claims.ID != int(s.UserID) && claims.Auth < constant.AdminLevel {
 		return nil, errors.New(constant.UnauthorizedError)
 	}
 	return s, nil
