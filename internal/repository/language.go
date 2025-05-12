@@ -78,7 +78,7 @@ func (lr *language) GetByID(ctx context.Context, id int) (*model.Language, error
 	var lang model.Language
 	err := lr.db.WithContext(ctx).First(&lang, id).Error
 	if err != nil {
-		lr.log.Error("get language error", zap.Error(err))
+		lr.log.Info("get language error", zap.Error(err))
 		return nil, errors.New(constant.ServerError)
 	}
 	return &lang, nil

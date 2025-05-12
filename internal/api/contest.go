@@ -6,7 +6,13 @@ import (
 )
 
 func ContestRoute(r *gin.RouterGroup, c handle.ContestHandle, mid []gin.HandlerFunc) {
-	contest := r.Group("contest").Use(mid[1])
+
+	contest := r.Group("contest")
+	//不需要鉴权的API
+	{
+		contest.POST("/list", c.GetContestList) //用于未登录用户查看列表
+	}
+	contest.Use(mid[1])
 	{
 		contest.GET("/:cid", c.GetInfoByID)       //获取比赛详情
 		contest.GET("/u/:uid", c.GetListByUserID) //获取user创建的比赛
