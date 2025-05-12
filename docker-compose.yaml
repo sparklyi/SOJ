@@ -6,7 +6,7 @@ services:
     container_name: soj_mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: m81rwSo2rF1wrkhlfYDV
+      MYSQL_ROOT_PASSWORD: mysql_password
     command:
       ["--default-authentication-plugin=mysql_native_password"]
     ports:
@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: soj
-      MONGO_INITDB_ROOT_PASSWORD: 61Sq8PmDYMDnK090nvpr
+      MONGO_INITDB_ROOT_PASSWORD: redis_password
     ports:
       - "27017:27017"
     volumes:
@@ -40,7 +40,7 @@ services:
     environment:
       RABBITMQ_DEFAULT_VHOST: soj
       RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: aELzJq0VXxN3fUcTcEDH
+      RABBITMQ_DEFAULT_PASS: rabbitmq_password
     ports:
       - "15672:15672"
       - "5672:5672"
