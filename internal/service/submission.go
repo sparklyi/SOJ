@@ -173,6 +173,7 @@ func (ss *submission) Judge(ctx *gin.Context, req *entity.Run) (*model.Submissio
 
 	//并发提交每个测试点
 	n := len(testcase.Content)
+	n = min(n, 5)
 	resp := make(chan entity.JudgeResult, n)
 	defer close(resp)
 	for _, v := range testcase.Content {
