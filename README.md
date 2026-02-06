@@ -1,4 +1,7 @@
 # SOJ - 看似没有特点，实则确实没有特点的开源OJ系统:)
+
+## deepwiki 快速了解项目   
+https://deepwiki.com/sparklyi/SOJ
 ## 项目简介
 - SOJ是一款OJ系统!
 - 采取wire依赖注入解耦,采取经典三层架构(handle+service+repository)
