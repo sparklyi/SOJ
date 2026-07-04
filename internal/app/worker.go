@@ -12,7 +12,6 @@ import (
 
 	"SOJ/internal/config"
 	"SOJ/internal/httpapi"
-	"SOJ/internal/judge"
 	"SOJ/internal/observability"
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
@@ -66,7 +65,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := taskQueue.Ensure(ctx); err != nil {
 		return err
 	}
-	judgeEngine := judge.NewJudge0Client(cfg.Judge.Endpoint, &http.Client{Timeout: cfg.Judge.Timeout}, "")
+	judgeEngine := newJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	worker := submission.NewWorker(submission.WorkerOptions{
 		Repository:       submissionRepo,
