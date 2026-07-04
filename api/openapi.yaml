@@ -1141,6 +1141,12 @@ components:
         updated_at: { type: string, format: date-time }
     ContestProblemInput:
       type: object
+      required: [problem_id, alias]
+      properties:
+        problem_id: { type: integer, format: int64 }
+        alias: { type: string }
+    ContestProblem:
+      type: object
       required: [problem_id, alias, sort_order]
       properties:
         problem_id: { type: integer, format: int64 }
@@ -1187,7 +1193,7 @@ components:
         freeze_at: { type: string, format: date-time }
         problems:
           type: array
-          items: { $ref: "#/components/schemas/ContestProblemInput" }
+          items: { $ref: "#/components/schemas/ContestProblem" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     ContestRegistrationRequest:
@@ -1210,11 +1216,14 @@ components:
         registered_at: { type: string, format: date-time }
     ScoreboardResponse:
       type: object
-      required: [contest_id, view, generated_at, rows]
+      required: [contest_id, view, generated_at, problems, rows]
       properties:
         contest_id: { type: integer, format: int64 }
         view: { $ref: "#/components/schemas/ScoreboardView" }
         generated_at: { type: string, format: date-time }
+        problems:
+          type: array
+          items: { $ref: "#/components/schemas/ContestProblem" }
         rows:
           type: array
           items: { $ref: "#/components/schemas/ScoreboardRow" }

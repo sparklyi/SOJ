@@ -258,18 +258,111 @@ func (r *SQLRepository) MarkSubmissionSystemError(ctx context.Context, id int64,
 }
 
 func (r *SQLRepository) UpdateSubmissionStatus(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
-	row, err := r.q.UpdateSubmissionStatus(ctx, db.UpdateSubmissionStatusParams{
+	params := db.UpdateSubmissionStatusParams{
 		Status:       dbStatus(result.Verdict),
 		TimeMs:       int4(result.TimeMS),
 		MemoryKb:     int4(result.MemoryKB),
 		Score:        pgtype.Int4{Int32: score, Valid: true},
 		ErrorMessage: text(result.ErrorMessage),
 		ID:           id,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return r.GetSubmission(ctx, id)
 	}
-	return submissionRecord(row), err
+	if r.txRunner == nil {
+		row, err := r.q.UpdateSubmissionStatus(ctx, params)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return r.GetSubmission(ctx, id)
+		}
+		record := submissionRecord(row)
+		if err != nil {
+			return record, err
+		}
+		return record, updateContestProblemResult(ctx, r.q, record)
+	}
+
+	var record SubmissionRecord
+	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		row, err := q.UpdateSubmissionStatus(ctx, params)
+		if errors.Is(err, pgx.ErrNoRows) {
+			row, err = q.GetSubmissionByID(ctx, id)
+			record = submissionRecord(row)
+			return err
+		}
+		record = submissionRecord(row)
+		if err != nil {
+			return err
+		}
+		return updateContestProblemResult(ctx, q, record)
+	})
+	return record, err
+}
+
+func updateContestProblemResult(ctx context.Context, q *db.Queries, submission SubmissionRecord) error {
+	if submission.ContestID == nil {
+		return nil
+	}
+	contest, err := q.GetContestByID(ctx, *submission.ContestID)
+	if err != nil {
+		return err
+	}
+	problems, err := q.ListContestProblems(ctx, *submission.ContestID)
+	if err != nil {
+		return err
+	}
+	inContest := false
+	for _, problem := range problems {
+		if problem.ProblemID == submission.ProblemID {
+			inContest = true
+			break
+		}
+	}
+	if !inContest {
+		return nil
+	}
+
+	current := db.ContestProblemResult{
+		ContestID: *submission.ContestID,
+		UserID:    submission.UserID,
+		ProblemID: submission.ProblemID,
+		Status:    "none",
+	}
+	results, err := q.ListContestProblemResults(ctx, *submission.ContestID)
+	if err != nil {
+		return err
+	}
+	for _, result := range results {
+		if result.UserID == submission.UserID && result.ProblemID == submission.ProblemID {
+			current = result
+			break
+		}
+	}
+	if current.LastSubmissionID.Valid && current.LastSubmissionID.Int64 == submission.ID {
+		return nil
+	}
+	if current.Status == StatusAccepted {
+		return nil
+	}
+
+	attempts := current.Attempts + 1
+	status := "attempted"
+	acceptedAt := pgtype.Timestamptz{}
+	penaltyMinutes := current.PenaltyMinutes
+	if submission.Status == StatusAccepted {
+		status = "accepted"
+		accepted := submission.SubmittedAt
+		acceptedAt = timestamptz(accepted)
+		penaltyMinutes = int32(accepted.Sub(contest.StartAt.Time).Minutes()) + (attempts-1)*20
+	}
+	_, err = q.UpsertContestProblemResult(ctx, db.UpsertContestProblemResultParams{
+		ContestID:        *submission.ContestID,
+		UserID:           submission.UserID,
+		ProblemID:        submission.ProblemID,
+		Status:           status,
+		Attempts:         attempts,
+		AcceptedAt:       acceptedAt,
+		PenaltyMinutes:   penaltyMinutes,
+		LastSubmissionID: pgtype.Int8{Int64: submission.ID, Valid: true},
+	})
+	return err
 }
 
 func (r *SQLRepository) CreateJudgeTask(ctx context.Context, submissionID int64, nextRunAt time.Time) (JudgeTaskRecord, error) {

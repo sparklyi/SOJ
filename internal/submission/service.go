@@ -73,15 +73,17 @@ func (s *MemorySourceStore) Get(ctx context.Context, storageKey string) ([]byte,
 }
 
 type Service struct {
-	repo       Repository
-	problems   problem.Reader
-	testcases  problem.TestcaseResolver
-	queue      queue.TaskQueue
-	store      SourceStore
-	judge      judge.JudgeEngine
-	now        func() time.Time
-	runWait    time.Duration
-	runTimeout time.Duration
+	repo          Repository
+	problems      problem.Reader
+	testcases     problem.TestcaseResolver
+	queue         queue.TaskQueue
+	store         SourceStore
+	judge         judge.JudgeEngine
+	contestPolicy ContestSubmissionPolicy
+	terminalHook  TerminalHook
+	now           func() time.Time
+	runWait       time.Duration
+	runTimeout    time.Duration
 }
 
 type ServiceOptions struct {
@@ -91,9 +93,29 @@ type ServiceOptions struct {
 	Queue            queue.TaskQueue
 	SourceStore      SourceStore
 	Judge            judge.JudgeEngine
+	ContestPolicy    ContestSubmissionPolicy
+	TerminalHook     TerminalHook
 	Now              func() time.Time
 	RunWait          time.Duration
 	RunTimeout       time.Duration
+}
+
+type ContestSubmissionPolicy interface {
+	ValidateSubmission(ctx context.Context, actor auth.Actor, problemID, contestID int64) error
+}
+
+type TerminalHook interface {
+	AfterSubmissionTerminal(ctx context.Context, submission TerminalSubmission) error
+}
+
+type TerminalSubmission struct {
+	SubmissionID int64
+	UserID       int64
+	ProblemID    int64
+	ContestID    *int64
+	Status       string
+	SubmittedAt  time.Time
+	JudgedAt     time.Time
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -109,7 +131,7 @@ func NewService(options ServiceOptions) *Service {
 	if runTimeout <= 0 {
 		runTimeout = defaultRunTimeout
 	}
-	return &Service{repo: options.Repository, problems: options.ProblemReader, testcases: options.TestcaseResolver, queue: options.Queue, store: options.SourceStore, judge: options.Judge, now: now, runWait: runWait, runTimeout: runTimeout}
+	return &Service{repo: options.Repository, problems: options.ProblemReader, testcases: options.TestcaseResolver, queue: options.Queue, store: options.SourceStore, judge: options.Judge, contestPolicy: options.ContestPolicy, terminalHook: options.TerminalHook, now: now, runWait: runWait, runTimeout: runTimeout}
 }
 
 type CreateSubmissionInput struct {
@@ -134,6 +156,11 @@ func (s *Service) CreateSubmission(ctx context.Context, actor auth.Actor, input 
 	}
 	if _, err := s.problems.GetForJudge(ctx, input.ProblemID); err != nil {
 		return CreateSubmissionOutput{}, err
+	}
+	if input.ContestID != nil && s.contestPolicy != nil {
+		if err := s.contestPolicy.ValidateSubmission(ctx, actor, input.ProblemID, *input.ContestID); err != nil {
+			return CreateSubmissionOutput{}, err
+		}
 	}
 	testcaseSet, err := s.testcases.CurrentReadyTestcaseSet(ctx, input.ProblemID)
 	if err != nil {
@@ -322,7 +349,28 @@ func (s *Service) CompleteSubmission(ctx context.Context, submissionID int64, re
 	if result.Verdict == judge.VerdictAccepted {
 		score = 100
 	}
-	return s.repo.UpdateSubmissionStatus(ctx, submissionID, result, score)
+	updated, err := s.repo.UpdateSubmissionStatus(ctx, submissionID, result, score)
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	if s.terminalHook != nil {
+		judgedAt := result.JudgedAt
+		if judgedAt.IsZero() {
+			judgedAt = s.now()
+		}
+		if err := s.terminalHook.AfterSubmissionTerminal(ctx, TerminalSubmission{
+			SubmissionID: updated.ID,
+			UserID:       updated.UserID,
+			ProblemID:    updated.ProblemID,
+			ContestID:    updated.ContestID,
+			Status:       updated.Status,
+			SubmittedAt:  updated.SubmittedAt,
+			JudgedAt:     judgedAt,
+		}); err != nil {
+			return updated, err
+		}
+	}
+	return updated, nil
 }
 
 func (s *Service) CompleteRun(ctx context.Context, runID int64, result judge.Result) (RunRecord, error) {

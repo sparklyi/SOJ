@@ -77,23 +77,48 @@ func (q *Queries) ArchiveContest(ctx context.Context, id int64) (Contest, error)
 
 const countContests = `-- name: CountContests :one
 SELECT count(*)::bigint
-FROM contests
-WHERE ($1::text IS NULL OR status = $1::text)
-  AND ($2::text IS NULL OR visibility = $2::text)
+FROM contests c
+WHERE ($1::text IS NULL OR c.status = $1::text)
+  AND ($2::text IS NULL OR c.visibility = $2::text)
   AND (
       $3::text IS NULL
-      OR title ILIKE '%' || $3::text || '%'
+      OR c.title ILIKE '%' || $3::text || '%'
+  )
+  AND (
+      $4::boolean
+      OR c.visibility = 'public'
+      OR (
+          $5::bigint IS NOT NULL
+          AND (
+              c.owner_user_id = $5::bigint
+              OR EXISTS (
+                  SELECT 1
+                  FROM contest_registrations cr
+                  WHERE cr.contest_id = c.id
+                    AND cr.user_id = $5::bigint
+                    AND cr.status = 'active'
+              )
+          )
+      )
   )
 `
 
 type CountContestsParams struct {
-	Status     pgtype.Text `db:"status" json:"status"`
-	Visibility pgtype.Text `db:"visibility" json:"visibility"`
-	Keyword    pgtype.Text `db:"keyword" json:"keyword"`
+	Status          pgtype.Text `db:"status" json:"status"`
+	Visibility      pgtype.Text `db:"visibility" json:"visibility"`
+	Keyword         pgtype.Text `db:"keyword" json:"keyword"`
+	IncludePrivate  bool        `db:"include_private" json:"include_private"`
+	VisibleToUserID pgtype.Int8 `db:"visible_to_user_id" json:"visible_to_user_id"`
 }
 
 func (q *Queries) CountContests(ctx context.Context, arg CountContestsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countContests, arg.Status, arg.Visibility, arg.Keyword)
+	row := q.db.QueryRow(ctx, countContests,
+		arg.Status,
+		arg.Visibility,
+		arg.Keyword,
+		arg.IncludePrivate,
+		arg.VisibleToUserID,
+	)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -228,6 +253,16 @@ func (q *Queries) CreateContestScoreSnapshot(ctx context.Context, arg CreateCont
 		&i.GeneratedAt,
 	)
 	return i, err
+}
+
+const deleteContestProblems = `-- name: DeleteContestProblems :exec
+DELETE FROM contest_problems
+WHERE contest_id = $1
+`
+
+func (q *Queries) DeleteContestProblems(ctx context.Context, contestID int64) error {
+	_, err := q.db.Exec(ctx, deleteContestProblems, contestID)
+	return err
 }
 
 const getContestByID = `-- name: GetContestByID :one
@@ -421,25 +456,91 @@ func (q *Queries) ListContestRegistrations(ctx context.Context, arg ListContestR
 	return items, nil
 }
 
+const listContestTerminalSubmissions = `-- name: ListContestTerminalSubmissions :many
+SELECT id, user_id, problem_id, contest_id, status, submitted_at, judged_at
+FROM submissions
+WHERE contest_id = $1::bigint
+  AND judged_at IS NOT NULL
+  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+ORDER BY judged_at, id
+`
+
+type ListContestTerminalSubmissionsRow struct {
+	ID          int64              `db:"id" json:"id"`
+	UserID      int64              `db:"user_id" json:"user_id"`
+	ProblemID   int64              `db:"problem_id" json:"problem_id"`
+	ContestID   pgtype.Int8        `db:"contest_id" json:"contest_id"`
+	Status      string             `db:"status" json:"status"`
+	SubmittedAt pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
+	JudgedAt    pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
+}
+
+func (q *Queries) ListContestTerminalSubmissions(ctx context.Context, dollar_1 int64) ([]ListContestTerminalSubmissionsRow, error) {
+	rows, err := q.db.Query(ctx, listContestTerminalSubmissions, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListContestTerminalSubmissionsRow
+	for rows.Next() {
+		var i ListContestTerminalSubmissionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ProblemID,
+			&i.ContestID,
+			&i.Status,
+			&i.SubmittedAt,
+			&i.JudgedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listContests = `-- name: ListContests :many
-SELECT id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, created_at, updated_at
-FROM contests
-WHERE ($1::text IS NULL OR status = $1::text)
-  AND ($2::text IS NULL OR visibility = $2::text)
+SELECT c.id, c.owner_user_id, c.title, c.description, c.visibility, c.status, c.start_at, c.end_at, c.freeze_at, c.invite_code_hash, c.created_at, c.updated_at
+FROM contests c
+WHERE ($1::text IS NULL OR c.status = $1::text)
+  AND ($2::text IS NULL OR c.visibility = $2::text)
   AND (
       $3::text IS NULL
-      OR title ILIKE '%' || $3::text || '%'
+      OR c.title ILIKE '%' || $3::text || '%'
   )
-ORDER BY start_at DESC, id DESC
-LIMIT $5 OFFSET $4
+  AND (
+      $4::boolean
+      OR c.visibility = 'public'
+      OR (
+          $5::bigint IS NOT NULL
+          AND (
+              c.owner_user_id = $5::bigint
+              OR EXISTS (
+                  SELECT 1
+                  FROM contest_registrations cr
+                  WHERE cr.contest_id = c.id
+                    AND cr.user_id = $5::bigint
+                    AND cr.status = 'active'
+              )
+          )
+      )
+  )
+ORDER BY c.start_at DESC, c.id DESC
+LIMIT $7 OFFSET $6
 `
 
 type ListContestsParams struct {
-	Status     pgtype.Text `db:"status" json:"status"`
-	Visibility pgtype.Text `db:"visibility" json:"visibility"`
-	Keyword    pgtype.Text `db:"keyword" json:"keyword"`
-	Offset     int32       `db:"offset" json:"offset"`
-	Limit      int32       `db:"limit" json:"limit"`
+	Status          pgtype.Text `db:"status" json:"status"`
+	Visibility      pgtype.Text `db:"visibility" json:"visibility"`
+	Keyword         pgtype.Text `db:"keyword" json:"keyword"`
+	IncludePrivate  bool        `db:"include_private" json:"include_private"`
+	VisibleToUserID pgtype.Int8 `db:"visible_to_user_id" json:"visible_to_user_id"`
+	Offset          int32       `db:"offset" json:"offset"`
+	Limit           int32       `db:"limit" json:"limit"`
 }
 
 func (q *Queries) ListContests(ctx context.Context, arg ListContestsParams) ([]Contest, error) {
@@ -447,6 +548,8 @@ func (q *Queries) ListContests(ctx context.Context, arg ListContestsParams) ([]C
 		arg.Status,
 		arg.Visibility,
 		arg.Keyword,
+		arg.IncludePrivate,
+		arg.VisibleToUserID,
 		arg.Offset,
 		arg.Limit,
 	)

@@ -9,8 +9,8 @@ import (
 
 	"SOJ/internal/auth"
 	"SOJ/internal/config"
+	"SOJ/internal/contest"
 	"SOJ/internal/httpapi"
-	"SOJ/internal/judge"
 	"SOJ/internal/observability"
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
@@ -63,6 +63,8 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	userService := user.NewService(userRepo, jwtManager, user.WithTokenTTLs(cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL))
 	problemRepo := problem.NewPostgresRepository(pool)
 	problemService := problem.NewService(problemRepo, objectStorage)
+	contestRepo := contest.NewPostgresRepository(pool)
+	contestService := contest.NewService(contestRepo)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
 	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStorage)
 	submissionService := submission.NewService(submission.ServiceOptions{
@@ -70,7 +72,9 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		ProblemReader:    problemService,
 		TestcaseResolver: testcaseResolver,
 		SourceStore:      submission.NewObjectSourceStore(objectStorage),
-		Judge:            judge.NewJudge0Client(cfg.Judge.Endpoint, &http.Client{Timeout: cfg.Judge.Timeout}, ""),
+		Judge:            newJudgeEngine(cfg.Judge),
+		ContestPolicy:    contestService,
+		TerminalHook:     contestService,
 	})
 
 	middleware := httpapi.DefaultMiddlewareSet()
@@ -81,6 +85,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		Modules: []httpapi.Module{
 			user.NewModule(userService),
 			problem.NewModule(problemService),
+			contest.NewModule(contestService),
 			submission.NewModule(submission.NewHandler(submissionService)),
 		},
 	})
