@@ -10,11 +10,13 @@ import (
 	"SOJ/internal/auth"
 	"SOJ/internal/config"
 	"SOJ/internal/httpapi"
+	"SOJ/internal/judge"
 	"SOJ/internal/observability"
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
 	"SOJ/internal/problem"
 	"SOJ/internal/storage"
+	"SOJ/internal/submission"
 	"SOJ/internal/user"
 
 	"github.com/gin-gonic/gin"
@@ -61,6 +63,15 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	userService := user.NewService(userRepo, jwtManager, user.WithTokenTTLs(cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL))
 	problemRepo := problem.NewPostgresRepository(pool)
 	problemService := problem.NewService(problemRepo, objectStorage)
+	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
+	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStorage)
+	submissionService := submission.NewService(submission.ServiceOptions{
+		Repository:       submissionRepo,
+		ProblemReader:    problemService,
+		TestcaseResolver: testcaseResolver,
+		SourceStore:      submission.NewObjectSourceStore(objectStorage),
+		Judge:            judge.NewJudge0Client(cfg.Judge.Endpoint, &http.Client{Timeout: cfg.Judge.Timeout}, ""),
+	})
 
 	middleware := httpapi.DefaultMiddlewareSet()
 	middleware.Auth = actorMiddleware(jwtManager)
@@ -70,6 +81,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		Modules: []httpapi.Module{
 			user.NewModule(userService),
 			problem.NewModule(problemService),
+			submission.NewModule(submission.NewHandler(submissionService)),
 		},
 	})
 	logger.InfoContext(ctx, "starting soj api", "addr", cfg.HTTP.Addr)
