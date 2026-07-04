@@ -1,0 +1,26 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /src
+RUN apk add --no-cache ca-certificates git
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG COMMAND=soj-api
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/${COMMAND} ./cmd/${COMMAND}
+
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates tzdata
+WORKDIR /app
+
+ARG COMMAND=soj-api
+COPY --from=builder /out/${COMMAND} /app/soj
+COPY internal/migrations /app/internal/migrations
+
+ENV SOJ_MIGRATIONS_DIR=/app/internal/migrations
+EXPOSE 8080 8081
+
+ENTRYPOINT ["/app/soj"]
