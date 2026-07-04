@@ -39,6 +39,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 
 	logger := observability.NewLogger(cfg.Log.Level, stdout)
+	metrics := observability.NewMetrics("soj-api")
 
 	pool, err := postgres.OpenPool(ctx, postgres.PoolConfig{DSN: cfg.Database.DSN})
 	if err != nil {
@@ -83,6 +84,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	router := httpapi.NewRouter(httpapi.RouterOptions{
 		Middleware: middleware,
 		ReadyCheck: pool.Ping,
+		Metrics:    metrics,
 		Modules: []httpapi.Module{
 			user.NewModule(userService),
 			problem.NewModule(problemService),

@@ -46,6 +46,19 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
+func RecordHTTPMetrics(metrics HTTPMetrics) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		c.Next()
+
+		route := c.FullPath()
+		if route == "" {
+			route = "unmatched"
+		}
+		metrics.ObserveHTTPRequest(c.Request.Method, route, c.Writer.Status(), time.Since(started))
+	}
+}
+
 func noopMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
