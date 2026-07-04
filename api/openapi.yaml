@@ -881,6 +881,7 @@ components:
             - auth.refresh_token_revoked
             - user.email_exists
             - problem.not_found
+            - problem.slug_conflict
             - problem.not_publishable
             - problem.testcase_not_ready
             - testcase.invalid_archive

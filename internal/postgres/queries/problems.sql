@@ -16,27 +16,60 @@ INSERT INTO problems (
 RETURNING *;
 
 -- name: GetProblemByID :one
-SELECT *
-FROM problems
-WHERE id = $1;
+SELECT
+    p.*,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE p.id = $1;
 
 -- name: GetProblemBySlug :one
-SELECT *
-FROM problems
-WHERE slug = $1;
+SELECT
+    p.*,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE p.slug = $1;
 
 -- name: ListProblems :many
-SELECT *
-FROM problems
-WHERE (sqlc.narg('difficulty')::text IS NULL OR difficulty = sqlc.narg('difficulty')::text)
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
-  AND (sqlc.narg('visibility')::text IS NULL OR visibility = sqlc.narg('visibility')::text)
+SELECT
+    p.*,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE (sqlc.narg('difficulty')::text IS NULL OR p.difficulty = sqlc.narg('difficulty')::text)
+  AND (sqlc.narg('status')::text IS NULL OR p.status = sqlc.narg('status')::text)
+  AND (sqlc.narg('visibility')::text IS NULL OR p.visibility = sqlc.narg('visibility')::text)
+  AND (
+      sqlc.narg('tag')::text IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM problem_tag_links ptl
+          JOIN problem_tags pt ON pt.id = ptl.tag_id
+          WHERE ptl.problem_id = p.id
+            AND pt.slug = sqlc.narg('tag')::text
+      )
+  )
   AND (
       sqlc.narg('keyword')::text IS NULL
-      OR title ILIKE '%' || sqlc.narg('keyword')::text || '%'
-      OR slug ILIKE '%' || sqlc.narg('keyword')::text || '%'
+      OR p.title ILIKE '%' || sqlc.narg('keyword')::text || '%'
+      OR p.slug ILIKE '%' || sqlc.narg('keyword')::text || '%'
   )
-ORDER BY created_at DESC, id DESC
+  AND (
+      sqlc.arg('include_all')::boolean
+      OR (p.status = 'published' AND p.visibility = 'public')
+      OR (sqlc.arg('viewer_user_id')::bigint > 0 AND p.owner_user_id = sqlc.arg('viewer_user_id')::bigint)
+  )
+ORDER BY p.created_at DESC, p.id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
 -- name: CountProblems :one
@@ -46,9 +79,24 @@ WHERE (sqlc.narg('difficulty')::text IS NULL OR difficulty = sqlc.narg('difficul
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
   AND (sqlc.narg('visibility')::text IS NULL OR visibility = sqlc.narg('visibility')::text)
   AND (
+      sqlc.narg('tag')::text IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM problem_tag_links ptl
+          JOIN problem_tags pt ON pt.id = ptl.tag_id
+          WHERE ptl.problem_id = problems.id
+            AND pt.slug = sqlc.narg('tag')::text
+      )
+  )
+  AND (
       sqlc.narg('keyword')::text IS NULL
       OR title ILIKE '%' || sqlc.narg('keyword')::text || '%'
       OR slug ILIKE '%' || sqlc.narg('keyword')::text || '%'
+  )
+  AND (
+      sqlc.arg('include_all')::boolean
+      OR (status = 'published' AND visibility = 'public')
+      OR (sqlc.arg('viewer_user_id')::bigint > 0 AND owner_user_id = sqlc.arg('viewer_user_id')::bigint)
   );
 
 -- name: UpdateProblem :one
@@ -77,10 +125,16 @@ WHERE id = $1
 RETURNING *;
 
 -- name: LockProblemForUpdate :one
-SELECT *
-FROM problems
-WHERE id = $1
-FOR UPDATE;
+SELECT
+    p.*,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE p.id = $1
+FOR UPDATE OF p;
 
 -- name: CreateProblemStatement :one
 INSERT INTO problem_statements (
@@ -127,6 +181,10 @@ RETURNING *;
 INSERT INTO problem_tag_links (problem_id, tag_id)
 VALUES ($1, $2)
 ON CONFLICT DO NOTHING;
+
+-- name: ClearProblemTags :exec
+DELETE FROM problem_tag_links
+WHERE problem_id = $1;
 
 -- name: ListProblemTags :many
 SELECT pt.*

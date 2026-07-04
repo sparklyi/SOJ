@@ -42,6 +42,10 @@ func Conflict(code, message string) *Error {
 	return New(code, message, http.StatusConflict)
 }
 
+func Unprocessable(code, message string) *Error {
+	return New(code, message, http.StatusUnprocessableEntity)
+}
+
 func ServiceUnavailable(message string) *Error {
 	return New("service_unavailable", message, http.StatusServiceUnavailable)
 }

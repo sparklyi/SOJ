@@ -63,6 +63,16 @@ func (q *Queries) ClearCurrentTestcaseSet(ctx context.Context, problemID int64) 
 	return err
 }
 
+const clearProblemTags = `-- name: ClearProblemTags :exec
+DELETE FROM problem_tag_links
+WHERE problem_id = $1
+`
+
+func (q *Queries) ClearProblemTags(ctx context.Context, problemID int64) error {
+	_, err := q.db.Exec(ctx, clearProblemTags, problemID)
+	return err
+}
+
 const countProblems = `-- name: CountProblems :one
 SELECT count(*)::bigint
 FROM problems
@@ -71,16 +81,34 @@ WHERE ($1::text IS NULL OR difficulty = $1::text)
   AND ($3::text IS NULL OR visibility = $3::text)
   AND (
       $4::text IS NULL
-      OR title ILIKE '%' || $4::text || '%'
-      OR slug ILIKE '%' || $4::text || '%'
+      OR EXISTS (
+          SELECT 1
+          FROM problem_tag_links ptl
+          JOIN problem_tags pt ON pt.id = ptl.tag_id
+          WHERE ptl.problem_id = problems.id
+            AND pt.slug = $4::text
+      )
+  )
+  AND (
+      $5::text IS NULL
+      OR title ILIKE '%' || $5::text || '%'
+      OR slug ILIKE '%' || $5::text || '%'
+  )
+  AND (
+      $6::boolean
+      OR (status = 'published' AND visibility = 'public')
+      OR ($7::bigint > 0 AND owner_user_id = $7::bigint)
   )
 `
 
 type CountProblemsParams struct {
-	Difficulty pgtype.Text `db:"difficulty" json:"difficulty"`
-	Status     pgtype.Text `db:"status" json:"status"`
-	Visibility pgtype.Text `db:"visibility" json:"visibility"`
-	Keyword    pgtype.Text `db:"keyword" json:"keyword"`
+	Difficulty   pgtype.Text `db:"difficulty" json:"difficulty"`
+	Status       pgtype.Text `db:"status" json:"status"`
+	Visibility   pgtype.Text `db:"visibility" json:"visibility"`
+	Tag          pgtype.Text `db:"tag" json:"tag"`
+	Keyword      pgtype.Text `db:"keyword" json:"keyword"`
+	IncludeAll   bool        `db:"include_all" json:"include_all"`
+	ViewerUserID int64       `db:"viewer_user_id" json:"viewer_user_id"`
 }
 
 func (q *Queries) CountProblems(ctx context.Context, arg CountProblemsParams) (int64, error) {
@@ -88,7 +116,10 @@ func (q *Queries) CountProblems(ctx context.Context, arg CountProblemsParams) (i
 		arg.Difficulty,
 		arg.Status,
 		arg.Visibility,
+		arg.Tag,
 		arg.Keyword,
+		arg.IncludeAll,
+		arg.ViewerUserID,
 	)
 	var column_1 int64
 	err := row.Scan(&column_1)
@@ -348,14 +379,38 @@ func (q *Queries) GetCurrentReadyTestcaseSet(ctx context.Context, problemID int6
 }
 
 const getProblemByID = `-- name: GetProblemByID :one
-SELECT id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at
-FROM problems
-WHERE id = $1
+SELECT
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE p.id = $1
 `
 
-func (q *Queries) GetProblemByID(ctx context.Context, id int64) (Problem, error) {
+type GetProblemByIDRow struct {
+	ID                    int64              `db:"id" json:"id"`
+	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                 string             `db:"title" json:"title"`
+	Slug                  string             `db:"slug" json:"slug"`
+	Difficulty            string             `db:"difficulty" json:"difficulty"`
+	Visibility            string             `db:"visibility" json:"visibility"`
+	Status                string             `db:"status" json:"status"`
+	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
+	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+}
+
+func (q *Queries) GetProblemByID(ctx context.Context, id int64) (GetProblemByIDRow, error) {
 	row := q.db.QueryRow(ctx, getProblemByID, id)
-	var i Problem
+	var i GetProblemByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserID,
@@ -369,19 +424,46 @@ func (q *Queries) GetProblemByID(ctx context.Context, id int64) (Problem, error)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.CurrentStatementID,
+		&i.CurrentTestcaseSetID,
+		&i.CurrentTestcaseStatus,
 	)
 	return i, err
 }
 
 const getProblemBySlug = `-- name: GetProblemBySlug :one
-SELECT id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at
-FROM problems
-WHERE slug = $1
+SELECT
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE p.slug = $1
 `
 
-func (q *Queries) GetProblemBySlug(ctx context.Context, slug string) (Problem, error) {
+type GetProblemBySlugRow struct {
+	ID                    int64              `db:"id" json:"id"`
+	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                 string             `db:"title" json:"title"`
+	Slug                  string             `db:"slug" json:"slug"`
+	Difficulty            string             `db:"difficulty" json:"difficulty"`
+	Visibility            string             `db:"visibility" json:"visibility"`
+	Status                string             `db:"status" json:"status"`
+	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
+	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+}
+
+func (q *Queries) GetProblemBySlug(ctx context.Context, slug string) (GetProblemBySlugRow, error) {
 	row := q.db.QueryRow(ctx, getProblemBySlug, slug)
-	var i Problem
+	var i GetProblemBySlugRow
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserID,
@@ -395,6 +477,9 @@ func (q *Queries) GetProblemBySlug(ctx context.Context, slug string) (Problem, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.CurrentStatementID,
+		&i.CurrentTestcaseSetID,
+		&i.CurrentTestcaseStatus,
 	)
 	return i, err
 }
@@ -480,35 +565,80 @@ func (q *Queries) ListProblemTags(ctx context.Context, problemID int64) ([]Probl
 }
 
 const listProblems = `-- name: ListProblems :many
-SELECT id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at
-FROM problems
-WHERE ($1::text IS NULL OR difficulty = $1::text)
-  AND ($2::text IS NULL OR status = $2::text)
-  AND ($3::text IS NULL OR visibility = $3::text)
+SELECT
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE ($1::text IS NULL OR p.difficulty = $1::text)
+  AND ($2::text IS NULL OR p.status = $2::text)
+  AND ($3::text IS NULL OR p.visibility = $3::text)
   AND (
       $4::text IS NULL
-      OR title ILIKE '%' || $4::text || '%'
-      OR slug ILIKE '%' || $4::text || '%'
+      OR EXISTS (
+          SELECT 1
+          FROM problem_tag_links ptl
+          JOIN problem_tags pt ON pt.id = ptl.tag_id
+          WHERE ptl.problem_id = p.id
+            AND pt.slug = $4::text
+      )
   )
-ORDER BY created_at DESC, id DESC
-LIMIT $6 OFFSET $5
+  AND (
+      $5::text IS NULL
+      OR p.title ILIKE '%' || $5::text || '%'
+      OR p.slug ILIKE '%' || $5::text || '%'
+  )
+  AND (
+      $6::boolean
+      OR (p.status = 'published' AND p.visibility = 'public')
+      OR ($7::bigint > 0 AND p.owner_user_id = $7::bigint)
+  )
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT $9 OFFSET $8
 `
 
 type ListProblemsParams struct {
-	Difficulty pgtype.Text `db:"difficulty" json:"difficulty"`
-	Status     pgtype.Text `db:"status" json:"status"`
-	Visibility pgtype.Text `db:"visibility" json:"visibility"`
-	Keyword    pgtype.Text `db:"keyword" json:"keyword"`
-	Offset     int32       `db:"offset" json:"offset"`
-	Limit      int32       `db:"limit" json:"limit"`
+	Difficulty   pgtype.Text `db:"difficulty" json:"difficulty"`
+	Status       pgtype.Text `db:"status" json:"status"`
+	Visibility   pgtype.Text `db:"visibility" json:"visibility"`
+	Tag          pgtype.Text `db:"tag" json:"tag"`
+	Keyword      pgtype.Text `db:"keyword" json:"keyword"`
+	IncludeAll   bool        `db:"include_all" json:"include_all"`
+	ViewerUserID int64       `db:"viewer_user_id" json:"viewer_user_id"`
+	Offset       int32       `db:"offset" json:"offset"`
+	Limit        int32       `db:"limit" json:"limit"`
 }
 
-func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]Problem, error) {
+type ListProblemsRow struct {
+	ID                    int64              `db:"id" json:"id"`
+	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                 string             `db:"title" json:"title"`
+	Slug                  string             `db:"slug" json:"slug"`
+	Difficulty            string             `db:"difficulty" json:"difficulty"`
+	Visibility            string             `db:"visibility" json:"visibility"`
+	Status                string             `db:"status" json:"status"`
+	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
+	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+}
+
+func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]ListProblemsRow, error) {
 	rows, err := q.db.Query(ctx, listProblems,
 		arg.Difficulty,
 		arg.Status,
 		arg.Visibility,
+		arg.Tag,
 		arg.Keyword,
+		arg.IncludeAll,
+		arg.ViewerUserID,
 		arg.Offset,
 		arg.Limit,
 	)
@@ -516,9 +646,9 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]P
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Problem
+	var items []ListProblemsRow
 	for rows.Next() {
-		var i Problem
+		var i ListProblemsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OwnerUserID,
@@ -532,6 +662,9 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]P
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PublishedAt,
+			&i.CurrentStatementID,
+			&i.CurrentTestcaseSetID,
+			&i.CurrentTestcaseStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -544,15 +677,39 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]P
 }
 
 const lockProblemForUpdate = `-- name: LockProblemForUpdate :one
-SELECT id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at
-FROM problems
-WHERE id = $1
-FOR UPDATE
+SELECT
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE p.id = $1
+FOR UPDATE OF p
 `
 
-func (q *Queries) LockProblemForUpdate(ctx context.Context, id int64) (Problem, error) {
+type LockProblemForUpdateRow struct {
+	ID                    int64              `db:"id" json:"id"`
+	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                 string             `db:"title" json:"title"`
+	Slug                  string             `db:"slug" json:"slug"`
+	Difficulty            string             `db:"difficulty" json:"difficulty"`
+	Visibility            string             `db:"visibility" json:"visibility"`
+	Status                string             `db:"status" json:"status"`
+	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
+	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+}
+
+func (q *Queries) LockProblemForUpdate(ctx context.Context, id int64) (LockProblemForUpdateRow, error) {
 	row := q.db.QueryRow(ctx, lockProblemForUpdate, id)
-	var i Problem
+	var i LockProblemForUpdateRow
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserID,
@@ -566,6 +723,9 @@ func (q *Queries) LockProblemForUpdate(ctx context.Context, id int64) (Problem, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.CurrentStatementID,
+		&i.CurrentTestcaseSetID,
+		&i.CurrentTestcaseStatus,
 	)
 	return i, err
 }
