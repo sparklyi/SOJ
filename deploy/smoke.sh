@@ -23,6 +23,15 @@ wait_http() {
   curl -fsS "$url" >/dev/null
 }
 
+require_metric() {
+  local url="$1"
+  local metric="$2"
+  if ! curl -fsS "$url/metrics" | grep -q "$metric"; then
+    echo "metric $metric was not found at $url/metrics" >&2
+    exit 1
+  fi
+}
+
 api_json() {
   local method="$1"
   local path="$2"
@@ -40,12 +49,14 @@ api_json() {
 
 need curl
 need docker
+need grep
 need jq
 need shasum
 need zip
 
 wait_http "$API_URL/readyz"
 wait_http "${WORKER_URL:-http://localhost:8081}/readyz"
+require_metric "$API_URL" "soj_http_requests_total"
 
 LANG_ID="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'fake' and engine_language_id = 'accepted' and enabled = true order by id limit 1;")"
 if [[ -z "$LANG_ID" ]]; then
@@ -114,6 +125,7 @@ if [[ "$CONTEST_STATUS" != "accepted" ]]; then
   echo "contest submission $CONTEST_SUBMISSION_ID ended with status $CONTEST_STATUS" >&2
   exit 1
 fi
+require_metric "${WORKER_URL:-http://localhost:8081}" "soj_worker_judge_tasks_total"
 
 SCOREBOARD="$(api_json GET "/api/v1/contests/$CONTEST_ID/scoreboard?view=live")"
 ACCEPTED_COUNT="$(jq -r '.data.rows[0].accepted_count' <<<"$SCOREBOARD")"

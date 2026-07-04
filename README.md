@@ -13,7 +13,8 @@ The v2 backend currently includes:
 - Submissions, self-runs, judge tasks, Redis Stream worker, retry/dead-letter handling, and reconciliation loops.
 - ACM contests, registration, contest submission policy, and live/frozen/final scoreboard responses.
 - Versioned PostgreSQL migrations and an OpenAPI contract for frontend integration.
-- Local Docker Compose deployment with PostgreSQL, Redis, MinIO, API, worker, migration, seed, and smoke test flow.
+- Prometheus metrics for API requests and judge worker task processing.
+- Local Docker Compose deployment with PostgreSQL, Redis, MinIO, API, worker, migration, seed, Prometheus, and smoke test flow.
 
 Known follow-up: frozen/final scoreboard snapshots are read when present and otherwise generated synchronously from current data. Automated snapshot generation is planned as a later worker responsibility.
 
@@ -32,7 +33,7 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 ./deploy/smoke.sh
 ```
 
-The API listens on `http://localhost:8080`; the worker health endpoint listens on `http://localhost:8081`.
+The API listens on `http://localhost:8080`; the worker health endpoint listens on `http://localhost:8081`; Prometheus listens on `http://localhost:9090`.
 
 Local Docker uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and seeds one enabled fake language so the submit/worker flow can be tested without a privileged judge sandbox.
 
@@ -72,6 +73,7 @@ internal/contest        ACM contests, registrations, scoreboards
 internal/postgres       SQL queries and generated sqlc code
 internal/queue          Redis Stream task queue
 internal/storage        S3-compatible object storage
+internal/observability  Logging, health checks, and Prometheus metrics
 ```
 
 ## Architecture
@@ -84,6 +86,7 @@ Runtime dependencies:
 - Redis: judge task stream and consumer group coordination.
 - MinIO/S3: source code, testcase archives, and future large artifacts.
 - JudgeEngine: abstraction for fake local judge, Judge0, or a future runner.
+- Prometheus: local metrics scraping for API and worker processes.
 
 PostgreSQL remains the source of truth for submissions, runs, judge tasks, and contest results. Redis Stream messages are delivery hints and workers must tolerate duplicate deliveries.
 

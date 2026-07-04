@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,6 +17,14 @@ type testModule struct{}
 func (testModule) RegisterRoutes(group *gin.RouterGroup) {
 	group.GET("/module-ping", func(c *gin.Context) {
 		OK(c, gin.H{"pong": true})
+	})
+}
+
+type panicModule struct{}
+
+func (panicModule) RegisterRoutes(group *gin.RouterGroup) {
+	group.GET("/panic", func(c *gin.Context) {
+		panic("boom")
 	})
 }
 
@@ -100,4 +109,78 @@ func TestNewRouterRegistersModules(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestNewRouterRecordsHTTPMetricsAndExposesMetrics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	metrics := &recordingHTTPMetrics{}
+	router := NewRouter(RouterOptions{Metrics: metrics})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	if len(metrics.requests) != 1 {
+		t.Fatalf("recorded requests = %d, want 1", len(metrics.requests))
+	}
+	got := metrics.requests[0]
+	if got.method != http.MethodGet || got.route != "/healthz" || got.status != http.StatusOK || got.duration <= 0 {
+		t.Fatalf("recorded metric = %+v", got)
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "metrics ok" {
+		t.Fatalf("metrics body = %q, want metrics ok", rec.Body.String())
+	}
+}
+
+func TestHTTPMetricsRecordsRecoveredPanics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	metrics := &recordingHTTPMetrics{}
+	router := NewRouter(RouterOptions{
+		Metrics: metrics,
+		Modules: []Module{panicModule{}},
+	})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/panic", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if len(metrics.requests) != 1 {
+		t.Fatalf("recorded requests = %d, want 1", len(metrics.requests))
+	}
+	got := metrics.requests[0]
+	if got.method != http.MethodGet || got.route != "/api/v1/panic" || got.status != http.StatusInternalServerError {
+		t.Fatalf("recorded metric = %+v", got)
+	}
+}
+
+type recordedHTTPRequest struct {
+	method   string
+	route    string
+	status   int
+	duration time.Duration
+}
+
+type recordingHTTPMetrics struct {
+	requests []recordedHTTPRequest
+}
+
+func (m *recordingHTTPMetrics) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("metrics ok"))
+	})
+}
+
+func (m *recordingHTTPMetrics) ObserveHTTPRequest(method, route string, status int, duration time.Duration) {
+	m.requests = append(m.requests, recordedHTTPRequest{method: method, route: route, status: status, duration: duration})
 }
