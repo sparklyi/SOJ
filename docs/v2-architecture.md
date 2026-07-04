@@ -27,3 +27,7 @@ Gin is kept at the transport boundary. Business services receive `context.Contex
 ## Deployment Boundary
 
 The supported local deployment is `deploy/docker-compose.yaml`. It runs migration and seed as one-shot jobs before API/worker startup, then validates the core workflow through `deploy/smoke.sh`.
+
+## Legacy Boundary
+
+The v1 implementation is archived on the `archive/v1` branch. Main keeps only the v2 backend path and the old root Dockerfile, root Compose file, MySQL/Gorm/Mongo/RabbitMQ modules, and v1 HTTP wiring are removed from the active tree.
