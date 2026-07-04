@@ -5,9 +5,7 @@ import (
 	"flag"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"SOJ/internal/config"
@@ -144,19 +142,13 @@ func runReconcilerLoop(ctx context.Context, reconciler *submission.Reconciler) e
 }
 
 func newWorkerObjectStorage(cfg config.StorageConfig) (storage.ObjectStorage, error) {
-	endpoint := strings.TrimSpace(cfg.Endpoint)
-	secure := false
-	if parsed, err := url.Parse(endpoint); err == nil && parsed.Host != "" {
-		secure = parsed.Scheme == "https"
-		endpoint = parsed.Host
-	}
 	return storage.NewS3Storage(storage.S3Options{
-		Endpoint:        endpoint,
+		Endpoint:        cfg.Endpoint,
 		AccessKeyID:     cfg.AccessKey,
 		SecretAccessKey: cfg.SecretKey,
 		Bucket:          cfg.Bucket,
 		Region:          cfg.Region,
-		Secure:          secure,
+		PathStyle:       cfg.UsePathStyle,
 	})
 }
 

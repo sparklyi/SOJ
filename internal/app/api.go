@@ -52,6 +52,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		SecretAccessKey: cfg.Storage.SecretKey,
 		Bucket:          cfg.Storage.Bucket,
 		Region:          cfg.Storage.Region,
+		PathStyle:       cfg.Storage.UsePathStyle,
 	})
 	if err != nil {
 		return err

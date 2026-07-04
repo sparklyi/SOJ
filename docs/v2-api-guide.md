@@ -95,6 +95,12 @@ Contests:
 - `POST /api/v1/contests/{id}/registrations`
 - `GET /api/v1/contests/{id}/scoreboard`
 
+Contest create/update notes:
+
+- `problems` is an ordered array of `{ "problem_id": 1, "alias": "A" }`; `sort_order` is generated from array order and returned in responses.
+- `invite_code` is required when creating a private contest or switching a contest to private without an existing invite code.
+- Private contest list/detail access is limited to owner, admin/root, or active registrants.
+
 Admin:
 
 - `GET /api/v1/admin/users`

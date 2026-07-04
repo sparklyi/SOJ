@@ -1,0 +1,187 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: soj
+      POSTGRES_PASSWORD: soj
+      POSTGRES_DB: soj
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U soj -d soj"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+    volumes:
+      - soj-postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "6379:6379"
+    volumes:
+      - soj-redis-data:/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 minioadmin minioadmin >/dev/null 2>&1 && mc ready local >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - soj-minio-data:/data
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 minioadmin minioadmin; do
+          sleep 1
+        done
+        mc mb --ignore-existing local/soj
+
+  seed:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: soj
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        psql -h postgres -U soj -d soj -v ON_ERROR_STOP=1 <<'SQL'
+        INSERT INTO languages (
+          engine,
+          engine_language_id,
+          name,
+          default_time_limit_ms,
+          default_memory_limit_kb,
+          enabled
+        ) VALUES (
+          'fake',
+          'accepted',
+          'Fake Accepted',
+          1000,
+          65536,
+          true
+        )
+        ON CONFLICT (engine, engine_language_id) DO UPDATE
+        SET enabled = true,
+            default_time_limit_ms = EXCLUDED.default_time_limit_ms,
+            default_memory_limit_kb = EXCLUDED.default_memory_limit_kb,
+            updated_at = now();
+        SQL
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile.v2
+      args:
+        COMMAND: soj-migrate
+    environment:
+      SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
+      SOJ_MIGRATIONS_DIR: /app/internal/migrations
+    command: ["up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile.v2
+      args:
+        COMMAND: soj-api
+    environment:
+      SOJ_ENV: docker
+      SOJ_HTTP_ADDR: ":8080"
+      SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
+      SOJ_REDIS_ADDR: redis:6379
+      SOJ_STORAGE_ENDPOINT: http://minio:9000
+      SOJ_STORAGE_BUCKET: soj
+      SOJ_STORAGE_ACCESS_KEY: minioadmin
+      SOJ_STORAGE_SECRET_KEY: minioadmin
+      SOJ_STORAGE_PATH_STYLE: "true"
+      SOJ_JWT_SECRET: local-dev-secret-change-me
+      SOJ_JUDGE_ENDPOINT: fake://accepted
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readyz >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "8080:8080"
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.v2
+      args:
+        COMMAND: soj-worker
+    environment:
+      SOJ_ENV: docker
+      SOJ_WORKER_HEALTH_ADDR: ":8081"
+      SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
+      SOJ_REDIS_ADDR: redis:6379
+      SOJ_STORAGE_ENDPOINT: http://minio:9000
+      SOJ_STORAGE_BUCKET: soj
+      SOJ_STORAGE_ACCESS_KEY: minioadmin
+      SOJ_STORAGE_SECRET_KEY: minioadmin
+      SOJ_STORAGE_PATH_STYLE: "true"
+      SOJ_JWT_SECRET: local-dev-secret-change-me
+      SOJ_JUDGE_ENDPOINT: fake://accepted
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/readyz >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "8081:8081"
+
+volumes:
+  soj-postgres-data:
+  soj-redis-data:
+  soj-minio-data:

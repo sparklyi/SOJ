@@ -3,6 +3,7 @@ package app
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"SOJ/internal/config"
 	"SOJ/internal/judge"
@@ -19,6 +20,13 @@ func newJudgeEngine(cfg config.JudgeConfig) judge.JudgeEngine {
 func fakeJudgeEngine(endpoint string) judge.JudgeEngine {
 	engine := judge.NewFakeEngine()
 	if strings.EqualFold(strings.TrimPrefix(endpoint, "fake://"), "accepted") {
+		engine.SetLanguages([]judge.Language{{
+			ID:        71,
+			Name:      "Fake Accepted",
+			Enabled:   true,
+			TimeLimit: time.Second,
+			MemoryKB:  65536,
+		}})
 		return engine
 	}
 	engine.SetError(errUnsupportedFakeJudge(endpoint))

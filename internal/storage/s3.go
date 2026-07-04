@@ -19,6 +19,7 @@ type S3Options struct {
 	Bucket          string
 	Region          string
 	Secure          bool
+	PathStyle       bool
 }
 
 type S3Storage struct {
@@ -39,11 +40,15 @@ func NewS3Storage(opts S3Options) (*S3Storage, error) {
 		return nil, err
 	}
 
-	client, err := minio.New(endpoint, &minio.Options{
+	options := &minio.Options{
 		Creds:  credentials.NewStaticV4(opts.AccessKeyID, opts.SecretAccessKey, opts.SessionToken),
 		Secure: secure,
 		Region: opts.Region,
-	})
+	}
+	if opts.PathStyle {
+		options.BucketLookup = minio.BucketLookupPath
+	}
+	client, err := minio.New(endpoint, options)
 	if err != nil {
 		return nil, err
 	}

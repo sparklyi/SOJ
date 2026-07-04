@@ -1,0 +1,8 @@
+.git
+.idea
+logs
+*.out
+*.test
+.env
+tmp
+deploy/.env
