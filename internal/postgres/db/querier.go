@@ -38,6 +38,7 @@ type Querier interface {
 	CreateTestcaseSet(ctx context.Context, arg CreateTestcaseSetParams) (TestcaseSet, error)
 	// Owner: WP2 Auth/User
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteContestProblems(ctx context.Context, contestID int64) error
 	GetArtifactByID(ctx context.Context, id int64) (Artifact, error)
 	GetContestByID(ctx context.Context, id int64) (Contest, error)
 	GetContestRegistration(ctx context.Context, arg GetContestRegistrationParams) (ContestRegistration, error)
@@ -61,6 +62,7 @@ type Querier interface {
 	ListContestProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error)
 	ListContestProblems(ctx context.Context, contestID int64) ([]ContestProblem, error)
 	ListContestRegistrations(ctx context.Context, arg ListContestRegistrationsParams) ([]ContestRegistration, error)
+	ListContestTerminalSubmissions(ctx context.Context, dollar_1 int64) ([]ListContestTerminalSubmissionsRow, error)
 	ListContests(ctx context.Context, arg ListContestsParams) ([]Contest, error)
 	ListLanguages(ctx context.Context, arg ListLanguagesParams) ([]Language, error)
 	ListProblemTags(ctx context.Context, problemID int64) ([]ProblemTag, error)
