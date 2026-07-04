@@ -1,86 +1,122 @@
-# SOJ - 看似没有特点，实则确实没有特点的开源OJ系统:)
+# SOJ
 
-## deepwiki 快速了解项目   
-https://deepwiki.com/sparklyi/SOJ
+SOJ is an open-source online judge system. The current active work is a v2 backend refactor that moves the project toward a smaller, clearer Go service with PostgreSQL as the source of truth, Redis Stream for judge task delivery, S3-compatible object storage, and a pluggable `JudgeEngine`.
 
-## v2 后端重构
+The old v1 code is still present for reference during migration. New backend development should target the v2 `cmd/`, `internal/`, `api/`, `docs/`, and `deploy/` paths.
 
-v2 后端正在按 `cmd/` 入口和聚焦的 `internal/` 模块重构。
+## Current Status
 
-- 设计文档：`docs/superpowers/specs/2026-07-04-soj-v2-refactor-design.md`
-- 实现计划：`docs/superpowers/plans/2026-07-05-soj-v2-refactor-implementation-plan.md`
-- API 契约：`api/openapi.yaml`
-- API 联调指南：`docs/v2-api-guide.md`
-- 架构说明：`docs/v2-architecture.md`
-- Docker 部署：`docs/v2-deploy.md`
-- Worker 运维：`docs/v2-worker.md`
+The v2 backend currently includes:
 
-本地 v2 Docker 入口：
+- User registration, login, refresh tokens, and admin user management.
+- Problem metadata, statements, tags, testcase archive upload, publish checks, and stats.
+- Submissions, self-runs, judge tasks, Redis Stream worker, retry/dead-letter handling, and reconciliation loops.
+- ACM contests, registration, contest submission policy, and live/frozen/final scoreboard responses.
+- Versioned PostgreSQL migrations and an OpenAPI contract for frontend integration.
+- Local Docker Compose deployment with PostgreSQL, Redis, MinIO, API, worker, migration, seed, and smoke test flow.
+
+Known follow-up: frozen/final scoreboard snapshots are read when present and otherwise generated synchronously from current data. Automated snapshot generation is planned as a later worker responsibility.
+
+## Quick Start
+
+Requirements:
+
+- Docker with Compose v2
+- `curl`, `jq`, `zip`, and `shasum` for the smoke test
+
+Start a clean local v2 stack:
 
 ```bash
+docker compose -f deploy/docker-compose.yaml down -v --remove-orphans
 docker compose -f deploy/docker-compose.yaml up --build -d
 ./deploy/smoke.sh
 ```
 
-旧 v1 入口和根目录 compose 文件暂保留作参考。新开发优先使用 v2 的 `Dockerfile.v2` 和 `deploy/docker-compose.yaml`。
+The API listens on `http://localhost:8080`; the worker health endpoint listens on `http://localhost:8081`.
 
-## 项目简介
-- SOJ是一款OJ系统!
-- 采取wire依赖注入解耦,采取经典三层架构(handle+service+repository)
-- 支持ACM模式, 支持比赛和封榜功能
-- 基于Judge0沙箱实现
+Local Docker uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and seeds one enabled fake language so the submit/worker flow can be tested without a privileged judge sandbox.
 
-## 技术栈
-- Golang
-- gin web框架
-- gorm ORM框架
-- wire 依赖注入
-- RabbitMQ 消息队列
-- MySQL 关系数据库
-- MongoDB 文档数据库
-- redis 缓存数据库
-- judge0 测评+沙箱 -> 正在尝试切换为codenire
-- 腾讯云COS 对象存储
-- Docker 容器化
+## Development
 
+Run the main checks:
 
-## 旧版部署流程
-
-以下内容属于 v1 历史部署方式，仅作迁移参考。
-
-### 克隆项目
-```shell
-git clone https://github.com/sparklyi/SOJ.git
-```
-
-### 更新配置
 ```bash
-cd SOJ
-vi config/config.yaml   # 更新代码配置(如ip 密码等)
-vi docker-compose.yaml  # 更新容器配置(如名称 密码等)
-vi judge0.conf          # 更新沙箱配置(内存限制等)
+go test ./...
+go vet ./...
+docker compose -f deploy/docker-compose.yaml config
 ```
 
-###  运行
-```shell
-cd SOJ
-docker build -t soj_server:1.0 .
-docker-compose up -d 
-docker run -d -p 8888:8888 --name soj_server soj_server:1.0
+Run only the Docker smoke test against an already running stack:
+
+```bash
+./deploy/smoke.sh
 ```
 
-## Contribute
-欢迎任何形式的贡献
+The v2 runtime is built and verified with Go 1.24.
 
+## Project Layout
+
+```text
+api/                    OpenAPI contract
+cmd/soj-api             HTTP API entrypoint
+cmd/soj-worker          Judge worker entrypoint
+cmd/soj-migrate         PostgreSQL migration entrypoint
+deploy/                 Docker Compose, env examples, smoke test
+docs/                   v2 architecture, API guide, worker and deploy docs
+internal/app            Runtime assembly for commands
+internal/auth           Actor, JWT, password, token primitives
+internal/user           Account and admin user use cases
+internal/problem        Problems, statements, tags, testcase sets
+internal/submission     Submissions, runs, judge tasks, worker logic
+internal/contest        ACM contests, registrations, scoreboards
+internal/postgres       SQL queries and generated sqlc code
+internal/queue          Redis Stream task queue
+internal/storage        S3-compatible object storage
+```
+
+## Architecture
+
+Gin is kept at the transport boundary. Business services receive `context.Context` and explicit `auth.Actor` values. Repositories use PostgreSQL through `sqlc`/`pgx`.
+
+Runtime dependencies:
+
+- PostgreSQL: primary relational data store.
+- Redis: judge task stream and consumer group coordination.
+- MinIO/S3: source code, testcase archives, and future large artifacts.
+- JudgeEngine: abstraction for fake local judge, Judge0, or a future runner.
+
+PostgreSQL remains the source of truth for submissions, runs, judge tasks, and contest results. Redis Stream messages are delivery hints and workers must tolerate duplicate deliveries.
+
+## API And Docs
+
+- API contract: `api/openapi.yaml`
+- API guide: `docs/v2-api-guide.md`
+- Architecture: `docs/v2-architecture.md`
+- Docker deployment: `docs/v2-deploy.md`
+- Worker operations: `docs/v2-worker.md`
+- Refactor design: `docs/superpowers/specs/2026-07-04-soj-v2-refactor-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-07-05-soj-v2-refactor-implementation-plan.md`
+
+## Deployment Notes
+
+The supported local deployment is `deploy/docker-compose.yaml`.
+
+Production deployment should replace local defaults before exposure:
+
+- Use a real `SOJ_JWT_SECRET`.
+- Use production PostgreSQL, Redis, and object storage credentials.
+- Replace `fake://accepted` with a real judge backend.
+- Do not reuse the local fake language seed as production language data.
+
+## Legacy Code
+
+Historical v1 code, root-level Docker files, and earlier integrations remain in the repository while the v2 migration is in progress. Treat them as reference material unless a task explicitly targets v1.
 
 ## License
-本项目使用[MIT](https://github.com/sparklyi/SOJ?tab=MIT-1-ov-file)许可
 
-## 联系方式
-- VX: sparkyi1026
-- Email: sparkyi@foxmail.com
+SOJ is released under the MIT License.
 
-## 分支介绍
-- judge0 分支已基本完成，使用judge0沙箱测评   
-- codrenire 正在转换为codenire沙箱   
-- dev和main分支目前维护judge0   
+## Contact
+
+- WeChat: `sparkyi1026`
+- Email: `sparkyi@foxmail.com`
