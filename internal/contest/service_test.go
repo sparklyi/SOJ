@@ -124,6 +124,9 @@ func TestFinalScoreboardFallsBackToProblemResultsWhenSnapshotMissing(t *testing.
 	if board.View != ScoreboardViewFinal || board.Rows[0].AcceptedCount != 1 || board.Rows[0].PenaltyMinutes != 40 {
 		t.Fatalf("board = %+v", board)
 	}
+	if board.Rows[0].Cells[0].Attempts != 0 {
+		t.Fatalf("accepted attempts = %d, want wrong attempts before accepted", board.Rows[0].Cells[0].Attempts)
+	}
 }
 
 func TestLiveScoreboardAfterFreezeRequiresOwnerOrAdmin(t *testing.T) {
@@ -277,6 +280,47 @@ func TestContestCRUDRegistrationAndPermissions(t *testing.T) {
 	}
 	if repo.contests[created.ID].Status != StatusArchived {
 		t.Fatalf("status = %s, want archived", repo.contests[created.ID].Status)
+	}
+}
+
+func TestPrivateContestRequiresInviteCode(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	repo := newMemoryRepository()
+	service := NewService(repo)
+	owner := auth.Actor{UserID: 10, Role: auth.RoleUser}
+
+	_, err := service.CreateContest(context.Background(), owner, ContestInput{
+		Title:      "Locked",
+		Visibility: VisibilityPrivate,
+		Status:     StatusDraft,
+		StartAt:    start,
+		EndAt:      start.Add(time.Hour),
+		FreezeAt:   start.Add(30 * time.Minute),
+	})
+	if codeOf(err) != "contest.invite_code_required" {
+		t.Fatalf("private create error = %v, want contest.invite_code_required", err)
+	}
+
+	created, err := service.CreateContest(context.Background(), owner, ContestInput{
+		Title:      "Public",
+		Visibility: VisibilityPublic,
+		Status:     StatusDraft,
+		StartAt:    start,
+		EndAt:      start.Add(time.Hour),
+		FreezeAt:   start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateContest returned error: %v", err)
+	}
+	_, err = service.UpdateContest(context.Background(), owner, created.ID, ContestUpdateInput{Visibility: stringPtr(VisibilityPrivate)})
+	if codeOf(err) != "contest.invite_code_required" {
+		t.Fatalf("private update error = %v, want contest.invite_code_required", err)
+	}
+
+	repo.contests[99] = ContestRecord{ID: 99, OwnerUserID: 10, Visibility: VisibilityPrivate, Status: StatusPublished, StartAt: start, EndAt: start.Add(time.Hour), FreezeAt: start.Add(30 * time.Minute)}
+	_, err = service.Register(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 99, RegistrationInput{})
+	if codeOf(err) != "contest.invite_code_required" {
+		t.Fatalf("register without stored invite error = %v, want contest.invite_code_required", err)
 	}
 }
 

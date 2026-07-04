@@ -32,10 +32,10 @@ type ScoreboardCell struct {
 	ProblemID        int64      `json:"problem_id"`
 	Alias            string     `json:"alias"`
 	Status           string     `json:"status"`
-	Attempts         int32      `json:"attempts,omitempty"`
+	Attempts         int32      `json:"attempts"`
 	FrozenAttempts   int32      `json:"frozen_attempts,omitempty"`
 	AcceptedAt       *time.Time `json:"accepted_at,omitempty"`
-	PenaltyMinutes   int32      `json:"penalty_minutes,omitempty"`
+	PenaltyMinutes   int32      `json:"penalty_minutes"`
 	LastSubmissionID *int64     `json:"last_submission_id,omitempty"`
 }
 
@@ -147,6 +147,9 @@ func buildBoardFromResults(
 			cell := &rows[i].Cells[j]
 			cell.Status = result.Status
 			cell.Attempts = result.Attempts
+			if result.Status == CellAccepted && cell.Attempts > 0 {
+				cell.Attempts--
+			}
 			cell.AcceptedAt = result.AcceptedAt
 			cell.PenaltyMinutes = result.PenaltyMinutes
 			cell.LastSubmissionID = result.LastSubmissionID
