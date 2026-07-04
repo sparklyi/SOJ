@@ -1,0 +1,1359 @@
+openapi: 3.0.3
+info:
+  title: SOJ v2 API
+  version: 0.1.0
+  description: SOJ v2 REST contract baseline. All 2xx responses use the response envelope except 204 and explicitly empty 202 responses.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Authentication, token lifecycle, and current user profile.
+    x-owner: WP2 Auth/User
+  - name: Problems
+    description: Problem metadata, statements, testcase sets, and public stats.
+    x-owner: WP3 Problem
+  - name: Submissions
+    description: Formal submissions and judge-visible results.
+    x-owner: WP4 Submission/Run
+  - name: Runs
+    description: Custom stdin self-runs that do not affect official judging.
+    x-owner: WP4 Submission/Run
+  - name: Contests
+    description: ACM contests, registrations, and scoreboards.
+    x-owner: WP5 Contest
+  - name: Admin Users
+    description: Root-level user administration.
+    x-owner: WP2 Auth/User
+  - name: Admin Languages
+    description: Judge language synchronization and administration.
+    x-owner: WP4 Submission/Language
+paths:
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: Register a user
+      x-owner: WP2 Auth/User
+      x-auth: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Log in
+      x-owner: WP2 Auth/User
+      x-auth: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshAuthToken
+      summary: Refresh auth tokens
+      x-owner: WP2 Auth/User
+      x-auth: public-refresh-token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Token refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Log out
+      x-owner: WP2 Auth/User
+      x-auth: user
+      responses:
+        "204":
+          description: Logged out. Empty body.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Get current user
+      x-owner: WP2 Auth/User
+      x-auth: user
+      responses:
+        "200":
+          description: Current user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems:
+    get:
+      tags: [Problems]
+      operationId: listProblems
+      summary: List problems
+      x-owner: WP3 Problem
+      x-auth: public
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: difficulty
+          in: query
+          schema: { $ref: "#/components/schemas/ProblemDifficulty" }
+        - name: tag
+          in: query
+          schema: { type: string }
+        - name: keyword
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          description: Admin/root only.
+          schema: { $ref: "#/components/schemas/ProblemStatus" }
+      responses:
+        "200":
+          description: Problem page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [Problems]
+      operationId: createProblem
+      summary: Create a problem
+      x-owner: WP3 Problem
+      x-auth: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProblemCreateRequest"
+      responses:
+        "201":
+          description: Problem created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [Problems]
+      operationId: getProblem
+      summary: Get a problem
+      x-owner: WP3 Problem
+      x-auth: public-conditional
+      security: []
+      responses:
+        "200":
+          description: Problem.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    patch:
+      tags: [Problems]
+      operationId: updateProblem
+      summary: Update a problem
+      x-owner: WP3 Problem
+      x-auth: owner-admin-root
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProblemUpdateRequest"
+      responses:
+        "200":
+          description: Problem updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [Problems]
+      operationId: deleteProblem
+      summary: Delete a problem
+      x-owner: WP3 Problem
+      x-auth: owner-admin-root
+      responses:
+        "204":
+          description: Problem archived/deleted. Empty body.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}/statement:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [Problems]
+      operationId: getProblemStatement
+      summary: Get current problem statement
+      x-owner: WP3 Problem
+      x-auth: public-conditional
+      security: []
+      responses:
+        "200":
+          description: Current statement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemStatementEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [Problems]
+      operationId: upsertProblemStatement
+      summary: Create a problem statement version
+      x-owner: WP3 Problem
+      x-auth: owner-admin-root
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatementUpsertRequest"
+      responses:
+        "201":
+          description: Statement version created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemStatementEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}/testcase-sets:
+    post:
+      tags: [Problems]
+      operationId: createProblemTestcaseSet
+      summary: Upload a testcase set
+      x-owner: WP3 Problem
+      x-auth: owner-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/TestcaseSetCreateRequest"
+      responses:
+        "201":
+          description: Testcase set created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestcaseSetEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}/stats:
+    get:
+      tags: [Problems]
+      operationId: getProblemStats
+      summary: Get problem stats
+      x-owner: WP3 Problem
+      x-auth: public-conditional
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Problem stats.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemStatsEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/submissions:
+    post:
+      tags: [Submissions]
+      operationId: createSubmission
+      summary: Create a submission
+      x-owner: WP4 Submission/Run
+      x-auth: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmissionCreateRequest"
+      responses:
+        "202":
+          description: Submission accepted for judging.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      tags: [Submissions]
+      operationId: listSubmissions
+      summary: List submissions
+      x-owner: WP4 Submission/Run
+      x-auth: user
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: problem_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: contest_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/JudgeStatus" }
+        - name: user_id
+          in: query
+          description: Admin/root only.
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Submission page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/submissions/{id}:
+    get:
+      tags: [Submissions]
+      operationId: getSubmission
+      summary: Get a submission
+      x-owner: WP4 Submission/Run
+      x-auth: owner-admin-root-contest-rules
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Submission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/runs:
+    post:
+      tags: [Runs]
+      operationId: createRun
+      summary: Create a self-run
+      x-owner: WP4 Submission/Run
+      x-auth: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunCreateRequest"
+      responses:
+        "200":
+          description: Run finished within short wait.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunEnvelope"
+        "202":
+          description: Run is still executing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/runs/{id}:
+    get:
+      tags: [Runs]
+      operationId: getRun
+      summary: Get a self-run
+      x-owner: WP4 Submission/Run
+      x-auth: owner-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/contests:
+    get:
+      tags: [Contests]
+      operationId: listContests
+      summary: List contests
+      x-owner: WP5 Contest
+      x-auth: public
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/ContestStatus" }
+        - name: visibility
+          in: query
+          schema: { $ref: "#/components/schemas/ContestVisibility" }
+        - name: keyword
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Contest page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContestPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [Contests]
+      operationId: createContest
+      summary: Create a contest
+      x-owner: WP5 Contest
+      x-auth: user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContestCreateRequest"
+      responses:
+        "201":
+          description: Contest created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContestEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/contests/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [Contests]
+      operationId: getContest
+      summary: Get a contest
+      x-owner: WP5 Contest
+      x-auth: public-conditional
+      security: []
+      responses:
+        "200":
+          description: Contest.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContestEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    patch:
+      tags: [Contests]
+      operationId: updateContest
+      summary: Update a contest
+      x-owner: WP5 Contest
+      x-auth: owner-admin-root
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContestUpdateRequest"
+      responses:
+        "200":
+          description: Contest updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContestEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [Contests]
+      operationId: deleteContest
+      summary: Delete a contest
+      x-owner: WP5 Contest
+      x-auth: owner-admin-root
+      responses:
+        "204":
+          description: Contest archived/deleted. Empty body.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/contests/{id}/registrations:
+    post:
+      tags: [Contests]
+      operationId: registerContest
+      summary: Register for a contest
+      x-owner: WP5 Contest
+      x-auth: user
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContestRegistrationRequest"
+      responses:
+        "201":
+          description: Contest registration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContestRegistrationEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/contests/{id}/scoreboard:
+    get:
+      tags: [Contests]
+      operationId: getContestScoreboard
+      summary: Get contest scoreboard
+      x-owner: WP5 Contest
+      x-auth: public-conditional
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: view
+          in: query
+          schema:
+            type: string
+            enum: [live, frozen, final]
+      responses:
+        "200":
+          description: Scoreboard.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreboardEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/users:
+    get:
+      tags: [Admin Users]
+      operationId: adminListUsers
+      summary: List users as root
+      x-owner: WP2 Auth/User
+      x-auth: root
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: role
+          in: query
+          schema: { $ref: "#/components/schemas/UserRole" }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/UserStatus" }
+        - name: keyword
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: User page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/users/{id}:
+    patch:
+      tags: [Admin Users]
+      operationId: adminUpdateUser
+      summary: Update a user as root
+      x-owner: WP2 Auth/User
+      x-auth: root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserUpdateRequest"
+      responses:
+        "200":
+          description: User updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/languages:
+    get:
+      tags: [Admin Languages]
+      operationId: adminListLanguages
+      summary: List judge languages
+      x-owner: WP4 Submission/Language
+      x-auth: admin-root
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: enabled
+          in: query
+          schema: { type: boolean }
+        - name: engine
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Language page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LanguagePageEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/languages/sync:
+    post:
+      tags: [Admin Languages]
+      operationId: adminSyncLanguages
+      summary: Sync judge languages
+      x-owner: WP4 Submission/Language
+      x-auth: root
+      responses:
+        "202":
+          description: Language sync accepted. Empty body.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/languages/{id}:
+    patch:
+      tags: [Admin Languages]
+      operationId: adminUpdateLanguage
+      summary: Update a judge language
+      x-owner: WP4 Submission/Language
+      x-auth: admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LanguageUpdateRequest"
+      responses:
+        "200":
+          description: Language updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LanguageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+components:
+  securitySchemes:
+    bearerAuth:
+      x-owner: WP1 Data/API Contract
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ID:
+      x-owner: WP1 Data/API Contract
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    Page:
+      x-owner: WP1 Data/API Contract
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      x-owner: WP1 Data/API Contract
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    BadRequest:
+      x-owner: WP1 Data/API Contract
+      description: Invalid argument.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    Unauthenticated:
+      x-owner: WP1 Data/API Contract
+      description: Missing or invalid authentication.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    PermissionDenied:
+      x-owner: WP1 Data/API Contract
+      description: Permission denied.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    NotFound:
+      x-owner: WP1 Data/API Contract
+      description: Resource not found.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    Conflict:
+      x-owner: WP1 Data/API Contract
+      description: Resource conflict.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    ValidationFailed:
+      x-owner: WP1 Data/API Contract
+      description: Validation failed.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    InternalError:
+      x-owner: WP1 Data/API Contract
+      description: Internal error.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+  schemas:
+    Envelope:
+      x-owner: WP1 Data/API Contract
+      type: object
+      required: [data, error, request_id]
+      properties:
+        data: {}
+        error:
+          nullable: true
+          $ref: "#/components/schemas/Error"
+        request_id:
+          type: string
+    ErrorEnvelope:
+      x-owner: WP1 Data/API Contract
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              nullable: true
+            error:
+              $ref: "#/components/schemas/Error"
+    Error:
+      x-owner: WP1 Data/API Contract
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - invalid_argument
+            - unauthenticated
+            - permission.denied
+            - route.not_found
+            - validation.failed
+            - auth.invalid_credentials
+            - auth.token_expired
+            - auth.refresh_token_revoked
+            - user.email_exists
+            - problem.not_found
+            - problem.not_publishable
+            - problem.testcase_not_ready
+            - testcase.invalid_archive
+            - submission.not_found
+            - submission.not_allowed
+            - submission.language_disabled
+            - run.not_found
+            - contest.not_found
+            - contest.not_started
+            - contest.ended
+            - contest.registration_required
+            - contest.scoreboard_hidden
+            - queue.dispatch_failed
+            - judge.engine_unavailable
+            - service_unavailable
+            - internal_error
+        message:
+          type: string
+    PageMeta:
+      x-owner: WP1 Data/API Contract
+      type: object
+      required: [page, page_size, total]
+      properties:
+        page: { type: integer, minimum: 1 }
+        page_size: { type: integer, minimum: 1 }
+        total: { type: integer, format: int64, minimum: 0 }
+    UserRole:
+      type: string
+      enum: [user, admin, root]
+    UserStatus:
+      type: string
+      enum: [active, disabled, deleted]
+    ProblemDifficulty:
+      type: string
+      enum: [easy, medium, hard]
+    ProblemVisibility:
+      type: string
+      enum: [private, public, contest_only]
+    ProblemStatus:
+      type: string
+      enum: [draft, published, archived]
+    TestcaseSetStatus:
+      type: string
+      enum: [uploading, ready, disabled]
+    JudgeStatus:
+      type: string
+      enum: [queued, running, accepted, wrong_answer, compile_error, runtime_error, time_limit, memory_limit, system_error, canceled]
+    ContestVisibility:
+      type: string
+      enum: [public, private]
+    ContestStatus:
+      type: string
+      enum: [draft, published, running, ended, archived]
+    ScoreboardView:
+      type: string
+      enum: [live, frozen, final]
+    ScoreboardCellStatus:
+      type: string
+      enum: [none, attempted, accepted, frozen]
+    RegisterRequest:
+      type: object
+      required: [email, password, username]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        username: { type: string, minLength: 1, maxLength: 64 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+    AuthResponse:
+      type: object
+      required: [access_token, refresh_token, expires_in, user]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer }
+        user: { $ref: "#/components/schemas/UserResponse" }
+    UserResponse:
+      type: object
+      required: [id, email, username, role, status, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string, format: email }
+        username: { type: string }
+        avatar_url: { type: string, nullable: true }
+        bio: { type: string, nullable: true }
+        role: { $ref: "#/components/schemas/UserRole" }
+        status: { $ref: "#/components/schemas/UserStatus" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AdminUserUpdateRequest:
+      type: object
+      properties:
+        username: { type: string }
+        bio: { type: string, nullable: true }
+        role: { $ref: "#/components/schemas/UserRole" }
+        status: { $ref: "#/components/schemas/UserStatus" }
+    ProblemLimits:
+      type: object
+      required: [time_limit_ms, memory_limit_kb]
+      properties:
+        time_limit_ms: { type: integer }
+        memory_limit_kb: { type: integer }
+    ProblemCreateRequest:
+      type: object
+      required: [title, slug, difficulty, visibility, time_limit_ms, memory_limit_kb]
+      properties:
+        title: { type: string }
+        slug: { type: string }
+        difficulty: { $ref: "#/components/schemas/ProblemDifficulty" }
+        visibility: { $ref: "#/components/schemas/ProblemVisibility" }
+        time_limit_ms: { type: integer, minimum: 1 }
+        memory_limit_kb: { type: integer, minimum: 1 }
+        tags:
+          type: array
+          items: { type: string }
+    ProblemUpdateRequest:
+      type: object
+      properties:
+        title: { type: string }
+        slug: { type: string }
+        difficulty: { $ref: "#/components/schemas/ProblemDifficulty" }
+        visibility: { $ref: "#/components/schemas/ProblemVisibility" }
+        time_limit_ms: { type: integer, minimum: 1 }
+        memory_limit_kb: { type: integer, minimum: 1 }
+        tags:
+          type: array
+          items: { type: string }
+        status: { $ref: "#/components/schemas/ProblemStatus" }
+    ProblemResponse:
+      type: object
+      required: [id, title, slug, difficulty, visibility, status, tags, limits, owner_user_id, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        slug: { type: string }
+        difficulty: { $ref: "#/components/schemas/ProblemDifficulty" }
+        visibility: { $ref: "#/components/schemas/ProblemVisibility" }
+        status: { $ref: "#/components/schemas/ProblemStatus" }
+        tags:
+          type: array
+          items: { type: string }
+        limits: { $ref: "#/components/schemas/ProblemLimits" }
+        owner_user_id: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        published_at: { type: string, format: date-time, nullable: true }
+    Sample:
+      type: object
+      required: [input, output]
+      properties:
+        input: { type: string }
+        output: { type: string }
+        explanation: { type: string }
+    StatementUpsertRequest:
+      type: object
+      required: [title, description, samples]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        input_description: { type: string }
+        output_description: { type: string }
+        samples:
+          type: array
+          items: { $ref: "#/components/schemas/Sample" }
+        hint: { type: string }
+        source: { type: string }
+    ProblemStatementResponse:
+      allOf:
+        - $ref: "#/components/schemas/StatementUpsertRequest"
+        - type: object
+          required: [problem_id, version, created_at]
+          properties:
+            problem_id: { type: integer, format: int64 }
+            version: { type: integer }
+            created_at: { type: string, format: date-time }
+    TestcaseSetCreateRequest:
+      type: object
+      required: [archive, checksum_sha256, case_count]
+      properties:
+        archive:
+          type: string
+          format: binary
+        checksum_sha256: { type: string }
+        case_count: { type: integer, minimum: 1 }
+    TestcaseSetResponse:
+      type: object
+      required: [id, problem_id, version, checksum_sha256, size_bytes, case_count, status, is_current, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        problem_id: { type: integer, format: int64 }
+        version: { type: integer }
+        checksum_sha256: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        case_count: { type: integer }
+        status: { $ref: "#/components/schemas/TestcaseSetStatus" }
+        is_current: { type: boolean }
+        created_at: { type: string, format: date-time }
+    SubmissionCreateRequest:
+      type: object
+      required: [problem_id, language_id, source_code]
+      properties:
+        problem_id: { type: integer, format: int64 }
+        language_id: { type: integer, format: int64 }
+        source_code: { type: string }
+        contest_id: { type: integer, format: int64, nullable: true }
+    SubmissionResponse:
+      type: object
+      required: [id, user_id, problem_id, language_id, status, score, submitted_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        user_id: { type: integer, format: int64 }
+        problem_id: { type: integer, format: int64 }
+        contest_id: { type: integer, format: int64, nullable: true }
+        language_id: { type: integer, format: int64 }
+        status: { $ref: "#/components/schemas/JudgeStatus" }
+        score: { type: integer }
+        time_ms: { type: integer, nullable: true }
+        memory_kb: { type: integer, nullable: true }
+        error_message: { type: string, nullable: true }
+        submitted_at: { type: string, format: date-time }
+        judged_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
+    RunCreateRequest:
+      type: object
+      required: [problem_id, language_id, source_code]
+      properties:
+        problem_id: { type: integer, format: int64 }
+        language_id: { type: integer, format: int64 }
+        source_code: { type: string }
+        stdin: { type: string }
+    RunResponse:
+      type: object
+      required: [id, user_id, problem_id, language_id, status, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        user_id: { type: integer, format: int64 }
+        problem_id: { type: integer, format: int64 }
+        language_id: { type: integer, format: int64 }
+        status: { $ref: "#/components/schemas/JudgeStatus" }
+        stdout: { type: string, nullable: true }
+        stderr: { type: string, nullable: true }
+        compile_output: { type: string, nullable: true }
+        time_ms: { type: integer, nullable: true }
+        memory_kb: { type: integer, nullable: true }
+        error_message: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
+    ContestProblemInput:
+      type: object
+      required: [problem_id, alias, sort_order]
+      properties:
+        problem_id: { type: integer, format: int64 }
+        alias: { type: string }
+        sort_order: { type: integer }
+    ContestCreateRequest:
+      type: object
+      required: [title, visibility, start_at, end_at, freeze_at, problems]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        visibility: { $ref: "#/components/schemas/ContestVisibility" }
+        start_at: { type: string, format: date-time }
+        end_at: { type: string, format: date-time }
+        freeze_at: { type: string, format: date-time }
+        problems:
+          type: array
+          items: { $ref: "#/components/schemas/ContestProblemInput" }
+    ContestUpdateRequest:
+      type: object
+      properties:
+        title: { type: string }
+        description: { type: string }
+        visibility: { $ref: "#/components/schemas/ContestVisibility" }
+        start_at: { type: string, format: date-time }
+        end_at: { type: string, format: date-time }
+        freeze_at: { type: string, format: date-time }
+        problems:
+          type: array
+          items: { $ref: "#/components/schemas/ContestProblemInput" }
+        status: { $ref: "#/components/schemas/ContestStatus" }
+    ContestResponse:
+      type: object
+      required: [id, owner_user_id, title, visibility, status, start_at, end_at, freeze_at, problems, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        owner_user_id: { type: integer, format: int64 }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        visibility: { $ref: "#/components/schemas/ContestVisibility" }
+        status: { $ref: "#/components/schemas/ContestStatus" }
+        start_at: { type: string, format: date-time }
+        end_at: { type: string, format: date-time }
+        freeze_at: { type: string, format: date-time }
+        problems:
+          type: array
+          items: { $ref: "#/components/schemas/ContestProblemInput" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ContestRegistrationRequest:
+      type: object
+      required: [display_name, email]
+      properties:
+        display_name: { type: string }
+        email: { type: string, format: email }
+        invite_code: { type: string }
+    ContestRegistrationResponse:
+      type: object
+      required: [id, contest_id, user_id, display_name, email, status, registered_at]
+      properties:
+        id: { type: integer, format: int64 }
+        contest_id: { type: integer, format: int64 }
+        user_id: { type: integer, format: int64 }
+        display_name: { type: string }
+        email: { type: string, format: email }
+        status: { type: string, enum: [active, canceled] }
+        registered_at: { type: string, format: date-time }
+    ScoreboardResponse:
+      type: object
+      required: [contest_id, view, generated_at, rows]
+      properties:
+        contest_id: { type: integer, format: int64 }
+        view: { $ref: "#/components/schemas/ScoreboardView" }
+        generated_at: { type: string, format: date-time }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/ScoreboardRow" }
+    ScoreboardRow:
+      type: object
+      required: [rank, user_id, display_name, accepted_count, penalty_minutes, cells]
+      properties:
+        rank: { type: integer }
+        user_id: { type: integer, format: int64 }
+        display_name: { type: string }
+        accepted_count: { type: integer }
+        penalty_minutes: { type: integer }
+        cells:
+          type: array
+          items: { $ref: "#/components/schemas/ScoreboardCell" }
+    ScoreboardCell:
+      type: object
+      required: [problem_id, alias, status, attempts, penalty_minutes]
+      properties:
+        problem_id: { type: integer, format: int64 }
+        alias: { type: string }
+        status: { $ref: "#/components/schemas/ScoreboardCellStatus" }
+        attempts: { type: integer }
+        penalty_minutes: { type: integer }
+        accepted_at: { type: string, format: date-time, nullable: true }
+        last_submission_id: { type: integer, format: int64, nullable: true }
+        frozen_attempts: { type: integer, nullable: true }
+    ProblemStatsResponse:
+      type: object
+      required: [problem_id, total_submissions, accepted_submissions, status_counts]
+      properties:
+        problem_id: { type: integer, format: int64 }
+        total_submissions: { type: integer, format: int64 }
+        accepted_submissions: { type: integer, format: int64 }
+        status_counts:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+    LanguageResponse:
+      type: object
+      required: [id, engine, engine_language_id, name, default_time_limit_ms, default_memory_limit_kb, enabled]
+      properties:
+        id: { type: integer, format: int64 }
+        engine: { type: string }
+        engine_language_id: { type: string }
+        name: { type: string }
+        version: { type: string, nullable: true }
+        compile_command: { type: string, nullable: true }
+        run_command: { type: string, nullable: true }
+        default_time_limit_ms: { type: integer }
+        default_memory_limit_kb: { type: integer }
+        enabled: { type: boolean }
+    LanguageUpdateRequest:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        default_time_limit_ms: { type: integer, minimum: 1 }
+        default_memory_limit_kb: { type: integer, minimum: 1 }
+    UserPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/UserResponse" } }
+    ProblemPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/ProblemResponse" } }
+    SubmissionPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/SubmissionResponse" } }
+    ContestPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/ContestResponse" } }
+    LanguagePage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/LanguageResponse" } }
+    AuthEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/AuthResponse" } }
+    UserEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/UserResponse" } }
+    UserPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/UserPage" } }
+    ProblemEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ProblemResponse" } }
+    ProblemPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ProblemPage" } }
+    ProblemStatementEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ProblemStatementResponse" } }
+    TestcaseSetEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/TestcaseSetResponse" } }
+    ProblemStatsEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ProblemStatsResponse" } }
+    SubmissionEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/SubmissionResponse" } }
+    SubmissionPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/SubmissionPage" } }
+    RunEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/RunResponse" } }
+    ContestEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ContestResponse" } }
+    ContestPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ContestPage" } }
+    ContestRegistrationEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ContestRegistrationResponse" } }
+    ScoreboardEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ScoreboardResponse" } }
+    LanguageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/LanguageResponse" } }
+    LanguagePageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/LanguagePage" } }
