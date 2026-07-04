@@ -15,6 +15,7 @@ type Querier interface {
 	ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]JudgeTask, error)
 	ClearCurrentProblemStatement(ctx context.Context, problemID int64) error
 	ClearCurrentTestcaseSet(ctx context.Context, problemID int64) error
+	ClearProblemTags(ctx context.Context, problemID int64) error
 	CountContests(ctx context.Context, arg CountContestsParams) (int64, error)
 	CountLanguages(ctx context.Context, arg CountLanguagesParams) (int64, error)
 	CountProblems(ctx context.Context, arg CountProblemsParams) (int64, error)
@@ -47,8 +48,8 @@ type Querier interface {
 	GetJudgeTaskBySubmissionID(ctx context.Context, submissionID int64) (JudgeTask, error)
 	GetLanguageByID(ctx context.Context, id int64) (Language, error)
 	GetLatestContestScoreSnapshot(ctx context.Context, arg GetLatestContestScoreSnapshotParams) (ContestScoreSnapshot, error)
-	GetProblemByID(ctx context.Context, id int64) (Problem, error)
-	GetProblemBySlug(ctx context.Context, slug string) (Problem, error)
+	GetProblemByID(ctx context.Context, id int64) (GetProblemByIDRow, error)
+	GetProblemBySlug(ctx context.Context, slug string) (GetProblemBySlugRow, error)
 	GetProblemStats(ctx context.Context, id int64) (GetProblemStatsRow, error)
 	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
 	GetRunByID(ctx context.Context, id int64) (Run, error)
@@ -62,10 +63,10 @@ type Querier interface {
 	ListContests(ctx context.Context, arg ListContestsParams) ([]Contest, error)
 	ListLanguages(ctx context.Context, arg ListLanguagesParams) ([]Language, error)
 	ListProblemTags(ctx context.Context, problemID int64) ([]ProblemTag, error)
-	ListProblems(ctx context.Context, arg ListProblemsParams) ([]Problem, error)
+	ListProblems(ctx context.Context, arg ListProblemsParams) ([]ListProblemsRow, error)
 	ListSubmissions(ctx context.Context, arg ListSubmissionsParams) ([]Submission, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
-	LockProblemForUpdate(ctx context.Context, id int64) (Problem, error)
+	LockProblemForUpdate(ctx context.Context, id int64) (LockProblemForUpdateRow, error)
 	MarkJudgeTaskDispatched(ctx context.Context, arg MarkJudgeTaskDispatchedParams) (JudgeTask, error)
 	MarkJudgeTaskDone(ctx context.Context, id int64) (JudgeTask, error)
 	NextProblemStatementVersion(ctx context.Context, problemID int64) (int32, error)

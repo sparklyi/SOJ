@@ -31,6 +31,9 @@ func NewRouter(opts RouterOptions) *gin.Engine {
 	if middleware.RateLimit != nil {
 		router.Use(middleware.RateLimit)
 	}
+	if middleware.Auth != nil {
+		router.Use(middleware.Auth)
+	}
 	router.Use(gin.Recovery())
 
 	router.GET("/healthz", func(c *gin.Context) {
