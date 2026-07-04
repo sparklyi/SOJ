@@ -18,6 +18,7 @@ type Worker struct {
 	problems    problem.Reader
 	testcases   problem.TestcaseResolver
 	store       SourceStore
+	metrics     WorkerMetrics
 	maxAttempts int32
 	backoff     func(int32) time.Duration
 	now         func() time.Time
@@ -33,6 +34,12 @@ type WorkerOptions struct {
 	MaxAttempts      int32
 	Backoff          func(int32) time.Duration
 	Now              func() time.Time
+	Metrics          WorkerMetrics
+}
+
+type WorkerMetrics interface {
+	RecordJudgeTaskDispatch(result string)
+	RecordJudgeTaskProcess(result string, duration time.Duration)
 }
 
 func NewWorker(options WorkerOptions) *Worker {
@@ -48,7 +55,7 @@ func NewWorker(options WorkerOptions) *Worker {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Worker{repo: options.Repository, queue: options.Queue, engine: options.Judge, problems: options.ProblemReader, testcases: options.TestcaseResolver, store: options.SourceStore, maxAttempts: maxAttempts, backoff: backoff, now: now}
+	return &Worker{repo: options.Repository, queue: options.Queue, engine: options.Judge, problems: options.ProblemReader, testcases: options.TestcaseResolver, store: options.SourceStore, metrics: options.Metrics, maxAttempts: maxAttempts, backoff: backoff, now: now}
 }
 
 type taskPayload struct {
@@ -72,12 +79,15 @@ func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) 
 		}
 		streamID, err := w.queue.Publish(ctx, task.ID, payload)
 		if err != nil {
+			w.recordDispatch("error")
 			_, _ = w.repo.RetryJudgeTask(ctx, task.ID, w.now().Add(w.backoff(task.Attempts)), err.Error())
 			return dispatched, err
 		}
 		if _, err := w.repo.MarkJudgeTaskDispatched(ctx, task.ID, streamID); err != nil {
+			w.recordDispatch("error")
 			return dispatched, err
 		}
+		w.recordDispatch("success")
 		dispatched++
 	}
 	return dispatched, nil
@@ -99,12 +109,25 @@ func (w *Worker) ConsumeOnce(ctx context.Context, limit int, block time.Duration
 }
 
 func (w *Worker) ProcessMessage(ctx context.Context, message queue.Message) error {
+	started := time.Now()
+	result, err := w.processMessage(ctx, message)
+	if err != nil {
+		result = "error"
+	}
+	if result == "" {
+		result = "success"
+	}
+	w.recordProcess(result, time.Since(started))
+	return err
+}
+
+func (w *Worker) processMessage(ctx context.Context, message queue.Message) (string, error) {
 	task, err := w.repo.GetJudgeTask(ctx, message.TaskID)
 	if err != nil {
-		return err
+		return "error", err
 	}
 	if task.Status == "done" || task.Status == "dead" {
-		return w.queue.Ack(ctx, message.ID)
+		return "skipped", w.queue.Ack(ctx, message.ID)
 	}
 
 	submission, err := w.repo.GetSubmission(ctx, task.SubmissionID)
@@ -113,12 +136,12 @@ func (w *Worker) ProcessMessage(ctx context.Context, message queue.Message) erro
 	}
 	if terminalStatus(submission.Status) {
 		if _, err := w.repo.MarkJudgeTaskDone(ctx, task.ID); err != nil {
-			return err
+			return "error", err
 		}
-		return w.queue.Ack(ctx, message.ID)
+		return "skipped", w.queue.Ack(ctx, message.ID)
 	}
 	if _, err := w.repo.MarkJudgeTaskRunning(ctx, task.ID); err != nil {
-		return err
+		return "error", err
 	}
 	if submission.Status == StatusQueued {
 		if _, err := w.repo.MarkSubmissionRunning(ctx, submission.ID); err != nil {
@@ -163,32 +186,32 @@ func (w *Worker) ProcessMessage(ctx context.Context, message queue.Message) erro
 		return w.retryOrDead(ctx, message, task, err)
 	}
 	if _, err := w.repo.MarkJudgeTaskDone(ctx, task.ID); err != nil {
-		return err
+		return "error", err
 	}
-	return w.queue.Ack(ctx, message.ID)
+	return "success", w.queue.Ack(ctx, message.ID)
 }
 
-func (w *Worker) retryOrDead(ctx context.Context, message queue.Message, task JudgeTaskRecord, cause error) error {
+func (w *Worker) retryOrDead(ctx context.Context, message queue.Message, task JudgeTaskRecord, cause error) (string, error) {
 	reason := cause.Error()
 	if task.Attempts >= w.maxAttempts {
 		if _, err := w.repo.MarkJudgeTaskDead(ctx, task.ID, reason); err != nil {
-			return err
+			return "error", err
 		}
 		if _, err := w.repo.MarkSubmissionSystemError(ctx, task.SubmissionID, reason); err != nil {
-			return err
+			return "error", err
 		}
 		if err := w.queue.DeadLetter(ctx, message, reason); err != nil {
-			return w.queue.Ack(ctx, message.ID)
+			return "dead", w.queue.Ack(ctx, message.ID)
 		}
-		return w.queue.Ack(ctx, message.ID)
+		return "dead", w.queue.Ack(ctx, message.ID)
 	}
 	if _, err := w.repo.RetryJudgeTask(ctx, task.ID, w.now().Add(w.backoff(task.Attempts)), reason); err != nil {
-		return err
+		return "error", err
 	}
 	if _, err := w.repo.MarkSubmissionQueued(ctx, task.SubmissionID, reason); err != nil {
-		return err
+		return "error", err
 	}
-	return w.queue.Ack(ctx, message.ID)
+	return "retry", w.queue.Ack(ctx, message.ID)
 }
 
 func (w *Worker) Run(ctx context.Context, limit int, block time.Duration) error {
@@ -234,4 +257,16 @@ func defaultJudgeTaskBackoff(attempts int32) time.Duration {
 		return schedule[len(schedule)-1]
 	}
 	return schedule[attempts]
+}
+
+func (w *Worker) recordDispatch(result string) {
+	if w.metrics != nil {
+		w.metrics.RecordJudgeTaskDispatch(result)
+	}
+}
+
+func (w *Worker) recordProcess(result string, duration time.Duration) {
+	if w.metrics != nil {
+		w.metrics.RecordJudgeTaskProcess(result, duration)
+	}
 }

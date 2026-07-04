@@ -24,6 +24,14 @@ When a task exhausts retries, the worker first marks PostgreSQL `judge_tasks.sta
 
 Docker Compose uses `SOJ_JUDGE_ENDPOINT=fake://accepted`. The fake engine returns accepted results and exposes one language for local sync tests. The compose seed job inserts a matching enabled language row so submissions can be created immediately after startup.
 
+## Metrics
+
+The worker exposes Prometheus metrics on its health server at `GET /metrics`.
+
+- `soj_worker_judge_task_dispatch_total`: dispatch attempts from PostgreSQL to Redis Stream, labeled by result.
+- `soj_worker_judge_tasks_total`: processed Redis Stream messages, labeled by result such as `success`, `retry`, `dead`, `skipped`, and `error`.
+- `soj_worker_judge_task_duration_seconds`: processing latency for a judge task message.
+
 ## Scoreboard Snapshots
 
 Contest scoreboards read the latest frozen/final snapshot when one exists and fall back to synchronous aggregation when missing. Automated frozen/final snapshot generation is intentionally left as a follow-up worker responsibility.

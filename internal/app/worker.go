@@ -38,6 +38,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 
 	logger := observability.NewLogger(cfg.Log.Level, stdout)
+	metrics := observability.NewMetrics("soj-worker")
 	pool, err := postgres.OpenPool(ctx, postgres.PoolConfig{DSN: cfg.Database.DSN})
 	if err != nil {
 		return err
@@ -49,7 +50,9 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr})
-	defer redisClient.Close()
+	defer func() {
+		_ = redisClient.Close()
+	}()
 
 	queries := db.New(pool)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
@@ -72,10 +75,11 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		ProblemReader:    problemService,
 		TestcaseResolver: testcaseResolver,
 		SourceStore:      sourceStore,
+		Metrics:          metrics,
 	})
 	reconciler := submission.NewReconciler(submissionRepo, worker, nil)
 
-	router := httpapi.NewRouter(httpapi.RouterOptions{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics})
 	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "redis_stream", cfg.Redis.Stream, "redis_group", cfg.Redis.Group)
 
 	server := &http.Server{

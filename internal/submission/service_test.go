@@ -144,6 +144,37 @@ func TestWorkerRejudgesClaimedRunningTaskWhenSubmissionIsNotTerminal(t *testing.
 	}
 }
 
+func TestWorkerRecordsJudgeTaskMetrics(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched"}
+	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
+	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
+	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	store := NewMemorySourceStore()
+	store.objects["source"] = []byte("package main")
+	metrics := &recordingWorkerMetrics{}
+	worker := NewWorker(WorkerOptions{
+		Repository:       repo,
+		Queue:            &memoryQueue{},
+		Judge:            judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted}),
+		ProblemReader:    fakeProblemReader{},
+		TestcaseResolver: fakeTestcaseResolver{},
+		SourceStore:      store,
+		Metrics:          metrics,
+	})
+
+	if err := worker.ProcessMessage(ctx, queue.Message{ID: "1-0", TaskID: 7}); err != nil {
+		t.Fatalf("ProcessMessage returned error: %v", err)
+	}
+	if len(metrics.processed) != 1 {
+		t.Fatalf("processed metrics = %d, want 1", len(metrics.processed))
+	}
+	if metrics.processed[0].result != "success" || metrics.processed[0].duration <= 0 {
+		t.Fatalf("processed metric = %+v", metrics.processed[0])
+	}
+}
+
 func TestCreateRunJudgesCustomStdinImmediately(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
@@ -556,3 +587,21 @@ func (q *memoryQueue) DeadLetter(ctx context.Context, message queue.Message, rea
 	return q.deadErr
 }
 func (q *memoryQueue) Close() error { return nil }
+
+type recordedWorkerProcess struct {
+	result   string
+	duration time.Duration
+}
+
+type recordingWorkerMetrics struct {
+	dispatched []string
+	processed  []recordedWorkerProcess
+}
+
+func (m *recordingWorkerMetrics) RecordJudgeTaskDispatch(result string) {
+	m.dispatched = append(m.dispatched, result)
+}
+
+func (m *recordingWorkerMetrics) RecordJudgeTaskProcess(result string, duration time.Duration) {
+	m.processed = append(m.processed, recordedWorkerProcess{result: result, duration: duration})
+}

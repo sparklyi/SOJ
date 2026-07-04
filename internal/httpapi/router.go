@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"SOJ/internal/apperror"
 
@@ -15,6 +16,12 @@ type RouterOptions struct {
 	Middleware MiddlewareSet
 	ReadyCheck ReadyCheck
 	Modules    []Module
+	Metrics    HTTPMetrics
+}
+
+type HTTPMetrics interface {
+	Handler() http.Handler
+	ObserveHTTPRequest(method, route string, status int, duration time.Duration)
 }
 
 func NewRouter(opts RouterOptions) *gin.Engine {
@@ -33,6 +40,10 @@ func NewRouter(opts RouterOptions) *gin.Engine {
 	}
 	if middleware.Auth != nil {
 		router.Use(middleware.Auth)
+	}
+	if opts.Metrics != nil {
+		router.Use(RecordHTTPMetrics(opts.Metrics))
+		router.GET("/metrics", gin.WrapH(opts.Metrics.Handler()))
 	}
 	router.Use(gin.Recovery())
 

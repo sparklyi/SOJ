@@ -7,7 +7,7 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 ./deploy/smoke.sh
 ```
 
-The Compose stack starts PostgreSQL, Redis, MinIO, a one-shot migration job, a local seed job, API, and worker. Local development uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and seeds one enabled fake language so the submit/worker smoke flow can run without a privileged judge sandbox.
+The Compose stack starts PostgreSQL, Redis, MinIO, a one-shot migration job, a local seed job, API, worker, and Prometheus. Local development uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and seeds one enabled fake language so the submit/worker smoke flow can run without a privileged judge sandbox.
 
 Production can switch `SOJ_JUDGE_ENDPOINT` to Judge0 after adding Judge0 services and credentials. Do not reuse the local seed job for production language data.
 
@@ -15,6 +15,7 @@ Production can switch `SOJ_JUDGE_ENDPOINT` to Judge0 after adding Judge0 service
 
 - `Dockerfile.v2`: multi-stage image for `soj-api`, `soj-worker`, and `soj-migrate`.
 - `deploy/docker-compose.yaml`: local v2 stack.
+- `deploy/prometheus.yml`: local Prometheus scrape config for API and worker metrics.
 - `deploy/env/api.env.example`: environment variable reference.
 - `deploy/smoke.sh`: end-to-end local smoke test against the running stack.
 - `deploy/config.example.yaml`: human-readable config reference. The current runtime reads `SOJ_*` environment variables.
@@ -38,6 +39,16 @@ Do not commit production DSNs, JWT secrets, or object storage credentials.
 - Worker readiness: `GET /readyz`
 
 Current API readiness checks PostgreSQL. Worker readiness is process-level only; Redis/object storage/judge readiness is exercised by `deploy/smoke.sh` and worker logs. Add broader dependency probes before using these health checks as production traffic gates.
+
+## Metrics
+
+- API metrics: `GET http://localhost:8080/metrics`
+- Worker metrics: `GET http://localhost:8081/metrics`
+- Prometheus UI: `http://localhost:9090`
+
+The local Prometheus service scrapes `api:8080` and `worker:8081`. Current application metrics include HTTP request counts and latency, judge task dispatch counts, judge task processing counts, and judge task processing latency. Keep `/metrics` on a private network in production or protect it at the ingress layer.
+
+Distributed tracing is not enabled yet. The intended next step is OpenTelemetry with OTLP export, disabled by default and switchable by environment.
 
 ## Local Reset
 
