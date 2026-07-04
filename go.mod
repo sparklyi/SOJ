@@ -1,6 +1,6 @@
 module SOJ
 
-go 1.23.0
+go 1.24.0
 
 require (
 	github.com/anaskhan96/go-password-encoder v0.0.0-20201010210601-c765b799fd72

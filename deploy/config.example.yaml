@@ -1,0 +1,32 @@
+env: dev
+
+http:
+  addr: ":8080"
+
+worker:
+  health_addr: ":8081"
+
+database:
+  dsn: "postgres://soj:soj@postgres:5432/soj?sslmode=disable"
+
+redis:
+  addr: "redis:6379"
+  stream: "soj:judge:tasks"
+  group: "judge-workers"
+
+storage:
+  endpoint: "http://minio:9000"
+  bucket: "soj"
+  region: "us-east-1"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  path_style: true
+
+judge:
+  endpoint: "fake://accepted"
+  timeout: "30s"
+
+auth:
+  jwt_secret: "replace-with-env-secret"
+  access_token_ttl: "15m"
+  refresh_token_ttl: "720h"

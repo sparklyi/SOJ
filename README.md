@@ -2,6 +2,28 @@
 
 ## deepwiki 快速了解项目   
 https://deepwiki.com/sparklyi/SOJ
+
+## v2 后端重构
+
+v2 后端正在按 `cmd/` 入口和聚焦的 `internal/` 模块重构。
+
+- 设计文档：`docs/superpowers/specs/2026-07-04-soj-v2-refactor-design.md`
+- 实现计划：`docs/superpowers/plans/2026-07-05-soj-v2-refactor-implementation-plan.md`
+- API 契约：`api/openapi.yaml`
+- API 联调指南：`docs/v2-api-guide.md`
+- 架构说明：`docs/v2-architecture.md`
+- Docker 部署：`docs/v2-deploy.md`
+- Worker 运维：`docs/v2-worker.md`
+
+本地 v2 Docker 入口：
+
+```bash
+docker compose -f deploy/docker-compose.yaml up --build -d
+./deploy/smoke.sh
+```
+
+旧 v1 入口和根目录 compose 文件暂保留作参考。新开发优先使用 v2 的 `Dockerfile.v2` 和 `deploy/docker-compose.yaml`。
+
 ## 项目简介
 - SOJ是一款OJ系统!
 - 采取wire依赖注入解耦,采取经典三层架构(handle+service+repository)
@@ -22,7 +44,9 @@ https://deepwiki.com/sparklyi/SOJ
 - Docker 容器化
 
 
-## 部署流程
+## 旧版部署流程
+
+以下内容属于 v1 历史部署方式，仅作迁移参考。
 
 ### 克隆项目
 ```shell
@@ -60,4 +84,3 @@ docker run -d -p 8888:8888 --name soj_server soj_server:1.0
 - judge0 分支已基本完成，使用judge0沙箱测评   
 - codrenire 正在转换为codenire沙箱   
 - dev和main分支目前维护judge0   
-
