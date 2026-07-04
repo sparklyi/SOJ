@@ -1162,6 +1162,7 @@ components:
         start_at: { type: string, format: date-time }
         end_at: { type: string, format: date-time }
         freeze_at: { type: string, format: date-time }
+        invite_code: { type: string, description: Required when visibility is private. }
         problems:
           type: array
           items: { $ref: "#/components/schemas/ContestProblemInput" }
@@ -1174,6 +1175,7 @@ components:
         start_at: { type: string, format: date-time }
         end_at: { type: string, format: date-time }
         freeze_at: { type: string, format: date-time }
+        invite_code: { type: string, description: Required when changing visibility to private without an existing invite code. }
         problems:
           type: array
           items: { $ref: "#/components/schemas/ContestProblemInput" }
@@ -1247,6 +1249,7 @@ components:
         alias: { type: string }
         status: { $ref: "#/components/schemas/ScoreboardCellStatus" }
         attempts: { type: integer }
+        frozen_attempts: { type: integer }
         penalty_minutes: { type: integer }
         accepted_at: { type: string, format: date-time, nullable: true }
         last_submission_id: { type: integer, format: int64, nullable: true }

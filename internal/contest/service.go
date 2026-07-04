@@ -317,6 +317,9 @@ func (s *Service) Register(ctx context.Context, actor auth.Actor, contestID int6
 	if err != nil {
 		return ContestRegistration{}, err
 	}
+	if contest.Visibility == VisibilityPrivate && contest.InviteCodeHash == "" {
+		return ContestRegistration{}, apperror.Forbidden("contest.invite_code_required", "invite code is required")
+	}
 	if contest.Visibility == VisibilityPrivate && contest.InviteCodeHash != hashInviteCode(input.InviteCode) {
 		return ContestRegistration{}, apperror.Forbidden("contest.invite_code_invalid", "invite code is invalid")
 	}
@@ -416,6 +419,9 @@ func validateContestInput(input ContestInput) error {
 	if !validVisibility(input.Visibility) {
 		return apperror.BadRequest("request.invalid", "visibility is invalid")
 	}
+	if input.Visibility == VisibilityPrivate && strings.TrimSpace(input.InviteCode) == "" {
+		return apperror.BadRequest("contest.invite_code_required", "invite code is required for private contests")
+	}
 	if !validStatus(input.Status) {
 		return apperror.BadRequest("request.invalid", "status is invalid")
 	}
@@ -429,6 +435,7 @@ func validateContestInput(input ContestInput) error {
 }
 
 func validateContestUpdate(current ContestRecord, input ContestUpdateInput) error {
+	inviteCode := current.InviteCodeHash
 	next := ContestInput{
 		Title:      current.Title,
 		Visibility: current.Visibility,
@@ -454,6 +461,13 @@ func validateContestUpdate(current ContestRecord, input ContestUpdateInput) erro
 	}
 	if input.FreezeAt != nil {
 		next.FreezeAt = *input.FreezeAt
+	}
+	if input.InviteCode != nil {
+		inviteCode = strings.TrimSpace(*input.InviteCode)
+	}
+	next.InviteCode = inviteCode
+	if next.Visibility == VisibilityPrivate && strings.TrimSpace(inviteCode) == "" {
+		return apperror.BadRequest("contest.invite_code_required", "invite code is required for private contests")
 	}
 	if input.Problems != nil {
 		if _, err := contestProblems(current.ID, *input.Problems); err != nil {
