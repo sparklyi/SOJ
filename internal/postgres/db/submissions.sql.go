@@ -12,13 +12,22 @@ import (
 )
 
 const claimPendingJudgeTasks = `-- name: ClaimPendingJudgeTasks :many
-SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
-FROM judge_tasks
-WHERE status = 'pending'
-  AND next_run_at <= now()
-ORDER BY next_run_at, id
-LIMIT $1
-FOR UPDATE SKIP LOCKED
+WITH claimed AS (
+    SELECT id
+    FROM judge_tasks
+    WHERE status = 'pending'
+      AND next_run_at <= now()
+    ORDER BY next_run_at, id
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE judge_tasks
+SET status = 'dispatching',
+    updated_at = now()
+FROM claimed
+WHERE judge_tasks.id = claimed.id
+  AND judge_tasks.status = 'pending'
+RETURNING judge_tasks.id, judge_tasks.submission_id, judge_tasks.stream_id, judge_tasks.status, judge_tasks.attempts, judge_tasks.next_run_at, judge_tasks.last_error, judge_tasks.created_at, judge_tasks.updated_at
 `
 
 func (q *Queries) ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]JudgeTask, error) {
@@ -344,6 +353,38 @@ func (q *Queries) GetJudgeTaskBySubmissionID(ctx context.Context, submissionID i
 	return i, err
 }
 
+const getReadyTestcaseSetByID = `-- name: GetReadyTestcaseSetByID :one
+SELECT id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, status, is_current, created_by, created_at
+FROM testcase_sets
+WHERE id = $1
+  AND problem_id = $2
+  AND status = 'ready'
+`
+
+type GetReadyTestcaseSetByIDParams struct {
+	ID        int64 `db:"id" json:"id"`
+	ProblemID int64 `db:"problem_id" json:"problem_id"`
+}
+
+func (q *Queries) GetReadyTestcaseSetByID(ctx context.Context, arg GetReadyTestcaseSetByIDParams) (TestcaseSet, error) {
+	row := q.db.QueryRow(ctx, getReadyTestcaseSetByID, arg.ID, arg.ProblemID)
+	var i TestcaseSet
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.Version,
+		&i.StorageKey,
+		&i.ChecksumSha256,
+		&i.SizeBytes,
+		&i.CaseCount,
+		&i.Status,
+		&i.IsCurrent,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getRunByID = `-- name: GetRunByID :one
 SELECT id, user_id, problem_id, language_id, status, source_artifact_id, stdin, stdout, stderr, compile_output, time_ms, memory_kb, error_message, created_at, finished_at, updated_at
 FROM runs
@@ -466,12 +507,48 @@ func (q *Queries) ListSubmissions(ctx context.Context, arg ListSubmissionsParams
 	return items, nil
 }
 
+const markJudgeTaskDead = `-- name: MarkJudgeTaskDead :one
+UPDATE judge_tasks
+SET status = 'dead',
+    last_error = $2,
+    updated_at = now()
+WHERE id = $1
+  AND status IN ('dispatching', 'dispatched', 'running')
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+`
+
+type MarkJudgeTaskDeadParams struct {
+	ID        int64       `db:"id" json:"id"`
+	LastError pgtype.Text `db:"last_error" json:"last_error"`
+}
+
+func (q *Queries) MarkJudgeTaskDead(ctx context.Context, arg MarkJudgeTaskDeadParams) (JudgeTask, error) {
+	row := q.db.QueryRow(ctx, markJudgeTaskDead, arg.ID, arg.LastError)
+	var i JudgeTask
+	err := row.Scan(
+		&i.ID,
+		&i.SubmissionID,
+		&i.StreamID,
+		&i.Status,
+		&i.Attempts,
+		&i.NextRunAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markJudgeTaskDispatched = `-- name: MarkJudgeTaskDispatched :one
 UPDATE judge_tasks
-SET status = 'dispatched',
+SET status = CASE
+        WHEN status = 'dispatching' THEN 'dispatched'
+        ELSE status
+    END,
     stream_id = $2,
     updated_at = now()
 WHERE id = $1
+  AND status IN ('dispatching', 'running')
 RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
 `
 
@@ -502,6 +579,7 @@ UPDATE judge_tasks
 SET status = 'done',
     updated_at = now()
 WHERE id = $1
+  AND status IN ('dispatched', 'running')
 RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
 `
 
@@ -522,6 +600,272 @@ func (q *Queries) MarkJudgeTaskDone(ctx context.Context, id int64) (JudgeTask, e
 	return i, err
 }
 
+const markJudgeTaskRunning = `-- name: MarkJudgeTaskRunning :one
+UPDATE judge_tasks
+SET status = 'running',
+    updated_at = now()
+WHERE id = $1
+  AND status IN ('dispatching', 'dispatched', 'running')
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+`
+
+func (q *Queries) MarkJudgeTaskRunning(ctx context.Context, id int64) (JudgeTask, error) {
+	row := q.db.QueryRow(ctx, markJudgeTaskRunning, id)
+	var i JudgeTask
+	err := row.Scan(
+		&i.ID,
+		&i.SubmissionID,
+		&i.StreamID,
+		&i.Status,
+		&i.Attempts,
+		&i.NextRunAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markStaleRunsSystemError = `-- name: MarkStaleRunsSystemError :many
+UPDATE runs
+SET status = 'system_error',
+    error_message = $1,
+    finished_at = CASE WHEN finished_at IS NULL THEN now() ELSE finished_at END,
+    updated_at = now()
+WHERE status IN ('queued', 'running')
+  AND updated_at < $2
+RETURNING id, user_id, problem_id, language_id, status, source_artifact_id, stdin, stdout, stderr, compile_output, time_ms, memory_kb, error_message, created_at, finished_at, updated_at
+`
+
+type MarkStaleRunsSystemErrorParams struct {
+	ErrorMessage pgtype.Text        `db:"error_message" json:"error_message"`
+	StaleBefore  pgtype.Timestamptz `db:"stale_before" json:"stale_before"`
+}
+
+func (q *Queries) MarkStaleRunsSystemError(ctx context.Context, arg MarkStaleRunsSystemErrorParams) ([]Run, error) {
+	rows, err := q.db.Query(ctx, markStaleRunsSystemError, arg.ErrorMessage, arg.StaleBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Run
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ProblemID,
+			&i.LanguageID,
+			&i.Status,
+			&i.SourceArtifactID,
+			&i.Stdin,
+			&i.Stdout,
+			&i.Stderr,
+			&i.CompileOutput,
+			&i.TimeMs,
+			&i.MemoryKb,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.FinishedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markSubmissionQueued = `-- name: MarkSubmissionQueued :one
+UPDATE submissions
+SET status = 'queued',
+    error_message = $1,
+    updated_at = now()
+WHERE id = $2
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
+`
+
+type MarkSubmissionQueuedParams struct {
+	ErrorMessage pgtype.Text `db:"error_message" json:"error_message"`
+	ID           int64       `db:"id" json:"id"`
+}
+
+func (q *Queries) MarkSubmissionQueued(ctx context.Context, arg MarkSubmissionQueuedParams) (Submission, error) {
+	row := q.db.QueryRow(ctx, markSubmissionQueued, arg.ErrorMessage, arg.ID)
+	var i Submission
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.LanguageID,
+		&i.TestcaseSetID,
+		&i.Status,
+		&i.SourceArtifactID,
+		&i.TimeMs,
+		&i.MemoryKb,
+		&i.Score,
+		&i.ErrorMessage,
+		&i.SubmittedAt,
+		&i.JudgedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markSubmissionRunning = `-- name: MarkSubmissionRunning :one
+UPDATE submissions
+SET status = 'running',
+    updated_at = now()
+WHERE id = $1
+  AND status = 'queued'
+RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
+`
+
+func (q *Queries) MarkSubmissionRunning(ctx context.Context, id int64) (Submission, error) {
+	row := q.db.QueryRow(ctx, markSubmissionRunning, id)
+	var i Submission
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.LanguageID,
+		&i.TestcaseSetID,
+		&i.Status,
+		&i.SourceArtifactID,
+		&i.TimeMs,
+		&i.MemoryKb,
+		&i.Score,
+		&i.ErrorMessage,
+		&i.SubmittedAt,
+		&i.JudgedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markSubmissionSystemError = `-- name: MarkSubmissionSystemError :one
+UPDATE submissions
+SET status = 'system_error',
+    error_message = $1,
+    judged_at = CASE WHEN judged_at IS NULL THEN now() ELSE judged_at END,
+    updated_at = now()
+WHERE id = $2
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
+`
+
+type MarkSubmissionSystemErrorParams struct {
+	ErrorMessage pgtype.Text `db:"error_message" json:"error_message"`
+	ID           int64       `db:"id" json:"id"`
+}
+
+func (q *Queries) MarkSubmissionSystemError(ctx context.Context, arg MarkSubmissionSystemErrorParams) (Submission, error) {
+	row := q.db.QueryRow(ctx, markSubmissionSystemError, arg.ErrorMessage, arg.ID)
+	var i Submission
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.LanguageID,
+		&i.TestcaseSetID,
+		&i.Status,
+		&i.SourceArtifactID,
+		&i.TimeMs,
+		&i.MemoryKb,
+		&i.Score,
+		&i.ErrorMessage,
+		&i.SubmittedAt,
+		&i.JudgedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const resetStaleJudgeTasks = `-- name: ResetStaleJudgeTasks :many
+WITH reset_tasks AS (
+    UPDATE judge_tasks
+    SET status = 'pending',
+        next_run_at = now(),
+        last_error = $1,
+        updated_at = now()
+    WHERE judge_tasks.status IN ('dispatching', 'running')
+      AND judge_tasks.updated_at < $2
+      AND EXISTS (
+          SELECT 1
+          FROM submissions
+          WHERE submissions.id = judge_tasks.submission_id
+            AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+      )
+    RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+), reset_submissions AS (
+    UPDATE submissions
+    SET status = 'queued',
+        error_message = $1,
+        updated_at = now()
+    FROM reset_tasks
+    WHERE submissions.id = reset_tasks.submission_id
+      AND submissions.status = 'running'
+    RETURNING submissions.id
+)
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+FROM reset_tasks
+ORDER BY id
+`
+
+type ResetStaleJudgeTasksParams struct {
+	LastError   pgtype.Text        `db:"last_error" json:"last_error"`
+	StaleBefore pgtype.Timestamptz `db:"stale_before" json:"stale_before"`
+}
+
+type ResetStaleJudgeTasksRow struct {
+	ID           int64              `db:"id" json:"id"`
+	SubmissionID int64              `db:"submission_id" json:"submission_id"`
+	StreamID     pgtype.Text        `db:"stream_id" json:"stream_id"`
+	Status       string             `db:"status" json:"status"`
+	Attempts     int32              `db:"attempts" json:"attempts"`
+	NextRunAt    pgtype.Timestamptz `db:"next_run_at" json:"next_run_at"`
+	LastError    pgtype.Text        `db:"last_error" json:"last_error"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+}
+
+func (q *Queries) ResetStaleJudgeTasks(ctx context.Context, arg ResetStaleJudgeTasksParams) ([]ResetStaleJudgeTasksRow, error) {
+	rows, err := q.db.Query(ctx, resetStaleJudgeTasks, arg.LastError, arg.StaleBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ResetStaleJudgeTasksRow
+	for rows.Next() {
+		var i ResetStaleJudgeTasksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SubmissionID,
+			&i.StreamID,
+			&i.Status,
+			&i.Attempts,
+			&i.NextRunAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const retryJudgeTask = `-- name: RetryJudgeTask :one
 UPDATE judge_tasks
 SET status = 'pending',
@@ -530,6 +874,7 @@ SET status = 'pending',
     last_error = $2,
     updated_at = now()
 WHERE id = $3
+  AND status IN ('dispatching', 'dispatched', 'running')
 RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
 `
 
@@ -598,6 +943,7 @@ SET status = $1,
     END,
     updated_at = now()
 WHERE id = $8
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
 RETURNING id, user_id, problem_id, language_id, status, source_artifact_id, stdin, stdout, stderr, compile_output, time_ms, memory_kb, error_message, created_at, finished_at, updated_at
 `
 
@@ -659,6 +1005,7 @@ SET status = $1,
     END,
     updated_at = now()
 WHERE id = $6
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
 RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
 `
 

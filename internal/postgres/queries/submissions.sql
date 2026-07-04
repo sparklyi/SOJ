@@ -38,6 +38,13 @@ SELECT *
 FROM submissions
 WHERE id = $1;
 
+-- name: GetReadyTestcaseSetByID :one
+SELECT *
+FROM testcase_sets
+WHERE id = $1
+  AND problem_id = $2
+  AND status = 'ready';
+
 -- name: ListSubmissions :many
 SELECT *
 FROM submissions
@@ -70,6 +77,34 @@ SET status = sqlc.arg('status'),
     END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+RETURNING *;
+
+-- name: MarkSubmissionRunning :one
+UPDATE submissions
+SET status = 'running',
+    updated_at = now()
+WHERE id = $1
+  AND status = 'queued'
+RETURNING *;
+
+-- name: MarkSubmissionQueued :one
+UPDATE submissions
+SET status = 'queued',
+    error_message = sqlc.arg('error_message'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+RETURNING *;
+
+-- name: MarkSubmissionSystemError :one
+UPDATE submissions
+SET status = 'system_error',
+    error_message = sqlc.arg('error_message'),
+    judged_at = CASE WHEN judged_at IS NULL THEN now() ELSE judged_at END,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
 RETURNING *;
 
 -- name: CreateJudgeTask :one
@@ -93,13 +128,22 @@ FROM judge_tasks
 WHERE submission_id = $1;
 
 -- name: ClaimPendingJudgeTasks :many
-SELECT *
-FROM judge_tasks
-WHERE status = 'pending'
-  AND next_run_at <= now()
-ORDER BY next_run_at, id
-LIMIT $1
-FOR UPDATE SKIP LOCKED;
+WITH claimed AS (
+    SELECT id
+    FROM judge_tasks
+    WHERE status = 'pending'
+      AND next_run_at <= now()
+    ORDER BY next_run_at, id
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE judge_tasks
+SET status = 'dispatching',
+    updated_at = now()
+FROM claimed
+WHERE judge_tasks.id = claimed.id
+  AND judge_tasks.status = 'pending'
+RETURNING judge_tasks.*;
 
 -- name: UpdateJudgeTaskDispatching :one
 UPDATE judge_tasks
@@ -111,10 +155,14 @@ RETURNING *;
 
 -- name: MarkJudgeTaskDispatched :one
 UPDATE judge_tasks
-SET status = 'dispatched',
+SET status = CASE
+        WHEN status = 'dispatching' THEN 'dispatched'
+        ELSE status
+    END,
     stream_id = $2,
     updated_at = now()
 WHERE id = $1
+  AND status IN ('dispatching', 'running')
 RETURNING *;
 
 -- name: MarkJudgeTaskDone :one
@@ -122,6 +170,24 @@ UPDATE judge_tasks
 SET status = 'done',
     updated_at = now()
 WHERE id = $1
+  AND status IN ('dispatched', 'running')
+RETURNING *;
+
+-- name: MarkJudgeTaskRunning :one
+UPDATE judge_tasks
+SET status = 'running',
+    updated_at = now()
+WHERE id = $1
+  AND status IN ('dispatching', 'dispatched', 'running')
+RETURNING *;
+
+-- name: MarkJudgeTaskDead :one
+UPDATE judge_tasks
+SET status = 'dead',
+    last_error = $2,
+    updated_at = now()
+WHERE id = $1
+  AND status IN ('dispatching', 'dispatched', 'running')
 RETURNING *;
 
 -- name: RetryJudgeTask :one
@@ -132,6 +198,47 @@ SET status = 'pending',
     last_error = sqlc.arg('last_error'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
+  AND status IN ('dispatching', 'dispatched', 'running')
+RETURNING *;
+
+-- name: ResetStaleJudgeTasks :many
+WITH reset_tasks AS (
+    UPDATE judge_tasks
+    SET status = 'pending',
+        next_run_at = now(),
+        last_error = sqlc.arg('last_error'),
+        updated_at = now()
+    WHERE judge_tasks.status IN ('dispatching', 'running')
+      AND judge_tasks.updated_at < sqlc.arg('stale_before')
+      AND EXISTS (
+          SELECT 1
+          FROM submissions
+          WHERE submissions.id = judge_tasks.submission_id
+            AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+      )
+    RETURNING *
+), reset_submissions AS (
+    UPDATE submissions
+    SET status = 'queued',
+        error_message = sqlc.arg('last_error'),
+        updated_at = now()
+    FROM reset_tasks
+    WHERE submissions.id = reset_tasks.submission_id
+      AND submissions.status = 'running'
+    RETURNING submissions.id
+)
+SELECT *
+FROM reset_tasks
+ORDER BY id;
+
+-- name: MarkStaleRunsSystemError :many
+UPDATE runs
+SET status = 'system_error',
+    error_message = sqlc.arg('error_message'),
+    finished_at = CASE WHEN finished_at IS NULL THEN now() ELSE finished_at END,
+    updated_at = now()
+WHERE status IN ('queued', 'running')
+  AND updated_at < sqlc.arg('stale_before')
 RETURNING *;
 
 -- name: CreateRun :one
@@ -168,4 +275,5 @@ SET status = sqlc.arg('status'),
     END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
 RETURNING *;
