@@ -1,8 +1,8 @@
 # SOJ
 
-SOJ is an open-source online judge system. The current active work is a v2 backend refactor that moves the project toward a smaller, clearer Go service with PostgreSQL as the source of truth, Redis Stream for judge task delivery, S3-compatible object storage, and a pluggable `JudgeEngine`.
+SOJ is an open-source online judge system. The backend has been cut over to the v2 architecture: a smaller, clearer Go service with PostgreSQL as the source of truth, Redis Stream for judge task delivery, S3-compatible object storage, and a pluggable `JudgeEngine`.
 
-The old v1 code is still present for reference during migration. New backend development should target the v2 `cmd/`, `internal/`, `api/`, `docs/`, and `deploy/` paths.
+The old v1 code has been archived on the `archive/v1` branch. New backend development should target the v2 `cmd/`, `internal/`, `api/`, `docs/`, and `deploy/` paths.
 
 ## Current Status
 
@@ -110,7 +110,7 @@ Production deployment should replace local defaults before exposure:
 
 ## Legacy Code
 
-Historical v1 code, root-level Docker files, and earlier integrations remain in the repository while the v2 migration is in progress. Treat them as reference material unless a task explicitly targets v1.
+Historical v1 code, root-level Docker files, and earlier integrations are preserved on the `archive/v1` branch. The main branch now keeps only the v2 backend path.
 
 ## License
 
