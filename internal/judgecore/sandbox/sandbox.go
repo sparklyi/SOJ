@@ -60,6 +60,7 @@ type RunResult struct {
 type Sandbox interface {
 	Name() string
 	Profile() string
+	Probe(ctx context.Context) (Capabilities, error)
 	Prepare(ctx context.Context, request PrepareRequest) (Workspace, error)
 	Compile(ctx context.Context, workspace Workspace, profile language.Profile) (CompileResult, error)
 	Run(ctx context.Context, workspace Workspace, profile language.Profile, request RunRequest) (RunResult, error)
@@ -80,6 +81,16 @@ func (s *ProcessSandbox) Name() string {
 
 func (s *ProcessSandbox) Profile() string {
 	return "dev"
+}
+
+func (s *ProcessSandbox) Probe(ctx context.Context) (Capabilities, error) {
+	return Capabilities{
+		Backend:         s.Name(),
+		Profile:         s.Profile(),
+		Runtime:         "host-process",
+		ProductionReady: false,
+		UnsafeReason:    "process backend is not isolated",
+	}, nil
 }
 
 func (s *ProcessSandbox) Prepare(ctx context.Context, request PrepareRequest) (Workspace, error) {

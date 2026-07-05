@@ -149,6 +149,7 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 		TraceID:         valueOr(attempt.TraceID, fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID)),
 		SubmissionID:    submission.ID,
 		LanguageID:      language.ID,
+		LanguageSlug:    language.EngineLanguageID,
 		SourceArtifact: judgeevents.ArtifactRef{
 			ID:          artifact.ID,
 			StorageKey:  artifact.StorageKey,
