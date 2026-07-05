@@ -93,6 +93,42 @@ func TestDockerSandboxRunMapsVerdicts(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxObserverRecordsPhaseDuration(t *testing.T) {
+	client := &recordingDockerClient{runOutput: commandOutput{stdout: "3\n"}}
+	observer := &recordingSandboxObserver{}
+	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Observer: observer, Images: map[string]string{"go": "soj-runner-go:test"}})
+	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: language.GoProfile(), Source: []byte("package main\nfunc main() {}\n")})
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	defer s.Cleanup(context.Background(), workspace)
+
+	if _, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Stdin: "1 2\n", Limits: Limits{TimeLimit: time.Second}}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(observer.phases) != 1 || observer.phases[0].backend != BackendDocker || observer.phases[0].phase != "run" || observer.phases[0].result != "success" {
+		t.Fatalf("observer phases = %+v", observer.phases)
+	}
+}
+
+func TestDockerSandboxObserverRecordsContainerCleanupFailure(t *testing.T) {
+	client := &recordingDockerClient{runOutput: commandOutput{stdout: "3\n"}, removeErr: errors.New("remove failed")}
+	observer := &recordingSandboxObserver{}
+	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Observer: observer, Images: map[string]string{"go": "soj-runner-go:test"}})
+	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: language.GoProfile(), Source: []byte("package main\nfunc main() {}\n")})
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	defer s.Cleanup(context.Background(), workspace)
+
+	if _, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Limits: Limits{TimeLimit: time.Second}}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if observer.cleanupFailures != 1 {
+		t.Fatalf("cleanup failures = %d, want 1", observer.cleanupFailures)
+	}
+}
+
 func TestDockerSandboxCompileMapsCompileError(t *testing.T) {
 	client := &recordingDockerClient{runOutput: commandOutput{stderr: "syntax error", exitCode: int32Ptr(1)}, runErr: errors.New("exit status 1")}
 	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Images: map[string]string{"cpp17": "soj-runner-cpp17:test"}})
@@ -156,6 +192,7 @@ type recordingDockerClient struct {
 	runs             []DockerRunSpec
 	runOutput        commandOutput
 	runErr           error
+	removeErr        error
 	runtimeAvailable bool
 }
 
@@ -165,7 +202,7 @@ func (c *recordingDockerClient) Run(ctx context.Context, spec DockerRunSpec) (co
 }
 
 func (c *recordingDockerClient) RemoveContainer(ctx context.Context, name string) error {
-	return nil
+	return c.removeErr
 }
 
 func (c *recordingDockerClient) RuntimeAvailable(ctx context.Context, runtime string) (bool, error) {
@@ -192,4 +229,25 @@ func containsPrefix(items []string, prefix string) bool {
 
 func int32Ptr(value int32) *int32 {
 	return &value
+}
+
+type recordingSandboxObserver struct {
+	phases          []recordedSandboxPhase
+	cleanupFailures int
+}
+
+type recordedSandboxPhase struct {
+	backend string
+	phase   string
+	result  string
+}
+
+func (o *recordingSandboxObserver) ObserveSandboxPhase(backend, phase, result string, duration time.Duration) {
+	o.phases = append(o.phases, recordedSandboxPhase{backend: backend, phase: phase, result: result})
+}
+
+func (o *recordingSandboxObserver) RecordSandboxBackendError(backend, phase, class string) {}
+
+func (o *recordingSandboxObserver) RecordSandboxCleanupFailure(backend string) {
+	o.cleanupFailures++
 }

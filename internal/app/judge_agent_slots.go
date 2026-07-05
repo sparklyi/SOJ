@@ -12,6 +12,13 @@ type judgeAgentSlotLimiter struct {
 	languages map[string]chan struct{}
 }
 
+type judgeAgentSlotUsage struct {
+	Scope    string
+	Language string
+	Used     int
+	Capacity int
+}
+
 func newJudgeAgentSlotLimiter(global int, languages map[string]int) *judgeAgentSlotLimiter {
 	if global <= 0 {
 		global = 1
@@ -35,6 +42,27 @@ func (l *judgeAgentSlotLimiter) Available() int {
 		return 1
 	}
 	return cap(l.global) - len(l.global)
+}
+
+func (l *judgeAgentSlotLimiter) Usages() []judgeAgentSlotUsage {
+	if l == nil {
+		return nil
+	}
+	usages := []judgeAgentSlotUsage{{
+		Scope:    "global",
+		Language: "",
+		Used:     len(l.global),
+		Capacity: cap(l.global),
+	}}
+	for language, slots := range l.languages {
+		usages = append(usages, judgeAgentSlotUsage{
+			Scope:    "language",
+			Language: language,
+			Used:     len(slots),
+			Capacity: cap(slots),
+		})
+	}
+	return usages
 }
 
 func (l *judgeAgentSlotLimiter) Acquire(ctx context.Context, language string) (func(), error) {

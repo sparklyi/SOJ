@@ -30,11 +30,12 @@ type DockerClient interface {
 }
 
 type DockerSandboxOptions struct {
-	Client  DockerClient
-	Runtime string
-	Images  map[string]string
-	TempDir string
-	User    string
+	Client   DockerClient
+	Runtime  string
+	Images   map[string]string
+	TempDir  string
+	User     string
+	Observer SandboxObserver
 }
 
 type DockerRunSpec struct {
@@ -66,11 +67,18 @@ type DockerMount struct {
 }
 
 type DockerSandbox struct {
-	client  DockerClient
-	runtime string
-	images  map[string]string
-	tempDir string
-	user    string
+	client   DockerClient
+	runtime  string
+	images   map[string]string
+	tempDir  string
+	user     string
+	observer SandboxObserver
+}
+
+type SandboxObserver interface {
+	ObserveSandboxPhase(backend, phase, result string, duration time.Duration)
+	RecordSandboxBackendError(backend, phase, class string)
+	RecordSandboxCleanupFailure(backend string)
 }
 
 func NewDockerSandbox(options DockerSandboxOptions) *DockerSandbox {
@@ -91,7 +99,7 @@ func NewDockerSandbox(options DockerSandboxOptions) *DockerSandbox {
 	if user == "" {
 		user = defaultDockerRunnerUser
 	}
-	return &DockerSandbox{client: client, runtime: strings.TrimSpace(options.Runtime), images: images, tempDir: options.TempDir, user: user}
+	return &DockerSandbox{client: client, runtime: strings.TrimSpace(options.Runtime), images: images, tempDir: options.TempDir, user: user, observer: options.Observer}
 }
 
 func (s *DockerSandbox) Name() string {
@@ -198,18 +206,41 @@ func (s *DockerSandbox) Run(ctx context.Context, workspace Workspace, profile la
 }
 
 func (s *DockerSandbox) Cleanup(ctx context.Context, workspace Workspace) error {
-	return os.RemoveAll(workspace.Dir)
+	if err := os.RemoveAll(workspace.Dir); err != nil {
+		if s.observer != nil {
+			s.observer.RecordSandboxCleanupFailure(BackendDocker)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *DockerSandbox) runContainer(ctx context.Context, workspace Workspace, profile language.Profile, phase, mountMode, stdin string, limits Limits, command []string) (commandOutput, error) {
 	spec, err := s.runSpec(workspace, profile, phase, mountMode, stdin, limits, command)
 	if err != nil {
+		if s.observer != nil {
+			s.observer.RecordSandboxBackendError(BackendDocker, phase, "spec_error")
+		}
 		return commandOutput{}, err
 	}
 	defer func() {
-		_ = s.client.RemoveContainer(context.Background(), spec.Name)
+		if err := s.client.RemoveContainer(context.Background(), spec.Name); err != nil && s.observer != nil {
+			s.observer.RecordSandboxCleanupFailure(BackendDocker)
+		}
 	}()
-	return s.client.Run(ctx, spec)
+	started := time.Now()
+	output, err := s.client.Run(ctx, spec)
+	result := "success"
+	if err != nil {
+		result = "error"
+	}
+	if s.observer != nil {
+		s.observer.ObserveSandboxPhase(BackendDocker, phase, result, time.Since(started))
+		if err != nil && output.exitCode == nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errOutputLimit) {
+			s.observer.RecordSandboxBackendError(BackendDocker, phase, "docker_error")
+		}
+	}
+	return output, err
 }
 
 func (s *DockerSandbox) runSpec(workspace Workspace, profile language.Profile, phase, mountMode, stdin string, limits Limits, command []string) (DockerRunSpec, error) {
@@ -276,7 +307,9 @@ func (s *DockerSandbox) probeNoopContainer(ctx context.Context) error {
 		},
 	}
 	defer func() {
-		_ = s.client.RemoveContainer(context.Background(), spec.Name)
+		if err := s.client.RemoveContainer(context.Background(), spec.Name); err != nil && s.observer != nil {
+			s.observer.RecordSandboxCleanupFailure(BackendDocker)
+		}
 	}()
 	_, err := s.client.Run(ctx, spec)
 	return err
