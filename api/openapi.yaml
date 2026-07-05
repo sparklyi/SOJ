@@ -742,6 +742,7 @@ paths:
       tags: [Admin Languages]
       operationId: adminSyncLanguages
       summary: Sync judge languages
+      description: Refreshes language profiles from the configured SOJ judge engine. The active engine name for the self-built judge agent is `soj-agent`; local Docker may use an internal fake engine before `soj-judge-agent` is available.
       x-owner: WP4 Submission/Language
       x-auth: root
       responses:
@@ -1269,7 +1270,10 @@ components:
       required: [id, engine, engine_language_id, name, default_time_limit_ms, default_memory_limit_kb, enabled]
       properties:
         id: { type: integer, format: int64 }
-        engine: { type: string }
+        engine:
+          type: string
+          description: Judge engine namespace. `soj-agent` identifies language profiles owned by the SOJ judge-agent protocol.
+          example: soj-agent
         engine_language_id: { type: string }
         name: { type: string }
         version: { type: string, nullable: true }

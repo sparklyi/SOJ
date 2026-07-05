@@ -101,7 +101,7 @@ func Load() (Config, error) {
 			SecretKey: env("SOJ_STORAGE_SECRET_KEY", ""),
 		},
 		Judge: JudgeConfig{
-			Endpoint: env("SOJ_JUDGE_ENDPOINT", "http://localhost:2358"),
+			Endpoint: env("SOJ_JUDGE_ENDPOINT", "agent://local"),
 			Timeout:  30 * time.Second,
 		},
 		Auth: AuthConfig{
