@@ -12,6 +12,7 @@ import (
 	"SOJ/internal/config"
 	"SOJ/internal/httpapi"
 	judgeevents "SOJ/internal/judge/events"
+	"SOJ/internal/judgecore/sandbox"
 	"SOJ/internal/observability"
 	"SOJ/internal/queue"
 	"SOJ/internal/storage"
@@ -29,6 +30,10 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 
 	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	sandboxBackend, err := sandbox.SelectBackend(cfg.Env, envOr("SOJ_JUDGE_SANDBOX_BACKEND", ""), cfg.Judge.Endpoint)
 	if err != nil {
 		return err
 	}
@@ -74,7 +79,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
 
-	logger.InfoContext(ctx, "starting soj judge agent", "health_addr", *healthAddr, "request_stream", envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"))
+	logger.InfoContext(ctx, "starting soj judge agent", "health_addr", *healthAddr, "request_stream", envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "sandbox_backend", sandboxBackend)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 2)
