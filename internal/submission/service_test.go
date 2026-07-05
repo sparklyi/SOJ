@@ -776,6 +776,7 @@ func (r fakeSnapshotTestcaseResolver) ReadyTestcaseSet(ctx context.Context, prob
 
 type memoryQueue struct {
 	published []int64
+	payloads  [][]byte
 	acked     []string
 	dead      []queue.Message
 	deadErr   error
@@ -785,6 +786,7 @@ type memoryQueue struct {
 func (q *memoryQueue) Ensure(ctx context.Context) error { return nil }
 func (q *memoryQueue) Publish(ctx context.Context, taskID int64, payload []byte) (string, error) {
 	q.published = append(q.published, taskID)
+	q.payloads = append(q.payloads, append([]byte(nil), payload...))
 	return "1-0", nil
 }
 func (q *memoryQueue) Consume(ctx context.Context, limit int, block time.Duration) ([]queue.Message, error) {

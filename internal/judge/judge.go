@@ -18,9 +18,13 @@ const (
 	VerdictWrongAnswer         Verdict = "wrong_answer"
 	VerdictTimeLimitExceeded   Verdict = "time_limit_exceeded"
 	VerdictMemoryLimitExceeded Verdict = "memory_limit_exceeded"
+	VerdictTimeLimit           Verdict = "time_limit"
+	VerdictMemoryLimit         Verdict = "memory_limit"
+	VerdictOutputLimit         Verdict = "output_limit"
 	VerdictRuntimeError        Verdict = "runtime_error"
 	VerdictCompileError        Verdict = "compile_error"
 	VerdictSystemError         Verdict = "system_error"
+	VerdictCanceled            Verdict = "canceled"
 )
 
 type Language struct {
