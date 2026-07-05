@@ -503,7 +503,7 @@ func (r *SQLRepository) ListLanguages(ctx context.Context, arg ListLanguagesInpu
 
 func (r *SQLRepository) UpsertLanguage(ctx context.Context, language judge.Language) (LanguageRecord, error) {
 	row, err := r.q.UpsertLanguage(ctx, db.UpsertLanguageParams{
-		Engine:               "judge0",
+		Engine:               judge.EngineSOJAgent,
 		EngineLanguageID:     int64String(language.ID),
 		Name:                 language.Name,
 		DefaultTimeLimitMs:   int32(language.TimeLimit / time.Millisecond),

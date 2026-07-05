@@ -7,9 +7,9 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 ./deploy/smoke.sh
 ```
 
-The Compose stack starts PostgreSQL, Redis, MinIO, a one-shot migration job, a local seed job, API, worker, and Prometheus. Local development uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and seeds one enabled fake language so the submit/worker smoke flow can run without a privileged judge sandbox.
+The Compose stack starts PostgreSQL, Redis, MinIO, a one-shot migration job, a local seed job, API, worker, and Prometheus. Local development uses the internal `fake://accepted` engine and seeds one enabled fake language so the submit/worker smoke flow can run before a privileged judge sandbox is available.
 
-Production can switch `SOJ_JUDGE_ENDPOINT` to Judge0 after adding Judge0 services and credentials. Do not reuse the local seed job for production language data.
+Production should run `soj-judge-agent` behind the `JudgeEngine` protocol boundary. Do not reuse the local fake language seed as production language data.
 
 ## Files
 

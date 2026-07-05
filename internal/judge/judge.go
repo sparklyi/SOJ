@@ -8,6 +8,12 @@ import (
 type Verdict string
 
 const (
+	EngineSOJAgent       = "soj-agent"
+	DefaultAgentEndpoint = "agent://local"
+	AgentEndpointPrefix  = "agent://"
+)
+
+const (
 	VerdictAccepted            Verdict = "accepted"
 	VerdictWrongAnswer         Verdict = "wrong_answer"
 	VerdictTimeLimitExceeded   Verdict = "time_limit_exceeded"

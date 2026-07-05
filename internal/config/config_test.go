@@ -55,3 +55,13 @@ func TestLoadRejectsInvalidDuration(t *testing.T) {
 		t.Fatal("Load() error = nil, want invalid duration error")
 	}
 }
+
+func TestLoadDefaultsJudgeEndpointToAgentProtocol(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Judge.Endpoint != "agent://local" {
+		t.Fatalf("Judge.Endpoint = %q, want agent://local", cfg.Judge.Endpoint)
+	}
+}

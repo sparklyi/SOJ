@@ -13,7 +13,7 @@ Gin is kept at the transport boundary. Business services receive `context.Contex
 - PostgreSQL: primary relational store.
 - Redis: judge task stream and consumer group coordination.
 - MinIO/S3: source files, testcase archives, and future large artifacts.
-- JudgeEngine: pluggable judge backend. Local Docker uses `fake://accepted`; production can switch to Judge0 behind the same interface.
+- JudgeEngine: protocol boundary for the internal fake engine and the future `soj-judge-agent` process.
 
 ## Module Boundaries
 

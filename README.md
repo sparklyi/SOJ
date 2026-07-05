@@ -1,6 +1,6 @@
 # SOJ
 
-SOJ is an open-source online judge system. The backend has been cut over to the v2 architecture: a smaller, clearer Go service with PostgreSQL as the source of truth, Redis Stream for judge task delivery, S3-compatible object storage, and a pluggable `JudgeEngine`.
+SOJ is an open-source online judge system. The backend has been cut over to the v2 architecture: a smaller, clearer Go service with PostgreSQL as the source of truth, Redis Stream for judge task delivery, S3-compatible object storage, and a `JudgeEngine` boundary for the self-built judge agent protocol.
 
 The old v1 code has been archived on the `archive/v1` branch. New backend development should target the v2 `cmd/`, `internal/`, `api/`, `docs/`, and `deploy/` paths.
 
@@ -35,7 +35,7 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 
 The API listens on `http://localhost:8080`; the worker health endpoint listens on `http://localhost:8081`; Prometheus listens on `http://localhost:9090`.
 
-Local Docker uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and seeds one enabled fake language so the submit/worker flow can be tested without a privileged judge sandbox.
+Local Docker uses the internal `fake://accepted` engine and seeds one enabled fake language so the submit/worker flow can be tested before the privileged `soj-judge-agent` runtime is available.
 
 ## Development
 
@@ -85,7 +85,7 @@ Runtime dependencies:
 - PostgreSQL: primary relational data store.
 - Redis: judge task stream and consumer group coordination.
 - MinIO/S3: source code, testcase archives, and future large artifacts.
-- JudgeEngine: abstraction for fake local judge, Judge0, or a future runner.
+- JudgeEngine: abstraction for the internal fake engine and the future `soj-judge-agent` protocol client.
 - Prometheus: local metrics scraping for API and worker processes.
 
 PostgreSQL remains the source of truth for submissions, runs, judge tasks, and contest results. Redis Stream messages are delivery hints and workers must tolerate duplicate deliveries.
@@ -108,7 +108,7 @@ Production deployment should replace local defaults before exposure:
 
 - Use a real `SOJ_JWT_SECRET`.
 - Use production PostgreSQL, Redis, and object storage credentials.
-- Replace `fake://accepted` with a real judge backend.
+- Replace the local fake engine with `soj-judge-agent` once the judge-agent process and sandbox adapter are deployed.
 - Do not reuse the local fake language seed as production language data.
 
 ## Legacy Code

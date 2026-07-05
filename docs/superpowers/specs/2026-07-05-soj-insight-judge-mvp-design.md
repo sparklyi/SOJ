@@ -112,6 +112,14 @@ Administrator-facing capabilities should include:
 
 `soj-worker` keeps PostgreSQL as the source of truth and Redis Stream as the delivery mechanism. `soj-judge-agent` should be called through the existing `JudgeEngine` abstraction or a compatible internal protocol.
 
+The active protocol boundary is named `soj-judge-agent.v1`. Business code should depend on `JudgeEngine`; process or repository extraction should depend on serializable agent protocol DTOs instead of database models, HTTP handlers, or worker internals. Language profiles owned by this path use the `soj-agent` engine namespace.
+
+Initial protocol shape:
+
+- request: protocol version, attempt id, language id, source, stdin, testcase keys, timeout, per-case limits
+- result: protocol version, normalized verdict, aggregate time/memory, safe output summaries, case results, reproducibility manifest
+- manifest: judge core version, sandbox profile, language runtime, testcase set hash, trace id
+
 The agent flow:
 
 ```text
@@ -198,7 +206,7 @@ For MVP, do not build:
 3. Add `soj-judge-agent` with fake local runner for deterministic smoke tests.
 4. Add `isolate` or `nsjail` runner adapter behind an interface.
 5. Support C++17, Go, and Python as initial language profiles.
-6. Wire `JudgeEngine` to call the agent while keeping Judge0 fallback.
+6. Wire `JudgeEngine` to call the agent through a stable internal protocol.
 7. Add API fields for explainable submission details.
 8. Add Prometheus metrics for compile/run/check/cache timings.
 9. Add Docker smoke for a real compile-run-check flow.
@@ -209,5 +217,5 @@ For MVP, do not build:
 - A problem author can run testcase validation before publishing.
 - An admin can identify queue pressure and judge failures from metrics.
 - A judge result can be reproduced from its manifest.
-- The agent can be disabled and traffic can fall back to Judge0.
+- The agent protocol boundary is stable enough for future repository extraction or backend replacement.
 - The security regression suite blocks common abuse cases before release.

@@ -23,7 +23,7 @@ storage:
   path_style: true
 
 judge:
-  endpoint: "fake://accepted"
+  endpoint: "agent://local"
   timeout: "30s"
 
 auth:

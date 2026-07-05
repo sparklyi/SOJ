@@ -252,7 +252,7 @@ func (r *memoryRepo) ListLanguages(ctx context.Context, arg ListLanguagesInput) 
 	return rows, int64(len(rows)), nil
 }
 func (r *memoryRepo) UpsertLanguage(ctx context.Context, language judge.Language) (LanguageRecord, error) {
-	row := LanguageRecord{ID: language.ID, Engine: "judge0", Name: language.Name, Enabled: language.Enabled}
+	row := LanguageRecord{ID: language.ID, Engine: judge.EngineSOJAgent, Name: language.Name, Enabled: language.Enabled}
 	r.languages[row.ID] = row
 	return row, nil
 }
