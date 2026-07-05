@@ -337,6 +337,9 @@ func (r *SQLRepository) MarkSubmissionSystemError(ctx context.Context, id int64,
 }
 
 func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
+	if r.txRunner == nil {
+		return SubmissionRecord{}, errors.New("transaction runner is required to complete submission with judge result")
+	}
 	params := db.UpdateSubmissionStatusParams{
 		Status:       dbStatus(result.Verdict),
 		TimeMs:       int4(result.TimeMS),
@@ -344,21 +347,6 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 		Score:        pgtype.Int4{Int32: score, Valid: true},
 		ErrorMessage: text(result.ErrorMessage),
 		ID:           id,
-	}
-	if r.txRunner == nil {
-		row, err := r.q.UpdateSubmissionStatus(ctx, params)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return r.GetSubmission(ctx, id)
-		}
-		record := submissionRecord(row)
-		if err != nil {
-			return record, err
-		}
-		attempt, err := persistJudgeResult(ctx, r.q, record, result, score)
-		if err != nil {
-			return record, err
-		}
-		return record, updateContestProblemResult(ctx, r.q, record, attempt.ID)
 	}
 
 	var record SubmissionRecord
@@ -425,7 +413,7 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 		TestcaseSetHash:      text(result.Manifest.TestcaseSetHash),
 		CheckerHash:          text(result.Manifest.CheckerHash),
 		ValidatorHash:        text(result.Manifest.ValidatorHash),
-		Status:               "finished",
+		Status:               dbStatus(result.Verdict),
 		Verdict:              text(string(result.Verdict)),
 		Score:                score,
 		TimeMs:               int4(result.TimeMS),
