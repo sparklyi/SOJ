@@ -137,7 +137,7 @@ func TestNormalizeListFilterKeepsOwnerPrivateVisibility(t *testing.T) {
 
 func TestCurrentReadyTestcaseSetLoadsCasesFromArchive(t *testing.T) {
 	repo := newFakeRepository()
-	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic}
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic, TimeLimitMS: 10000, MemoryLimitKB: 262144}
 	archive := zipArchive(t, map[string]string{
 		"input2.txt":  "2 3\n",
 		"output2.txt": "5\n",
@@ -161,6 +161,9 @@ func TestCurrentReadyTestcaseSetLoadsCasesFromArchive(t *testing.T) {
 	}
 	if got.Cases[1].InputKey != "2 3\n" || got.Cases[1].OutputKey != "5\n" {
 		t.Fatalf("second case = %+v", got.Cases[1])
+	}
+	if got.Cases[0].TimeLimit != 10*time.Second || got.Cases[0].MemoryKB != 262144 {
+		t.Fatalf("case limits = %s/%d, want 10s/262144", got.Cases[0].TimeLimit, got.Cases[0].MemoryKB)
 	}
 }
 

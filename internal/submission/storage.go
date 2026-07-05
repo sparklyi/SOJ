@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/postgres/db"
@@ -96,6 +97,10 @@ func (r *TestcaseSnapshotResolver) testcaseSetFromRow(ctx context.Context, id, p
 	if strings.TrimSpace(storageKey) == "" {
 		return problem.TestcaseSet{}, apperror.BadRequest("testcase.archive_missing", "testcase archive storage key is missing")
 	}
+	problemRow, err := r.q.GetProblemByID(ctx, problemID)
+	if err != nil {
+		return problem.TestcaseSet{}, err
+	}
 	body, _, err := r.storage.Get(ctx, storageKey)
 	if err != nil {
 		return problem.TestcaseSet{}, err
@@ -105,7 +110,7 @@ func (r *TestcaseSnapshotResolver) testcaseSetFromRow(ctx context.Context, id, p
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
-	cases, err := parseSnapshotTestcaseCases(data)
+	cases, err := parseSnapshotTestcaseCases(data, time.Duration(problemRow.TimeLimitMs)*time.Millisecond, int64(problemRow.MemoryLimitKb))
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
@@ -114,7 +119,7 @@ func (r *TestcaseSnapshotResolver) testcaseSetFromRow(ctx context.Context, id, p
 
 var snapshotCaseNameRE = regexp.MustCompile(`^(input|output)(\d+)\.txt$`)
 
-func parseSnapshotTestcaseCases(data []byte) ([]problem.Testcase, error) {
+func parseSnapshotTestcaseCases(data []byte, defaultTimeLimit time.Duration, defaultMemoryKB int64) ([]problem.Testcase, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, apperror.BadRequest("testcase.zip_invalid", "testcase archive must be a valid zip file")
@@ -162,7 +167,7 @@ func parseSnapshotTestcaseCases(data []byte) ([]problem.Testcase, error) {
 
 	cases := make([]problem.Testcase, 0, len(ids))
 	for i, id := range ids {
-		cases = append(cases, problem.Testcase{ID: int64(i + 1), InputKey: inputs[id], OutputKey: outputs[id]})
+		cases = append(cases, problem.Testcase{ID: int64(i + 1), InputKey: inputs[id], OutputKey: outputs[id], TimeLimit: defaultTimeLimit, MemoryKB: defaultMemoryKB})
 	}
 	if len(cases) == 0 {
 		return nil, apperror.BadRequest("testcase.case_count_mismatch", "testcase archive has no input/output pairs")

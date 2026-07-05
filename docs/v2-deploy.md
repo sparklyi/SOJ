@@ -72,7 +72,14 @@ Current API readiness checks PostgreSQL. Worker readiness is process-level only;
 - Judge agent metrics: `GET http://localhost:8082/metrics`
 - Prometheus UI: `http://localhost:9090`
 
-The local Prometheus service scrapes `api:8080`, `worker:8081`, and `judge-agent:8082`. Current application metrics include HTTP request counts and latency plus judge task dispatch counts. Keep `/metrics` on a private network in production or protect it at the ingress layer.
+The local Prometheus service scrapes `api:8080`, `worker:8081`, and `judge-agent:8082`. Current application metrics include HTTP request counts and latency, judge task dispatch counts, judge-agent slot usage, sandbox phase duration, sandbox backend errors, and sandbox cleanup failures. Keep `/metrics` on a private network in production or protect it at the ingress layer.
+
+Judge-agent runner metrics to watch during Docker/gVisor rollout:
+
+- `soj_judge_agent_slots_used` and `soj_judge_agent_slots_capacity`
+- `soj_sandbox_phase_duration_seconds`
+- `soj_sandbox_backend_errors_total`
+- `soj_sandbox_cleanup_failures_total`
 
 Distributed tracing is not enabled yet. The intended next step is OpenTelemetry with OTLP export, disabled by default and switchable by environment.
 
@@ -92,6 +99,15 @@ Real local gVisor/runsc validation:
 ./scripts/dev/install-gvisor.sh
 make smoke-real-gvisor
 ```
+
+Runner capacity smoke:
+
+```bash
+make smoke-runner-capacity
+SOJ_DOCKER_RUNNER_RUNTIME=runsc make smoke-runner-capacity
+```
+
+The capacity smoke recreates the local Docker runner stack and runs `1/2/4/8/16` judge-agent slot profiles by default. It prints submissions per minute, P95/P99 submission latency, P95/P99 judge attempt duration, no-op container startup overhead, maximum attempt memory, judge-agent memory curve, queue oldest pending age, backend error deltas, and cleanup failure deltas. Override the profile with `SOJ_CAPACITY_SLOTS`, `SOJ_CAPACITY_SUBMISSIONS_PER_SLOT`, `SOJ_CAPACITY_SUBMISSIONS_MAX`, `SOJ_CAPACITY_TIME_LIMIT_MS`, and `SOJ_CAPACITY_SKIP_BUILD=1` for heavier or repeated manual tests.
 
 Backend safety matrix:
 
@@ -127,6 +143,7 @@ The process backend exists only for development tests and local real-code smoke.
 - Sandbox verdict anomalies: compare the attempt manifest fields for judge core version, sandbox backend/profile, language runtime, testcase set hash, and trace id.
 - Local Docker runner smoke fails with wrong answers on input-reading programs: confirm Docker run uses the current code and `--interactive` is present in the runner args.
 - Local real smoke fails with compile errors: confirm runner images exist with `make runner-images`.
+- Capacity smoke below target: compare `container_startup_p95_ms`, `p95_attempt_ms`, queue oldest pending age, and `soj_sandbox_backend_errors_total` before raising slots or adding judge-agent nodes.
 
 ## Local Reset
 

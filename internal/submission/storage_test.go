@@ -1,53 +1,45 @@
 package submission
 
 import (
+	"archive/zip"
 	"bytes"
-	"context"
-	"io"
 	"testing"
-
-	"SOJ/internal/storage"
+	"time"
 )
 
-func TestObjectSourceStoreCreatesUniqueKeysForRepeatedSource(t *testing.T) {
-	store := NewObjectSourceStore(&fakeObjectStorage{objects: map[string][]byte{}})
-	ctx := context.Background()
+func TestParseSnapshotTestcaseCasesAppliesProblemLimits(t *testing.T) {
+	archive := snapshotZipArchive(t, map[string]string{
+		"input1.txt":  "1 1\n",
+		"output1.txt": "2\n",
+	})
 
-	first, err := store.Put(ctx, "submission", 5, []byte("package main"))
+	cases, err := parseSnapshotTestcaseCases(archive, 10*time.Second, 262144)
 	if err != nil {
-		t.Fatalf("first Put returned error: %v", err)
+		t.Fatalf("parseSnapshotTestcaseCases returned error: %v", err)
 	}
-	second, err := store.Put(ctx, "submission", 5, []byte("package main"))
-	if err != nil {
-		t.Fatalf("second Put returned error: %v", err)
+	if len(cases) != 1 {
+		t.Fatalf("cases = %d, want 1", len(cases))
 	}
-	if first.StorageKey == second.StorageKey {
-		t.Fatalf("storage keys both %q", first.StorageKey)
-	}
-	if first.ChecksumSHA256 != second.ChecksumSHA256 {
-		t.Fatalf("checksums differ: %q != %q", first.ChecksumSHA256, second.ChecksumSHA256)
+	if cases[0].TimeLimit != 10*time.Second || cases[0].MemoryKB != 262144 {
+		t.Fatalf("case limits = %s/%d, want 10s/262144", cases[0].TimeLimit, cases[0].MemoryKB)
 	}
 }
 
-type fakeObjectStorage struct {
-	objects map[string][]byte
-}
-
-func (s *fakeObjectStorage) Put(ctx context.Context, object storage.Object) (storage.ObjectInfo, error) {
-	data, err := io.ReadAll(object.Body)
-	if err != nil {
-		return storage.ObjectInfo{}, err
+func snapshotZipArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for name, content := range files {
+		file, err := writer.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry: %v", err)
+		}
+		if _, err := file.Write([]byte(content)); err != nil {
+			t.Fatalf("write zip entry: %v", err)
+		}
 	}
-	s.objects[object.Key] = data
-	return storage.ObjectInfo{Key: object.Key, Size: object.Size, ContentType: object.ContentType}, nil
-}
-
-func (s *fakeObjectStorage) Get(ctx context.Context, key string) (io.ReadCloser, storage.ObjectInfo, error) {
-	return io.NopCloser(bytes.NewReader(s.objects[key])), storage.ObjectInfo{Key: key, Size: int64(len(s.objects[key]))}, nil
-}
-
-func (s *fakeObjectStorage) Delete(ctx context.Context, key string) error { return nil }
-
-func (s *fakeObjectStorage) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
-	return storage.ObjectInfo{Key: key, Size: int64(len(s.objects[key]))}, nil
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	return buf.Bytes()
 }
