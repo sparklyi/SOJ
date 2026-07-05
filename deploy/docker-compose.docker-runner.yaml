@@ -1,0 +1,24 @@
+services:
+  api:
+    environment:
+      SOJ_JUDGE_ENDPOINT: agent://local
+
+  worker:
+    environment:
+      SOJ_JUDGE_ENDPOINT: agent://local
+
+  judge-agent:
+    environment:
+      SOJ_ENV: ${SOJ_ENV:-local}
+      SOJ_JUDGE_ENDPOINT: agent://local
+      SOJ_JUDGE_SANDBOX_BACKEND: docker
+      SOJ_DOCKER_RUNNER_RUNTIME: ${SOJ_DOCKER_RUNNER_RUNTIME:-}
+      SOJ_DOCKER_RUNNER_IMAGE_GO: ${SOJ_DOCKER_RUNNER_IMAGE_GO:-soj-runner-go:local}
+      SOJ_DOCKER_RUNNER_IMAGE_CPP17: ${SOJ_DOCKER_RUNNER_IMAGE_CPP17:-soj-runner-cpp17:local}
+      SOJ_DOCKER_RUNNER_WORKDIR: ${SOJ_DOCKER_RUNNER_WORKDIR:-/tmp/soj-runner-work}
+      SOJ_JUDGE_PARALLELISM: ${SOJ_JUDGE_PARALLELISM:-2}
+      SOJ_JUDGE_LANGUAGE_SLOTS: ${SOJ_JUDGE_LANGUAGE_SLOTS:-go=1,cpp17=1}
+      SOJ_JUDGE_MAX_BATCH: ${SOJ_JUDGE_MAX_BATCH:-2}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SOJ_DOCKER_RUNNER_WORKDIR:-/tmp/soj-runner-work}:${SOJ_DOCKER_RUNNER_WORKDIR:-/tmp/soj-runner-work}

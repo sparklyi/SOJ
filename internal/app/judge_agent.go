@@ -232,6 +232,8 @@ func newJudgeAgentSandbox(backend string) (sandbox.Sandbox, error) {
 	case sandbox.BackendDocker:
 		return sandbox.NewDockerSandbox(sandbox.DockerSandboxOptions{
 			Runtime: envOr("SOJ_DOCKER_RUNNER_RUNTIME", ""),
+			TempDir: envOr("SOJ_DOCKER_RUNNER_WORKDIR", ""),
+			User:    envOr("SOJ_DOCKER_RUNNER_USER", ""),
 			Images: map[string]string{
 				"go":    envOr("SOJ_DOCKER_RUNNER_IMAGE_GO", "soj-runner-go:local"),
 				"cpp17": envOr("SOJ_DOCKER_RUNNER_IMAGE_CPP17", "soj-runner-cpp17:local"),
