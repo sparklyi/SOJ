@@ -141,7 +141,8 @@ Docker backend 使用 per-language runner image：
 
 - `scripts/dev/install-gvisor.sh`：按官方方式安装 `runsc` 并注册 Docker runtime。
 - `scripts/dev/check-docker-runner.sh`：校验 Docker、runsc、runner images 和最小 no-op container。
-- `make runner-images`：构建 Go/C++17 runner images。
+- `make runner-images-pull`：拉取已发布的 Go/C++17 runner images。
+- `make runner-images-build`：仅在开发 Dockerfile 时本地构建 Go/C++17 runner images。
 - `make smoke-real-docker`：使用 Docker backend 跑真实判题 smoke。
 - `make smoke-real-gvisor`：使用 Docker backend + runsc 跑真实判题 smoke。
 

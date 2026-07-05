@@ -254,8 +254,8 @@ func newJudgeAgentSandbox(backend string, observer sandbox.SandboxObserver) (san
 			User:     envOr("SOJ_DOCKER_RUNNER_USER", ""),
 			Observer: observer,
 			Images: map[string]string{
-				"go":    envOr("SOJ_DOCKER_RUNNER_IMAGE_GO", "soj-runner-go:local"),
-				"cpp17": envOr("SOJ_DOCKER_RUNNER_IMAGE_CPP17", "soj-runner-cpp17:local"),
+				"go":    envOr("SOJ_DOCKER_RUNNER_IMAGE_GO", "ghcr.io/sparklyi/soj-runner-go:main"),
+				"cpp17": envOr("SOJ_DOCKER_RUNNER_IMAGE_CPP17", "ghcr.io/sparklyi/soj-runner-cpp17:main"),
 			},
 		}), nil
 	case sandbox.BackendIsolate:

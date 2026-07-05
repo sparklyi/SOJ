@@ -93,6 +93,10 @@ Real local Docker runner validation:
 make smoke-real-docker
 ```
 
+The smoke target pulls published GHCR runner images by default. Use `RUNNER_IMAGES_PREPARE=build make smoke-real-docker` only when developing runner Dockerfiles locally.
+
+Runner images are published by `.github/workflows/publish-runner-images.yml` when runner image files change on `main`, on version tags, and by manual workflow dispatch.
+
 Real local gVisor/runsc validation:
 
 ```bash
@@ -124,6 +128,8 @@ For production real code execution:
 - set `SOJ_ENV=prod`
 - install and validate Docker plus gVisor/runsc on the judge node
 - configure `SOJ_DOCKER_RUNNER_RUNTIME=runsc` for production
+- pin `SOJ_DOCKER_RUNNER_IMAGE_GO` and `SOJ_DOCKER_RUNNER_IMAGE_CPP17` to release or `sha-*` tags
+- make GHCR runner packages public or run `docker login ghcr.io` on private judge nodes before pulling images
 - do not set `SOJ_JUDGE_SANDBOX_BACKEND=process` outside `dev`, `test`, or `local`
 - keep judge-agent isolated from business database credentials
 
@@ -142,7 +148,7 @@ The process backend exists only for development tests and local real-code smoke.
 - Agent startup failure: verify `SOJ_REDIS_ADDR`, object storage credentials, Docker socket access, runner images, `SOJ_JUDGE_SANDBOX_BACKEND`, and `SOJ_DOCKER_RUNNER_RUNTIME` safety rules.
 - Sandbox verdict anomalies: compare the attempt manifest fields for judge core version, sandbox backend/profile, language runtime, testcase set hash, and trace id.
 - Local Docker runner smoke fails with wrong answers on input-reading programs: confirm Docker run uses the current code and `--interactive` is present in the runner args.
-- Local real smoke fails with compile errors: confirm runner images exist with `make runner-images`.
+- Local real smoke fails with compile errors: confirm runner images exist with `make runner-images-pull`, or use `RUNNER_IMAGES_PREPARE=build` while developing Dockerfiles locally.
 - Capacity smoke below target: compare `container_startup_p95_ms`, `p95_attempt_ms`, queue oldest pending age, and `soj_sandbox_backend_errors_total` before raising slots or adding judge-agent nodes.
 
 ## Local Reset
