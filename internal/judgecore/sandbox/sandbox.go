@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"SOJ/internal/judge"
@@ -16,8 +17,9 @@ import (
 )
 
 type Limits struct {
-	TimeLimit time.Duration
-	MemoryKB  int64
+	TimeLimit        time.Duration
+	MemoryKB         int64
+	OutputLimitBytes int64
 }
 
 type PrepareRequest struct {
@@ -30,6 +32,7 @@ type Workspace struct {
 	Dir        string
 	SourcePath string
 	BinaryPath string
+	Limits     Limits
 }
 
 type CompileResult struct {
@@ -89,13 +92,17 @@ func (s *ProcessSandbox) Prepare(ctx context.Context, request PrepareRequest) (W
 		_ = os.RemoveAll(dir)
 		return Workspace{}, err
 	}
-	return Workspace{Dir: dir, SourcePath: sourcePath, BinaryPath: filepath.Join(dir, request.Profile.BinaryFilename)}, nil
+	return Workspace{Dir: dir, SourcePath: sourcePath, BinaryPath: filepath.Join(dir, request.Profile.BinaryFilename), Limits: request.Limits}, nil
 }
 
 func (s *ProcessSandbox) Compile(ctx context.Context, workspace Workspace, profile language.Profile) (CompileResult, error) {
-	output, err := runCommand(ctx, workspace.Dir, render(profile.CompileCommand, workspace), "", 30*time.Second)
+	compileLimits := Limits{TimeLimit: 30 * time.Second, OutputLimitBytes: workspace.Limits.OutputLimitBytes}
+	output, err := runCommand(ctx, workspace.Dir, render(profile.CompileCommand, workspace), "", compileLimits)
 	if err == nil {
 		return CompileResult{Verdict: judge.VerdictAccepted, Output: output.stdout + output.stderr}, nil
+	}
+	if errors.Is(err, errOutputLimit) {
+		return CompileResult{Verdict: judge.VerdictCompileError, Output: output.stdout + output.stderr, ErrorMessage: "compile output limit exceeded"}, nil
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return CompileResult{Verdict: judge.VerdictSystemError, Output: output.stdout + output.stderr, ErrorMessage: "compile timeout"}, nil
@@ -105,10 +112,15 @@ func (s *ProcessSandbox) Compile(ctx context.Context, workspace Workspace, profi
 
 func (s *ProcessSandbox) Run(ctx context.Context, workspace Workspace, profile language.Profile, request RunRequest) (RunResult, error) {
 	started := time.Now()
-	output, err := runCommand(ctx, workspace.Dir, render(profile.RunCommand, workspace), request.Stdin, request.Limits.TimeLimit)
+	output, err := runCommand(ctx, workspace.Dir, render(profile.RunCommand, workspace), request.Stdin, request.Limits)
 	elapsed := int(time.Since(started).Milliseconds())
-	result := RunResult{Verdict: judge.VerdictAccepted, Stdout: output.stdout, Stderr: output.stderr, TimeMS: elapsed}
+	result := RunResult{Verdict: judge.VerdictAccepted, Stdout: output.stdout, Stderr: output.stderr, TimeMS: elapsed, Signal: output.signal}
 	if err == nil {
+		return result, nil
+	}
+	if errors.Is(err, errOutputLimit) {
+		result.Verdict = judge.VerdictOutputLimit
+		result.ErrorMessage = "output limit exceeded"
 		return result, nil
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -130,22 +142,31 @@ type commandOutput struct {
 	stdout   string
 	stderr   string
 	exitCode *int32
+	signal   string
 }
 
-func runCommand(parent context.Context, dir string, args []string, stdin string, timeout time.Duration) (commandOutput, error) {
+var errOutputLimit = errors.New("output limit exceeded")
+
+const defaultOutputLimitBytes int64 = 1 << 20
+
+func runCommand(parent context.Context, dir string, args []string, stdin string, limits Limits) (commandOutput, error) {
 	if len(args) == 0 {
 		return commandOutput{}, fmt.Errorf("empty command")
 	}
 	ctx := parent
 	cancel := func() {}
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(parent, timeout)
+	if limits.TimeLimit > 0 {
+		ctx, cancel = context.WithTimeout(parent, limits.TimeLimit)
 	}
 	defer cancel()
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmdArgs := resourceWrappedArgs(args, limits)
+	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(stdin)
-	var stdout, stderr bytes.Buffer
+	limiter := &outputLimiter{limit: outputLimit(limits.OutputLimitBytes)}
+	var stdout, stderr limitedBuffer
+	stdout.limiter = limiter
+	stderr.limiter = limiter
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -153,11 +174,72 @@ func runCommand(parent context.Context, dir string, args []string, stdin string,
 	if exitErr := new(exec.ExitError); errors.As(err, &exitErr) {
 		code := int32(exitErr.ExitCode())
 		output.exitCode = &code
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			output.signal = status.Signal().String()
+		}
+	}
+	if limiter.exceeded {
+		return output, errOutputLimit
+	}
+	if outputSizeExceeded(output, limits.OutputLimitBytes) {
+		return output, errOutputLimit
 	}
 	if ctx.Err() != nil {
 		return output, ctx.Err()
 	}
 	return output, err
+}
+
+type outputLimiter struct {
+	limit    int64
+	written  int64
+	exceeded bool
+}
+
+type limitedBuffer struct {
+	bytes.Buffer
+	limiter *outputLimiter
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.limiter == nil || b.limiter.limit <= 0 {
+		return b.Buffer.Write(p)
+	}
+	remaining := b.limiter.limit - b.limiter.written
+	if remaining <= 0 {
+		b.limiter.exceeded = true
+		return 0, errOutputLimit
+	}
+	if int64(len(p)) > remaining {
+		n, _ := b.Buffer.Write(p[:remaining])
+		b.limiter.written += int64(n)
+		b.limiter.exceeded = true
+		return n, errOutputLimit
+	}
+	n, err := b.Buffer.Write(p)
+	b.limiter.written += int64(n)
+	return n, err
+}
+
+func outputLimit(limit int64) int64 {
+	if limit > 0 {
+		return limit
+	}
+	return defaultOutputLimitBytes
+}
+
+func outputSizeExceeded(output commandOutput, limit int64) bool {
+	if limit <= 0 {
+		return false
+	}
+	return int64(len(output.stdout)+len(output.stderr)) >= limit
+}
+
+func resourceWrappedArgs(args []string, limits Limits) []string {
+	commands := make([]string, 0, 4)
+	commands = append(commands, `exec "$@"`)
+	wrapped := []string{"sh", "-c", strings.Join(commands, "; "), "soj-command"}
+	return append(wrapped, args...)
 }
 
 func render(args []string, workspace Workspace) []string {
