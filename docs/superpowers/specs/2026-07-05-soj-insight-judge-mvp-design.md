@@ -56,6 +56,33 @@ The judge result must support per-case or per-group details:
 
 Submission APIs should expose safe summaries. Full internal logs and raw artifacts should remain admin-only.
 
+### Result Ownership And Visibility
+
+Judge Core must always produce the most complete normalized result it can. It should not decide what a contestant, contest participant, problem author, or administrator is allowed to see.
+
+The ownership boundary is:
+
+```text
+judge-core
+  -> returns full normalized result
+     verdict / score / time / memory / case results / manifest / safe output summaries
+
+submission service
+  -> persists full internal result and terminal submission status
+
+visibility policy
+  -> projects API responses by actor, problem policy, contest state, and contest role
+```
+
+ACM contests still need the complete internal result model. Public ACM responses are stricter projections, not smaller Core results:
+
+- contestants during a contest see terminal status, score semantics, timing metadata allowed by policy, and compile output summaries when appropriate
+- contestants do not see hidden testcase input/output, hidden testcase names, raw checker details, or internal runner logs
+- contest owners, problem authors, admins, and root users can inspect case results, manifests, and operational summaries for debugging and dispute handling
+- after a contest ends, the API can optionally expose richer explanations, but this is a policy decision above Core
+
+Core may accept execution strategy hints such as `stop_on_first_failure`, `scoring_mode`, and testcase grouping. Those hints affect execution cost and scoring semantics; they must not encode disclosure rules.
+
 ### Explainable Verdict
 
 The first visible demo should be a failed submission page showing:
@@ -136,6 +163,125 @@ return normalized judge result
 
 The agent must be idempotent at the task/attempt level. Duplicate deliveries must not corrupt terminal submission state.
 
+## Delivery Phases
+
+The overall sequence should optimize for a running vertical slice first, then deepen correctness, safety, and product differentiation.
+
+### Phase 1: Judge Agent Protocol Slice
+
+Goal: prove the project no longer depends on an external judge service and can complete a submission through the internal protocol.
+
+Deliverables:
+
+- `cmd/soj-judge-agent` process with health endpoints
+- agent protocol client behind `JudgeEngine`
+- deterministic fake runner for AC, WA, CE, TLE, and system_error paths
+- Docker Compose wiring for API, worker, agent, PostgreSQL, Redis, MinIO, and Prometheus
+- smoke test proving submission -> worker -> agent -> terminal result without an external judge service
+
+Parallel work units:
+
+- protocol/client integration
+- agent HTTP server and lifecycle
+- fake runner and deterministic verdict fixtures
+- Docker and smoke validation
+
+### Phase 2: Durable Result Model And Visibility Policy
+
+Goal: persist complete judge evidence while returning only safe projections to each caller.
+
+Deliverables:
+
+- internal result model for attempts, case results, manifests, and infrastructure errors
+- database schema for full internal results and safe summary fields
+- service-layer visibility policy for owner/admin/root/problem author/contest participant
+- OpenAPI response fields for safe summaries
+- ACM projection tests that prove hidden case details are not exposed to contestants
+
+Parallel work units:
+
+- schema and repository changes
+- service visibility policy
+- handler/OpenAPI response projection
+- contest/ACM access tests
+
+### Phase 3: Local Runner MVP
+
+Goal: run real source code for the first language set through a replaceable runner boundary.
+
+Deliverables:
+
+- `internal/judgecore` domain model
+- runner interface for compile, run case, check output, and cleanup
+- language profiles for C++17, Go, and Python
+- builtin exact-output checker with whitespace policy
+- temporary workspace and artifact cleanup
+
+Parallel work units:
+
+- judgecore orchestration
+- language profiles
+- checker implementation
+- workspace/artifact management
+
+### Phase 4: Sandbox Hardening
+
+Goal: move from local runner behavior to a defensible untrusted-code boundary.
+
+Deliverables:
+
+- isolate-first sandbox adapter, with nsjail as fallback if environment fit is poor
+- resource limits for CPU, wall time, memory, output size, process count, fd count, and temp disk
+- no-network execution profile by default
+- output truncation and sanitization
+- abuse regression tests for infinite loops, large output, fork attempts, memory abuse, and filesystem access
+
+Parallel work units:
+
+- sandbox adapter
+- security profile configuration
+- abuse test suite
+- operational docs for judge nodes
+
+### Phase 5: Performance And Operations
+
+Goal: make judge throughput, tail latency, and failure modes visible and tunable.
+
+Deliverables:
+
+- Prometheus metrics for queue wait, compile time, run time, checker time, sandbox startup, cache hit rate, and system_error rate
+- local testcase cache keyed by testcase set hash
+- compile artifact cache keyed by source hash, language runtime, and compiler flags
+- early stop policy for ACM-style tasks
+- adaptive concurrency by language and problem cost
+- admin judge operations views/API foundations for dead letters, slow languages, slow problems, and rejudge targets
+
+Parallel work units:
+
+- metrics and tracing hooks
+- testcase cache
+- compile cache
+- scheduling/concurrency policy
+- admin operations API
+
+### Phase 6: Product Differentiation
+
+Goal: turn the judge core into visible user and author value, not just an execution backend.
+
+Deliverables:
+
+- problem data check for testcase archive integrity, duplicate/empty cases, sample consistency, missing boundary cases, suspicious size distribution, checker errors, and validator errors
+- rejudge manifest diff showing changes in language runtime, testcase set, checker, sandbox profile, and judge core version
+- author-facing quality warnings before publish
+- admin-facing judge reliability reports
+
+Parallel work units:
+
+- problem data validation engine
+- manifest diff model
+- author/admin API endpoints
+- documentation and frontend integration contract
+
 ## Sandbox Strategy
 
 MVP should use `isolate` first if the target environment supports it cleanly. `nsjail` is the fallback when finer configuration is needed.
@@ -201,15 +347,16 @@ For MVP, do not build:
 
 ## First Implementation Slices
 
-1. Extend result schema for case-level judge outputs and manifests.
-2. Add internal `judgecore` domain types and tests.
-3. Add `soj-judge-agent` with fake local runner for deterministic smoke tests.
-4. Add `isolate` or `nsjail` runner adapter behind an interface.
+1. Build the `soj-judge-agent` protocol slice with a deterministic fake runner and Docker smoke.
+2. Extend result schema for attempts, case-level judge outputs, manifests, and infrastructure errors.
+3. Add visibility policy so ACM contestants receive safe projections while admins/authors retain full diagnostics.
+4. Add internal `judgecore` domain types and tests.
 5. Support C++17, Go, and Python as initial language profiles.
-6. Wire `JudgeEngine` to call the agent through a stable internal protocol.
-7. Add API fields for explainable submission details.
-8. Add Prometheus metrics for compile/run/check/cache timings.
-9. Add Docker smoke for a real compile-run-check flow.
+6. Add exact-output checker and workspace cleanup.
+7. Add `isolate` or `nsjail` runner adapter behind an interface.
+8. Add API fields for explainable submission details.
+9. Add Prometheus metrics for compile/run/check/cache timings.
+10. Add Docker smoke for a real compile-run-check flow.
 
 ## Success Criteria
 
