@@ -232,7 +232,7 @@ Before exposing SOJ outside local development:
 - Use production PostgreSQL, Redis, and S3-compatible object storage credentials.
 - Keep `/metrics` on a private network or protect it at the ingress layer.
 - Run `soj-judge-agent` without business database credentials.
-- Treat `SOJ_JUDGE_SANDBOX_BACKEND=isolate` as the production sandbox target once the isolate adapter is completed and validated.
+- Treat `SOJ_JUDGE_SANDBOX_BACKEND=docker` with Docker runtime `runsc`/gVisor as the production sandbox target once the Docker runner backend is completed and validated.
 - Do not use the `process` sandbox backend outside development, tests, and local real-code smoke.
 - Do not reuse the local fake language seed as production language data.
 
@@ -241,7 +241,7 @@ Before exposing SOJ outside local development:
 Known follow-up work:
 
 - Automated frozen/final scoreboard snapshot generation in the worker.
-- Production-grade judge sandbox image and isolate runtime validation.
+- Production-grade judge runner images, Docker backend, and gVisor/runsc runtime validation.
 - Broader readiness probes for worker dependencies.
 - OpenTelemetry tracing with OTLP export disabled by default.
 

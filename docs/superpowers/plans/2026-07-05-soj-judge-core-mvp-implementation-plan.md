@@ -6,7 +6,7 @@
 
 **Architecture:** Production judging is asynchronous. Dispatcher publishes `judge.request.v1`, `soj-judge-agent` consumes and publishes `judge.result.v1`, and SOJ result consumer persists terminal results transactionally. Judge Core is modular: language profiles, sandbox, runner, checker, testcase cache, artifact, manifest, and event adapters stay behind interfaces.
 
-**Tech Stack:** Go, Gin only at process edges, PostgreSQL/sqlc, Redis Stream, MinIO artifact storage, Docker Compose, Prometheus metrics, `isolate` sandbox for production path with dev-only process fallback.
+**Tech Stack:** Go, Gin only at process edges, PostgreSQL/sqlc, Redis Stream, MinIO artifact storage, Docker Compose, Prometheus metrics, Docker runner + gVisor/runsc sandbox for production path with dev-only process fallback.
 
 ---
 
@@ -84,7 +84,7 @@
 ### Phase 3: Sandbox And Safety
 
 **Scope**
-- Add `isolate` sandbox adapter behind the same sandbox interface.
+- Add Docker runner sandbox adapter behind the same sandbox interface, with gVisor/runsc required for production.
 - Production startup must reject unsafe `process` backend.
 - Enforce CPU, wall, memory, output, temp disk, process, fd, and no-network limits.
 - Add abuse tests for loop, memory, large output, abnormal exit, file/network access where local environment supports it.
@@ -100,7 +100,7 @@
 
 **Verification**
 - `go test ./internal/judgecore/...`
-- Docker agent starts with safe sandbox configuration.
+- Docker agent starts with safe Docker/gVisor sandbox configuration.
 
 ### Phase 4: Docker Flow, Metrics, Docs
 

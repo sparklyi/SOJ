@@ -12,7 +12,7 @@ Judge Core 的第一阶段目标不是自研 Linux sandbox，而是自研 OJ 领
 - 编译、运行、checker、聚合、manifest 的稳定 pipeline。
 - case-level result、可复现证据和安全摘要。
 - testcase 本地只读缓存和 hash 校验。
-- 可替换 sandbox backend，生产默认 `isolate`。
+- 可替换 sandbox backend，生产默认 `docker` + `runsc`/gVisor。
 - 面向比赛峰值的异步削峰、横向 agent 扩展和可观测性。
 
 ## Goals
@@ -225,9 +225,9 @@ Core must distinguish user-visible safe checker summaries from internal checker 
 
 ## Sandbox And Security
 
-Production default sandbox backend is `isolate`. `process` backend is allowed only for local development and unit tests. Production startup must fail if configured with unsafe `process` backend.
+Production default sandbox backend is Docker runner with `runsc`/gVisor. `process` backend is allowed only for local development and unit tests. Production startup must fail if configured with unsafe `process` backend or Docker without the configured gVisor runtime.
 
-`nsjail` remains a future backend behind the same `Sandbox` interface.
+`isolate`, `nsjail`, and microVM runners remain future backends behind the same `Sandbox` interface.
 
 Security layers:
 
@@ -643,16 +643,16 @@ Acceptance:
 
 Deliverables:
 
-- isolate sandbox adapter
+- Docker runner sandbox adapter with gVisor/runsc production gate
 - process backend restricted to dev/test
-- startup capability probe for isolate in Docker
+- startup capability probe for Docker, runner images, and runsc
 - resource limit mapping
 - watchdog
 - abuse regression tests
 
 Acceptance:
 
-- production agent refuses to start if configured sandbox backend is unsafe or isolate capabilities are missing
+- production agent refuses to start if configured sandbox backend is unsafe or Docker/runsc capabilities are missing
 - infinite loop maps to `time_limit`
 - memory abuse maps to `memory_limit`
 - large output maps to `output_limit`
@@ -696,7 +696,7 @@ Serial dependencies:
 ## Open Questions For Implementation Plan
 
 - Whether `result-consumer` lives inside `soj-worker` initially or becomes a separate command.
-- Whether isolate is available in the target Docker environment without extra host setup.
+- Whether Docker plus gVisor/runsc is available in the target environment without extra host setup.
 - Whether source artifacts should be fetched by agent directly or materialized into request-local refs by dispatcher.
 - Whether first pressure test should target single-machine Docker only or multi-agent local compose.
 - Which exact status enum names should be normalized before implementation to avoid existing `time_limit` vs `time_limit_exceeded` drift.

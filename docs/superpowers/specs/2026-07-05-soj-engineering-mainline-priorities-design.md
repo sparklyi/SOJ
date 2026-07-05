@@ -26,7 +26,7 @@ SOJ 当前已经具备清晰的 v2 后端结构：
 ## Goals
 
 - 让本地 Docker 环境可以跑通真实 Go/C++17 提交，而不只依赖 `fake://accepted`。
-- 让 `soj-judge-agent` 具备生产形态的 sandbox backend，优先支持 `isolate`。
+- 让 `soj-judge-agent` 具备生产形态的 sandbox backend，优先支持 Docker runner + gVisor/runsc。
 - 让一次评测结果具备可解释、可复现、可审计的基础信息。
 - 让每个核心改动都能通过 GitHub Actions 和本地测试被验证。
 - 明确 unsafe backend、secret、metrics 和 judge-agent 权限边界，降低后续部署风险。
@@ -46,7 +46,7 @@ SOJ 当前已经具备清晰的 v2 后端结构：
 
 ### Approach A: Real Judge Mainline First
 
-优先完成真实评测能力：`isolate` sandbox、Go/C++17 profile、资源限制、结果归一、case-level result、真实 Docker smoke。
+优先完成真实评测能力：Docker runner + gVisor/runsc sandbox、Go/C++17 profile、资源限制、结果归一、case-level result、真实 Docker smoke。
 
 优点：
 
@@ -126,7 +126,7 @@ SOJ 当前已经具备清晰的 v2 后端结构：
 
 交付内容：
 
-- `isolate` sandbox backend 接入现有 `internal/judgecore/sandbox` 边界。
+- Docker runner sandbox backend 接入现有 `internal/judgecore/sandbox` 边界，生产环境强制 gVisor/runsc。
 - Go 和 C++17 语言 profile。
 - 编译阶段和运行阶段都走 sandbox。
 - CPU、wall time、memory、output size、process count、file descriptor 等基础限制。
@@ -191,7 +191,7 @@ SOJ 当前已经具备清晰的 v2 后端结构：
 - 明确 secret 配置、object storage credential、JWT secret、Redis/PostgreSQL DSN 的处理方式。
 - 明确 judge-agent 不持有业务数据库凭据。
 - 明确 `/metrics` 的网络暴露策略。
-- 增加 sandbox backend 安全矩阵：`fake`、`process`、`isolate` 的允许环境。
+- 增加 sandbox backend 安全矩阵：`fake`、`process`、`docker`、future `isolate/nsjail` 的允许环境。
 - 增加基础故障排查文档：队列堆积、result stream 无结果、agent 启动失败、sandbox verdict 异常。
 
 验收标准：
@@ -250,7 +250,7 @@ JudgeCore 不依赖 Gin、HTTP handler、submission service 或 PostgreSQL repos
 
 ## Risks And Mitigations
 
-- **Risk: isolate 在本地或 CI 环境不可用。**  
+- **Risk: Docker/gVisor 在本地或 CI 环境不可用。**
   Mitigation: 保留 fake backend 和 dev-only process backend；真实 sandbox smoke 可以先作为 local/manual 或特定 runner job。
 
 - **Risk: Docker 内运行 sandbox 需要额外权限。**  

@@ -232,7 +232,7 @@ internal/observability  日志、健康检查和 Prometheus 指标
 - 使用生产 PostgreSQL、Redis 和兼容 S3 的对象存储凭据。
 - 将 `/metrics` 保持在私有网络中，或在入口层加保护。
 - 运行 `soj-judge-agent` 时不要提供业务数据库凭据。
-- `SOJ_JUDGE_SANDBOX_BACKEND=isolate` 是生产 sandbox 目标，需要等 isolate adapter 完成并验证后再用于生产类真实代码执行。
+- `SOJ_JUDGE_SANDBOX_BACKEND=docker` 搭配 Docker runtime `runsc`/gVisor 是生产 sandbox 目标，需要等 Docker runner backend 完成并验证后再用于生产类真实代码执行。
 - 不要在开发、测试和本地真实代码 smoke 之外使用 `process` sandbox backend。
 - 不要把本地 fake language seed 当作生产语言数据使用。
 
@@ -241,7 +241,7 @@ internal/observability  日志、健康检查和 Prometheus 指标
 已知后续工作：
 
 - 在 worker 中自动生成 frozen/final 记分板快照。
-- 生产级 judge sandbox 镜像和 isolate runtime 校验。
+- 生产级 judge runner 镜像、Docker backend 和 gVisor/runsc runtime 校验。
 - 为 worker 依赖增加更完整的 readiness probe。
 - 引入 OpenTelemetry tracing，默认关闭 OTLP export。
 
