@@ -20,6 +20,8 @@ Build the durable judge data foundation before adding the local runner, sandbox 
 
 ### Phase 2A: Schema Contract
 
+Status: completed.
+
 Owner scope:
 - Reshape `internal/migrations/000001_init.up.sql`.
 - Add `judge_attempts`, `judge_case_results`, reshaped `submission_results`, contest attempt references, artifact owner/kind extensions, and required indexes.
@@ -29,6 +31,8 @@ Expected commit:
 - `feat(judge): add durable judge result schema`
 
 ### Phase 2B: sqlc Query Layer
+
+Status: completed.
 
 Owner scope:
 - Add attempt, case-result, current-projection, and contest-projection queries under `internal/postgres/queries/`.
@@ -43,6 +47,8 @@ Expected commit:
 
 ### Phase 2C: Repository Transaction
 
+Status: completed.
+
 Owner scope:
 - Add typed repository records for attempts, cases, and current result projection.
 - Implement one transactional completion path that updates submission terminal state, creates attempt/cases, upserts current projection, and updates contest projection.
@@ -56,8 +62,10 @@ Expected commit:
 
 ### Phase 2D: Visibility And API Projection
 
+Status: completed.
+
 Owner scope:
-- Add `internal/submission/visibility.go`.
+- Add service-level submission result visibility projection.
 - Add tests for owner/admin/contestant/ACM visibility.
 - Update handler/service DTOs, `api/openapi.yaml`, and `docs/v2-api-guide.md`.
 - Do not expose raw manifests or hidden testcase identities by default.
@@ -70,6 +78,8 @@ Expected commits:
 - `feat(api): expose safe judge result summaries`
 
 ### Phase 2E: Future-Proof Control Tables
+
+Status: completed.
 
 Owner scope:
 - Add `problem_check_runs`, `problem_check_findings`, and `rejudge_batches`.
