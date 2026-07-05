@@ -20,7 +20,7 @@ func TestDispatcherPublishesRequestEventWithoutCallingJudgeEngine(t *testing.T) 
 	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "pending"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source/key", ChecksumSHA256: "sha256:source", SizeBytes: 12}
-	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted})
 	q := &memoryQueue{}
 	worker := NewWorker(WorkerOptions{
@@ -55,6 +55,9 @@ func TestDispatcherPublishesRequestEventWithoutCallingJudgeEngine(t *testing.T) 
 	}
 	if event.SourceArtifact.ID != 4 || event.SourceArtifact.StorageKey != "source/key" || event.SourceArtifact.ContentHash != "sha256:source" {
 		t.Fatalf("source artifact = %+v", event.SourceArtifact)
+	}
+	if event.LanguageSlug != "go" {
+		t.Fatalf("language_slug = %q, want go", event.LanguageSlug)
 	}
 	if event.AttemptID == "" || event.EventID == "" || event.TraceID == "" {
 		t.Fatalf("event identity = %+v", event)

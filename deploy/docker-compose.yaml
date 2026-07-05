@@ -254,6 +254,9 @@ services:
       SOJ_JUDGE_AGENT_GROUP: judge-agents
       SOJ_JUDGE_RESULT_STREAM: soj:judge:results
       SOJ_JUDGE_RESULT_GROUP: judge-result-consumers
+      SOJ_JUDGE_PARALLELISM: ${SOJ_JUDGE_PARALLELISM:-1}
+      SOJ_JUDGE_LANGUAGE_SLOTS: ${SOJ_JUDGE_LANGUAGE_SLOTS:-}
+      SOJ_JUDGE_MAX_BATCH: ${SOJ_JUDGE_MAX_BATCH:-16}
     depends_on:
       redis:
         condition: service_healthy

@@ -18,7 +18,7 @@ FROM alpine:3.22
 ARG COMMAND=soj-api
 RUN apk add --no-cache ca-certificates tzdata \
     && if [ "$COMMAND" = "soj-judge-agent" ]; then \
-        apk add --no-cache go g++ musl-dev; \
+        apk add --no-cache docker-cli go g++ musl-dev; \
     fi
 WORKDIR /app
 

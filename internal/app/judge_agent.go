@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"SOJ/internal/config"
@@ -64,7 +66,21 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 
-	agent, err := newJudgeAgentProcessor(sandboxBackend, cfg, objectStore, queueResultPublisher{queue: resultQueue})
+	parallelism, err := envInt("SOJ_JUDGE_PARALLELISM", 1)
+	if err != nil {
+		return err
+	}
+	languageSlots, err := parseJudgeAgentLanguageSlots(envOr("SOJ_JUDGE_LANGUAGE_SLOTS", ""))
+	if err != nil {
+		return err
+	}
+	maxBatch, err := envInt("SOJ_JUDGE_MAX_BATCH", cfg.Redis.BatchSize)
+	if err != nil {
+		return err
+	}
+	slotLimiter := newJudgeAgentSlotLimiter(parallelism, languageSlots)
+
+	agent, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, metrics, queueResultPublisher{queue: resultQueue})
 	if err != nil {
 		return err
 	}
@@ -79,7 +95,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
 
-	logger.InfoContext(ctx, "starting soj judge agent", "health_addr", *healthAddr, "request_stream", envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "sandbox_backend", sandboxBackend)
+	logger.InfoContext(ctx, "starting soj judge agent", "health_addr", *healthAddr, "request_stream", envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "sandbox_backend", sandboxBackend, "parallelism", parallelism)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 2)
@@ -87,7 +103,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runJudgeAgentLoop(runCtx, agent, requestQueue, cfg.Redis.BatchSize, cfg.Redis.Block)
+		errCh <- runJudgeAgentLoop(runCtx, agent, requestQueue, maxBatch, cfg.Redis.Block, slotLimiter, metrics)
 	}()
 
 	err = <-errCh
@@ -105,29 +121,102 @@ type judgeRequestProcessor interface {
 	ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error
 }
 
-func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, requestQueue queue.TaskQueue, batchSize int, block time.Duration) error {
+type judgeAgentSlotMetrics interface {
+	ObserveJudgeAgentSlots(scope, language string, used, capacity int)
+}
+
+func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, requestQueue queue.TaskQueue, batchSize int, block time.Duration, slots *judgeAgentSlotLimiter, metrics judgeAgentSlotMetrics) error {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	errCh := make(chan error, 1)
+	recordJudgeAgentSlotMetrics(metrics, slots)
 	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		select {
+		case err := <-errCh:
+			return err
+		default:
 		}
-		messages, err := requestQueue.Consume(ctx, batchSize, block)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		available := slots.Available()
+		if available <= 0 {
+			select {
+			case err := <-errCh:
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(10 * time.Millisecond):
+				continue
+			}
+		}
+		limit := batchSize
+		if limit <= 0 || limit > available {
+			limit = available
+		}
+		messages, err := requestQueue.Consume(ctx, limit, block)
 		if err != nil {
 			return err
 		}
 		for _, message := range messages {
-			if err := agent.ProcessRequestMessage(ctx, message, requestQueue); err != nil {
-				if deadErr := requestQueue.DeadLetter(ctx, message, err.Error()); deadErr != nil {
-					return deadErr
-				}
-				if ackErr := requestQueue.Ack(ctx, message.ID); ackErr != nil {
-					return ackErr
-				}
+			release, err := slots.Acquire(ctx, judgeAgentMessageLanguageKey(message))
+			if err != nil {
+				return err
 			}
+			recordJudgeAgentSlotMetrics(metrics, slots)
+			wg.Add(1)
+			go func(message queue.Message) {
+				defer wg.Done()
+				defer func() {
+					release()
+					recordJudgeAgentSlotMetrics(metrics, slots)
+				}()
+				if err := agent.ProcessRequestMessage(ctx, message, requestQueue); err != nil {
+					if deadErr := requestQueue.DeadLetter(ctx, message, err.Error()); deadErr != nil {
+						sendJudgeAgentLoopError(errCh, deadErr)
+						return
+					}
+					if ackErr := requestQueue.Ack(ctx, message.ID); ackErr != nil {
+						sendJudgeAgentLoopError(errCh, ackErr)
+						return
+					}
+				}
+			}(message)
 		}
 	}
 }
 
-func newJudgeAgentProcessor(backend string, cfg config.Config, objectStore storage.ObjectStorage, publisher submission.ResultPublisher) (judgeRequestProcessor, error) {
+func recordJudgeAgentSlotMetrics(metrics judgeAgentSlotMetrics, slots *judgeAgentSlotLimiter) {
+	if metrics == nil || slots == nil {
+		return
+	}
+	for _, usage := range slots.Usages() {
+		metrics.ObserveJudgeAgentSlots(usage.Scope, usage.Language, usage.Used, usage.Capacity)
+	}
+}
+
+func sendJudgeAgentLoopError(errCh chan<- error, err error) {
+	select {
+	case errCh <- err:
+	default:
+	}
+}
+
+func judgeAgentMessageLanguageKey(message queue.Message) string {
+	var request judgeevents.RequestEvent
+	if err := json.Unmarshal(message.Payload, &request); err != nil {
+		return ""
+	}
+	if request.LanguageSlug != "" {
+		return request.LanguageSlug
+	}
+	if request.LanguageID != 0 {
+		return strconv.FormatInt(request.LanguageID, 10)
+	}
+	return ""
+}
+
+func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, observer sandbox.SandboxObserver, publisher submission.ResultPublisher) (judgeRequestProcessor, error) {
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	if backend == sandbox.BackendFake {
 		return submission.NewFakeAsyncAgent(submission.FakeAsyncAgentOptions{
@@ -136,8 +225,15 @@ func newJudgeAgentProcessor(backend string, cfg config.Config, objectStore stora
 			ResultPublisher: publisher,
 		}), nil
 	}
-	sandboxBackend, err := newJudgeAgentSandbox(backend)
+	sandboxBackend, err := newJudgeAgentSandbox(backend, observer)
 	if err != nil {
+		return nil, err
+	}
+	capabilities, err := sandboxBackend.Probe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := sandbox.ValidateProductionCapabilities(cfg.Env, capabilities); err != nil {
 		return nil, err
 	}
 	return submission.NewCoreAsyncAgent(submission.CoreAsyncAgentOptions{
@@ -147,10 +243,21 @@ func newJudgeAgentProcessor(backend string, cfg config.Config, objectStore stora
 	}), nil
 }
 
-func newJudgeAgentSandbox(backend string) (sandbox.Sandbox, error) {
+func newJudgeAgentSandbox(backend string, observer sandbox.SandboxObserver) (sandbox.Sandbox, error) {
 	switch backend {
 	case sandbox.BackendProcess:
 		return sandbox.NewProcessSandbox(), nil
+	case sandbox.BackendDocker:
+		return sandbox.NewDockerSandbox(sandbox.DockerSandboxOptions{
+			Runtime:  envOr("SOJ_DOCKER_RUNNER_RUNTIME", ""),
+			TempDir:  envOr("SOJ_DOCKER_RUNNER_WORKDIR", ""),
+			User:     envOr("SOJ_DOCKER_RUNNER_USER", ""),
+			Observer: observer,
+			Images: map[string]string{
+				"go":    envOr("SOJ_DOCKER_RUNNER_IMAGE_GO", "ghcr.io/sparklyi/soj-runner-go:main"),
+				"cpp17": envOr("SOJ_DOCKER_RUNNER_IMAGE_CPP17", "ghcr.io/sparklyi/soj-runner-cpp17:main"),
+			},
+		}), nil
 	case sandbox.BackendIsolate:
 		return nil, errIsolateSandboxUnavailable{}
 	default:
@@ -208,4 +315,16 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) (int, error) {
+	raw := envOr(key, "")
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
 }
