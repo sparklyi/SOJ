@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"SOJ/internal/config"
 	"SOJ/internal/judge"
+	"SOJ/internal/judgecore/sandbox"
 )
 
 func TestNewJudgeEngineDefaultsToAgentProtocol(t *testing.T) {
@@ -62,5 +64,22 @@ func TestNewWorkerObjectStorageAcceptsHTTPEndpoint(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("newWorkerObjectStorage returned error: %v", err)
+	}
+}
+
+func TestNewJudgeAgentSandboxRejectsIsolateUntilAdapterExists(t *testing.T) {
+	_, err := newJudgeAgentSandbox(sandbox.BackendIsolate)
+	if err == nil || !strings.Contains(err.Error(), "isolate sandbox execution is not implemented") {
+		t.Fatalf("err = %v, want explicit isolate unavailable error", err)
+	}
+}
+
+func TestNewJudgeAgentSandboxAllowsProcessBackend(t *testing.T) {
+	got, err := newJudgeAgentSandbox(sandbox.BackendProcess)
+	if err != nil {
+		t.Fatalf("newJudgeAgentSandbox returned error: %v", err)
+	}
+	if got.Name() != sandbox.BackendProcess {
+		t.Fatalf("backend = %q, want process", got.Name())
 	}
 }
