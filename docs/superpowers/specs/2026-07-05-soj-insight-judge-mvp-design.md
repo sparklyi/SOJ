@@ -4,7 +4,7 @@
 
 SOJ Insight Judge will start inside the current SOJ repository. It should run as an independent process, but share the repository while the domain model, judge protocol, database schema, API shape, Docker deployment, and smoke workflow are still changing.
 
-The first milestone is not a self-written Linux sandbox. The project should self-build the OJ-specific judge core: orchestration, case-level results, reproducible manifests, data validation, caching, scheduling, and observability. The low-level execution boundary should use a mature sandbox such as `isolate` or `nsjail` for the MVP.
+The first milestone is not a self-written Linux sandbox. The project should self-build the OJ-specific judge core: orchestration, case-level results, reproducible manifests, data validation, caching, scheduling, and observability. The low-level execution boundary should use Docker runner plus gVisor/runsc for the MVP production path.
 
 ## Product Positioning
 
@@ -233,7 +233,7 @@ Goal: move from local runner behavior to a defensible untrusted-code boundary.
 
 Deliverables:
 
-- isolate-first sandbox adapter, with nsjail as fallback if environment fit is poor
+- Docker runner + gVisor/runsc sandbox adapter, with isolate/nsjail kept as future backend options if environment fit is better
 - resource limits for CPU, wall time, memory, output size, process count, fd count, and temp disk
 - no-network execution profile by default
 - output truncation and sanitization
@@ -287,7 +287,7 @@ Parallel work units:
 
 ## Sandbox Strategy
 
-MVP should use `isolate` first if the target environment supports it cleanly. `nsjail` is the fallback when finer configuration is needed.
+MVP should use Docker runner first, with gVisor/runsc as the production isolation boundary. `isolate` and `nsjail` remain fallback or future host sandbox adapters when the target environment fits them better.
 
 Do not implement these low-level primitives in SOJ MVP:
 
@@ -298,7 +298,7 @@ Do not implement these low-level primitives in SOJ MVP:
 - network isolation
 - rootless user mapping
 
-Keep the sandbox adapter interface replaceable so future backends can use gVisor, Firecracker, or another executor.
+Keep the sandbox adapter interface replaceable so future backends can use isolate, nsjail, Firecracker, or another executor.
 
 ## Security Requirements
 
@@ -342,7 +342,7 @@ After the baseline is stable, add:
 For MVP, do not build:
 
 - a fully custom sandbox
-- Firecracker or gVisor production runtime
+- Firecracker or another microVM production runtime
 - Kubernetes-native scheduling
 - support for dozens of languages
 - AI judging or AI-generated problem analysis
@@ -356,7 +356,7 @@ For MVP, do not build:
 4. Add internal `judgecore` domain types and tests.
 5. Support C++17, Go, and Python as initial language profiles.
 6. Add exact-output checker and workspace cleanup.
-7. Add `isolate` or `nsjail` runner adapter behind an interface.
+7. Add Docker runner + gVisor/runsc adapter behind an interface.
 8. Add API fields for explainable submission details.
 9. Add Prometheus metrics for compile/run/check/cache timings.
 10. Add Docker smoke for a real compile-run-check flow.

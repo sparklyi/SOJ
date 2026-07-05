@@ -86,12 +86,14 @@ Backend safety matrix:
 | --- | --- | --- |
 | `fake` | local, dev, CI smoke | Deterministic async pipeline validation. It does not execute user code. |
 | `process` | `dev`, `test`, `local` only | Development-only real code execution with wall-time and output guards. It is not a security sandbox. |
-| `isolate` | production target | Reserved production sandbox target. Current startup probes for the `isolate` binary, but this build does not yet ship a complete isolate execution adapter. |
+| `docker` | production target | Docker runner backend with gVisor/runsc in production. Development may explicitly allow the default Docker runtime for local smoke only. |
+| `isolate` | future backend | Reserved host sandbox adapter behind the same sandbox contract. It is not the current production mainline. |
 
-For production-like real code execution after the isolate adapter is completed:
+For production-like real code execution after the Docker runner backend is completed:
 
-- set `SOJ_JUDGE_SANDBOX_BACKEND=isolate`
-- install and validate `isolate` inside the judge-agent runtime
+- set `SOJ_JUDGE_SANDBOX_BACKEND=docker`
+- install and validate Docker plus gVisor/runsc on the judge node
+- configure `SOJ_DOCKER_RUNNER_RUNTIME=runsc` for production
 - do not set `SOJ_JUDGE_SANDBOX_BACKEND=process` outside `dev`, `test`, or `local`
 - keep judge-agent isolated from business database credentials
 
