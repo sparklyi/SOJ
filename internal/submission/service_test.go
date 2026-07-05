@@ -33,6 +33,73 @@ func TestCompleteSubmissionSkipsExistingTerminalStatus(t *testing.T) {
 	}
 }
 
+func TestCompleteSubmissionPersistsJudgeEvidence(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
+	service := NewService(ServiceOptions{Repository: repo})
+	exitCode := int32(1)
+
+	got, err := service.CompleteSubmission(context.Background(), 1, judge.Result{
+		Verdict:       judge.VerdictWrongAnswer,
+		TimeMS:        12,
+		MemoryKB:      256,
+		ErrorMessage:  "first case failed",
+		JudgedAt:      time.Unix(200, 0).UTC(),
+		CompileOutput: "compile diagnostics",
+		Stderr:        "stderr diagnostics",
+		Manifest: judge.Manifest{
+			JudgeCoreVersion: "core-2026.07",
+			JudgeAgentID:     "agent-a",
+			LanguageRuntime:  "go1.24",
+			SandboxBackend:   "nsjail",
+			SandboxProfile:   "default",
+			TestcaseSetHash:  "cases-hash",
+			CheckerHash:      "checker-hash",
+			TraceID:          "trace-1",
+		},
+		Cases: []judge.CaseResult{
+			{Index: 1, TestcaseKey: "cases/1", Verdict: judge.VerdictAccepted, Score: 50, TimeMS: 4, MemoryKB: 128},
+			{Index: 2, GroupName: "samples", TestcaseKey: "cases/2", Verdict: judge.VerdictWrongAnswer, Score: 0, TimeMS: 8, MemoryKB: 256, ExitCode: &exitCode, CheckerMessage: "expected 42", OutputDiffSummary: "line 1 differs"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSubmission returned error: %v", err)
+	}
+	if got.Status != StatusWrongAnswer || got.Score != 0 || got.TimeMS == nil || *got.TimeMS != 12 {
+		t.Fatalf("submission = %+v", got)
+	}
+
+	attempt, err := repo.GetLatestJudgeAttemptBySubmissionID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetLatestJudgeAttemptBySubmissionID returned error: %v", err)
+	}
+	if attempt.ProtocolVersion != judge.ProtocolVersion || attempt.JudgeCoreVersion != "core-2026.07" || attempt.JudgeEngine != judge.EngineSOJAgent {
+		t.Fatalf("attempt protocol fields = %+v", attempt)
+	}
+	if attempt.FirstFailedCaseIndex == nil || *attempt.FirstFailedCaseIndex != 2 || attempt.TraceID == nil || *attempt.TraceID != "trace-1" {
+		t.Fatalf("attempt failure metadata = %+v", attempt)
+	}
+
+	cases, err := repo.ListJudgeCaseResults(context.Background(), attempt.ID)
+	if err != nil {
+		t.Fatalf("ListJudgeCaseResults returned error: %v", err)
+	}
+	if len(cases) != 2 || cases[1].Status != StatusWrongAnswer || cases[1].TestcaseKey == nil || *cases[1].TestcaseKey != "cases/2" {
+		t.Fatalf("case results = %+v", cases)
+	}
+
+	projection, err := repo.GetSubmissionResult(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetSubmissionResult returned error: %v", err)
+	}
+	if projection.AttemptID != attempt.ID || projection.Status != StatusWrongAnswer || projection.FirstFailedCaseIndex == nil || *projection.FirstFailedCaseIndex != 2 {
+		t.Fatalf("projection = %+v attempt = %+v", projection, attempt)
+	}
+	if !bytes.Contains(projection.SafeSummary, []byte(`"verdict":"wrong_answer"`)) {
+		t.Fatalf("safe summary = %s", projection.SafeSummary)
+	}
+}
+
 func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()

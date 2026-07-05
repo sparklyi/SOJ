@@ -54,7 +54,36 @@ type Result struct {
 	Stderr        string
 	CompileOutput string
 	ErrorMessage  string
+	Cases         []CaseResult
+	Manifest      Manifest
 	JudgedAt      time.Time
+}
+
+type CaseResult struct {
+	Index             int
+	GroupName         string
+	TestcaseKey       string
+	Verdict           Verdict
+	Score             int32
+	TimeMS            int
+	MemoryKB          int
+	ExitCode          *int32
+	Signal            string
+	CheckerMessage    string
+	OutputDiffSummary string
+}
+
+type Manifest struct {
+	JudgeCoreVersion string
+	JudgeAgentID     string
+	LanguageRuntime  string
+	SandboxBackend   string
+	SandboxProfile   string
+	TestcaseSetHash  string
+	CheckerHash      string
+	ValidatorHash    string
+	TraceID          string
+	Raw              map[string]any
 }
 
 type JudgeEngine interface {
