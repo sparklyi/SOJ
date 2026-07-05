@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the current async judge architecture: API creates submissions, worker dispatches durable tasks, judge-agent runs JudgeCore, and result consumer persists terminal results. The next work focuses on real sandbox execution, trustworthy result evidence, and deployment safety without changing the core process boundaries.
 
-**Tech Stack:** Go 1.24, Gin, PostgreSQL/sqlc/pgx, Redis Stream, MinIO/S3, Docker Compose, Prometheus, GitHub Actions, `isolate` sandbox.
+**Tech Stack:** Go 1.24, Gin, PostgreSQL/sqlc/pgx, Redis Stream, MinIO/S3, Docker Compose, Prometheus, GitHub Actions, Docker runner + gVisor/runsc sandbox.
 
 ---
 
@@ -71,7 +71,7 @@ P0, P1, and the smallest P3 path should be treated as the first implementation s
 
 **Complete When:**
 
-- `SOJ_JUDGE_SANDBOX_BACKEND=isolate` can start a judge-agent in a production-like environment.
+- `SOJ_JUDGE_SANDBOX_BACKEND=docker` with `SOJ_DOCKER_RUNNER_RUNTIME=runsc` can start a judge-agent in a production-like environment.
 - Non-dev environments reject unsafe `process` backend.
 - Go accepted submission returns AC through real execution.
 - C++17 accepted submission returns AC through real execution.
@@ -136,7 +136,7 @@ P0, P1, and the smallest P3 path should be treated as the first implementation s
 
 **Notes:**
 
-- If `isolate` requires privileged Docker settings, document them clearly.
+- If Docker/gVisor requires judge-node host setup, document it clearly.
 - Keep fake smoke available because it is cheaper and less environment-sensitive.
 
 ## P2: Trustworthy Judge Results
@@ -190,7 +190,7 @@ P0, P1, and the smallest P3 path should be treated as the first implementation s
 
 **Complete When:**
 
-- Deployment docs distinguish local fake, dev/test process, and production-like isolate backends.
+- Deployment docs distinguish local fake, dev/test process, and production-like Docker/gVisor backends.
 - Secret handling is documented for JWT, PostgreSQL, Redis, and object storage.
 - Judge-agent credential boundary is explicit.
 - `/metrics` exposure guidance is documented.
@@ -218,7 +218,7 @@ P0, P1, and the smallest P3 path should be treated as the first implementation s
 Start with this slice:
 
 - [ ] P0 CI workflow.
-- [ ] P1 isolate backend skeleton and safety checks.
+- [ ] P1 Docker/gVisor backend skeleton and safety checks.
 - [ ] P1 Go/C++17 profile validation through real execution.
 - [ ] P3 minimal real Docker smoke for one accepted submission.
 
@@ -227,7 +227,7 @@ Do not start P2 result expansion until at least one real language can be judged 
 ## Phase Commit Strategy
 
 - P0: `ci: add backend validation workflow`
-- P1 sandbox skeleton: `feat(judgecore): add isolate sandbox backend`
+- P1 sandbox skeleton: `feat(judgecore): add docker gvisor sandbox backend`
 - P1 language execution: `feat(judgecore): run go and cpp submissions in sandbox`
 - P3 smoke: `test(deploy): add real judge smoke path`
 - P2 evidence: `feat(judge): persist trustworthy judge evidence`
