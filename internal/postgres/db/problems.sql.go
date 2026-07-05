@@ -73,6 +73,43 @@ func (q *Queries) ClearProblemTags(ctx context.Context, problemID int64) error {
 	return err
 }
 
+const completeProblemCheckRun = `-- name: CompleteProblemCheckRun :one
+UPDATE problem_check_runs
+SET status = 'completed',
+    summary = $1,
+    error_message = NULL,
+    finished_at = coalesce($2, finished_at, now()),
+    updated_at = now()
+WHERE id = $3
+  AND status IN ('queued', 'running')
+RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+`
+
+type CompleteProblemCheckRunParams struct {
+	Summary    []byte             `db:"summary" json:"summary"`
+	FinishedAt pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
+	ID         int64              `db:"id" json:"id"`
+}
+
+func (q *Queries) CompleteProblemCheckRun(ctx context.Context, arg CompleteProblemCheckRunParams) (ProblemCheckRun, error) {
+	row := q.db.QueryRow(ctx, completeProblemCheckRun, arg.Summary, arg.FinishedAt, arg.ID)
+	var i ProblemCheckRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.TestcaseSetID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Summary,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const countProblems = `-- name: CountProblems :one
 SELECT count(*)::bigint
 FROM problems
@@ -180,6 +217,112 @@ func (q *Queries) CreateProblem(ctx context.Context, arg CreateProblemParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+	)
+	return i, err
+}
+
+const createProblemCheckFinding = `-- name: CreateProblemCheckFinding :one
+INSERT INTO problem_check_findings (
+    run_id,
+    severity,
+    code,
+    message,
+    case_index,
+    testcase_key,
+    details
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7
+)
+RETURNING id, run_id, severity, code, message, case_index, testcase_key, details, created_at
+`
+
+type CreateProblemCheckFindingParams struct {
+	RunID       int64       `db:"run_id" json:"run_id"`
+	Severity    string      `db:"severity" json:"severity"`
+	Code        string      `db:"code" json:"code"`
+	Message     string      `db:"message" json:"message"`
+	CaseIndex   pgtype.Int4 `db:"case_index" json:"case_index"`
+	TestcaseKey pgtype.Text `db:"testcase_key" json:"testcase_key"`
+	Details     []byte      `db:"details" json:"details"`
+}
+
+func (q *Queries) CreateProblemCheckFinding(ctx context.Context, arg CreateProblemCheckFindingParams) (ProblemCheckFinding, error) {
+	row := q.db.QueryRow(ctx, createProblemCheckFinding,
+		arg.RunID,
+		arg.Severity,
+		arg.Code,
+		arg.Message,
+		arg.CaseIndex,
+		arg.TestcaseKey,
+		arg.Details,
+	)
+	var i ProblemCheckFinding
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Severity,
+		&i.Code,
+		&i.Message,
+		&i.CaseIndex,
+		&i.TestcaseKey,
+		&i.Details,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createProblemCheckRun = `-- name: CreateProblemCheckRun :one
+INSERT INTO problem_check_runs (
+    problem_id,
+    testcase_set_id,
+    requested_by,
+    status,
+    summary
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5
+)
+RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+`
+
+type CreateProblemCheckRunParams struct {
+	ProblemID     int64       `db:"problem_id" json:"problem_id"`
+	TestcaseSetID pgtype.Int8 `db:"testcase_set_id" json:"testcase_set_id"`
+	RequestedBy   pgtype.Int8 `db:"requested_by" json:"requested_by"`
+	Status        string      `db:"status" json:"status"`
+	Summary       []byte      `db:"summary" json:"summary"`
+}
+
+func (q *Queries) CreateProblemCheckRun(ctx context.Context, arg CreateProblemCheckRunParams) (ProblemCheckRun, error) {
+	row := q.db.QueryRow(ctx, createProblemCheckRun,
+		arg.ProblemID,
+		arg.TestcaseSetID,
+		arg.RequestedBy,
+		arg.Status,
+		arg.Summary,
+	)
+	var i ProblemCheckRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.TestcaseSetID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Summary,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -320,6 +463,49 @@ func (q *Queries) CreateTestcaseSet(ctx context.Context, arg CreateTestcaseSetPa
 		&i.IsCurrent,
 		&i.CreatedBy,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const failProblemCheckRun = `-- name: FailProblemCheckRun :one
+UPDATE problem_check_runs
+SET status = 'failed',
+    summary = $1,
+    error_message = $2,
+    finished_at = coalesce($3, finished_at, now()),
+    updated_at = now()
+WHERE id = $4
+  AND status IN ('queued', 'running')
+RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+`
+
+type FailProblemCheckRunParams struct {
+	Summary      []byte             `db:"summary" json:"summary"`
+	ErrorMessage pgtype.Text        `db:"error_message" json:"error_message"`
+	FinishedAt   pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
+	ID           int64              `db:"id" json:"id"`
+}
+
+func (q *Queries) FailProblemCheckRun(ctx context.Context, arg FailProblemCheckRunParams) (ProblemCheckRun, error) {
+	row := q.db.QueryRow(ctx, failProblemCheckRun,
+		arg.Summary,
+		arg.ErrorMessage,
+		arg.FinishedAt,
+		arg.ID,
+	)
+	var i ProblemCheckRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.TestcaseSetID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Summary,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -484,6 +670,54 @@ func (q *Queries) GetProblemBySlug(ctx context.Context, slug string) (GetProblem
 	return i, err
 }
 
+const getProblemCheckFindingByID = `-- name: GetProblemCheckFindingByID :one
+SELECT id, run_id, severity, code, message, case_index, testcase_key, details, created_at
+FROM problem_check_findings
+WHERE id = $1
+`
+
+func (q *Queries) GetProblemCheckFindingByID(ctx context.Context, id int64) (ProblemCheckFinding, error) {
+	row := q.db.QueryRow(ctx, getProblemCheckFindingByID, id)
+	var i ProblemCheckFinding
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Severity,
+		&i.Code,
+		&i.Message,
+		&i.CaseIndex,
+		&i.TestcaseKey,
+		&i.Details,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getProblemCheckRunByID = `-- name: GetProblemCheckRunByID :one
+SELECT id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+FROM problem_check_runs
+WHERE id = $1
+`
+
+func (q *Queries) GetProblemCheckRunByID(ctx context.Context, id int64) (ProblemCheckRun, error) {
+	row := q.db.QueryRow(ctx, getProblemCheckRunByID, id)
+	var i ProblemCheckRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.TestcaseSetID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Summary,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getProblemStats = `-- name: GetProblemStats :one
 SELECT
     p.id AS problem_id,
@@ -534,6 +768,89 @@ type LinkProblemTagParams struct {
 func (q *Queries) LinkProblemTag(ctx context.Context, arg LinkProblemTagParams) error {
 	_, err := q.db.Exec(ctx, linkProblemTag, arg.ProblemID, arg.TagID)
 	return err
+}
+
+const listProblemCheckFindingsByRunID = `-- name: ListProblemCheckFindingsByRunID :many
+SELECT id, run_id, severity, code, message, case_index, testcase_key, details, created_at
+FROM problem_check_findings
+WHERE run_id = $1
+ORDER BY id
+`
+
+func (q *Queries) ListProblemCheckFindingsByRunID(ctx context.Context, runID int64) ([]ProblemCheckFinding, error) {
+	rows, err := q.db.Query(ctx, listProblemCheckFindingsByRunID, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProblemCheckFinding
+	for rows.Next() {
+		var i ProblemCheckFinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Severity,
+			&i.Code,
+			&i.Message,
+			&i.CaseIndex,
+			&i.TestcaseKey,
+			&i.Details,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProblemCheckRunsByProblemID = `-- name: ListProblemCheckRunsByProblemID :many
+SELECT id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+FROM problem_check_runs
+WHERE problem_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT $3 OFFSET $2
+`
+
+type ListProblemCheckRunsByProblemIDParams struct {
+	ProblemID int64 `db:"problem_id" json:"problem_id"`
+	Offset    int32 `db:"offset" json:"offset"`
+	Limit     int32 `db:"limit" json:"limit"`
+}
+
+func (q *Queries) ListProblemCheckRunsByProblemID(ctx context.Context, arg ListProblemCheckRunsByProblemIDParams) ([]ProblemCheckRun, error) {
+	rows, err := q.db.Query(ctx, listProblemCheckRunsByProblemID, arg.ProblemID, arg.Offset, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProblemCheckRun
+	for rows.Next() {
+		var i ProblemCheckRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProblemID,
+			&i.TestcaseSetID,
+			&i.RequestedBy,
+			&i.Status,
+			&i.Summary,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProblemTags = `-- name: ListProblemTags :many

@@ -43,6 +43,7 @@ INSERT INTO judge_attempts (
     submission_id,
     run_id,
     task_id,
+    rejudge_batch_id,
     attempt_no,
     protocol_version,
     judge_core_version,
@@ -77,6 +78,7 @@ INSERT INTO judge_attempts (
     sqlc.narg('submission_id'),
     sqlc.narg('run_id'),
     sqlc.narg('task_id'),
+    sqlc.narg('rejudge_batch_id'),
     sqlc.arg('attempt_no'),
     sqlc.arg('protocol_version'),
     sqlc.arg('judge_core_version'),
@@ -134,6 +136,12 @@ SELECT *
 FROM judge_attempts
 WHERE submission_id = $1
 ORDER BY attempt_no DESC, id DESC;
+
+-- name: ListJudgeAttemptsByRejudgeBatch :many
+SELECT *
+FROM judge_attempts
+WHERE rejudge_batch_id = $1
+ORDER BY id;
 
 -- name: MarkJudgeAttemptFinished :one
 UPDATE judge_attempts
@@ -265,6 +273,95 @@ WHERE (sqlc.narg('user_id')::bigint IS NULL OR user_id = sqlc.narg('user_id')::b
   AND (sqlc.narg('problem_id')::bigint IS NULL OR problem_id = sqlc.narg('problem_id')::bigint)
   AND (sqlc.narg('contest_id')::bigint IS NULL OR contest_id = sqlc.narg('contest_id')::bigint)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
+
+-- name: CreateRejudgeBatch :one
+INSERT INTO rejudge_batches (
+    problem_id,
+    contest_id,
+    requested_by,
+    status,
+    reason,
+    filters,
+    total_count
+) VALUES (
+    sqlc.narg('problem_id'),
+    sqlc.narg('contest_id'),
+    sqlc.arg('requested_by'),
+    sqlc.arg('status'),
+    sqlc.arg('reason'),
+    sqlc.arg('filters'),
+    sqlc.arg('total_count')
+)
+RETURNING *;
+
+-- name: GetRejudgeBatchByID :one
+SELECT *
+FROM rejudge_batches
+WHERE id = $1;
+
+-- name: ListRejudgeBatches :many
+SELECT *
+FROM rejudge_batches
+WHERE (sqlc.narg('problem_id')::bigint IS NULL OR problem_id = sqlc.narg('problem_id')::bigint)
+  AND (sqlc.narg('contest_id')::bigint IS NULL OR contest_id = sqlc.narg('contest_id')::bigint)
+  AND (sqlc.narg('requested_by')::bigint IS NULL OR requested_by = sqlc.narg('requested_by')::bigint)
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
+
+-- name: UpdateRejudgeBatchProgress :one
+UPDATE rejudge_batches
+SET status = CASE
+        WHEN status = 'queued' THEN 'running'
+        ELSE status
+    END,
+    completed_count = sqlc.arg('completed_count'),
+    failed_count = sqlc.arg('failed_count'),
+    canceled_count = sqlc.arg('canceled_count'),
+    started_at = coalesce(started_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status IN ('queued', 'running')
+RETURNING *;
+
+-- name: CompleteRejudgeBatch :one
+UPDATE rejudge_batches
+SET status = 'completed',
+    completed_count = sqlc.arg('completed_count'),
+    failed_count = sqlc.arg('failed_count'),
+    canceled_count = sqlc.arg('canceled_count'),
+    error_message = NULL,
+    started_at = coalesce(started_at, now()),
+    finished_at = coalesce(sqlc.narg('finished_at'), finished_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status IN ('queued', 'running')
+RETURNING *;
+
+-- name: FailRejudgeBatch :one
+UPDATE rejudge_batches
+SET status = 'failed',
+    completed_count = sqlc.arg('completed_count'),
+    failed_count = sqlc.arg('failed_count'),
+    canceled_count = sqlc.arg('canceled_count'),
+    error_message = sqlc.arg('error_message'),
+    started_at = coalesce(started_at, now()),
+    finished_at = coalesce(sqlc.narg('finished_at'), finished_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status IN ('queued', 'running')
+RETURNING *;
+
+-- name: CancelRejudgeBatch :one
+UPDATE rejudge_batches
+SET status = 'canceled',
+    canceled_count = sqlc.arg('canceled_count'),
+    error_message = sqlc.narg('error_message'),
+    finished_at = coalesce(sqlc.narg('finished_at'), finished_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status IN ('queued', 'running')
+RETURNING *;
 
 -- name: UpdateSubmissionStatus :one
 UPDATE submissions

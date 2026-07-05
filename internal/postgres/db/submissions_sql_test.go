@@ -98,7 +98,8 @@ func TestJudgeResultSchemaHasDurableAttemptAndProjectionTables(t *testing.T) {
 			t.Fatalf("initial schema missing %q", want)
 		}
 	}
-	if strings.Contains(schema, "details jsonb NOT NULL DEFAULT '{}'::jsonb") {
+	submissionResultsSchema := tableSchema(t, schema, "submission_results", "contest_problem_results")
+	if strings.Contains(submissionResultsSchema, "details jsonb NOT NULL DEFAULT '{}'::jsonb") {
 		t.Fatalf("submission_results should not keep generic details jsonb")
 	}
 }
@@ -156,6 +157,86 @@ func TestJudgeResultQueriesExposeAttemptsCasesAndProjection(t *testing.T) {
 	}
 }
 
+func TestProblemCheckSchemaAndQueriesExposeRunsAndFindings(t *testing.T) {
+	schema := readInitialSchema(t)
+	for _, want := range []string{
+		"CREATE TABLE problem_check_runs",
+		"CREATE TABLE problem_check_findings",
+		"problem_id bigint NOT NULL REFERENCES problems(id) ON DELETE CASCADE",
+		"run_id bigint NOT NULL REFERENCES problem_check_runs(id) ON DELETE CASCADE",
+		"CREATE INDEX problem_check_runs_problem_created_idx",
+		"CREATE INDEX problem_check_findings_run_severity_idx",
+	} {
+		if !strings.Contains(schema, want) {
+			t.Fatalf("problem check schema missing %q", want)
+		}
+	}
+
+	for name, query := range map[string]string{
+		"CreateProblemCheckRun":           createProblemCheckRun,
+		"GetProblemCheckRunByID":          getProblemCheckRunByID,
+		"ListProblemCheckRunsByProblemID": listProblemCheckRunsByProblemID,
+		"CompleteProblemCheckRun":         completeProblemCheckRun,
+		"FailProblemCheckRun":             failProblemCheckRun,
+		"CreateProblemCheckFinding":       createProblemCheckFinding,
+		"GetProblemCheckFindingByID":      getProblemCheckFindingByID,
+		"ListProblemCheckFindingsByRunID": listProblemCheckFindingsByRunID,
+	} {
+		if !strings.Contains(query, "problem_check_") {
+			t.Fatalf("%s does not target problem check tables:\n%s", name, query)
+		}
+	}
+	if !strings.Contains(completeProblemCheckRun, "AND status IN ('queued', 'running')") {
+		t.Fatalf("CompleteProblemCheckRun should guard mutable statuses:\n%s", completeProblemCheckRun)
+	}
+	if !strings.Contains(failProblemCheckRun, "AND status IN ('queued', 'running')") {
+		t.Fatalf("FailProblemCheckRun should guard mutable statuses:\n%s", failProblemCheckRun)
+	}
+}
+
+func TestRejudgeBatchSchemaAndQueriesExposeProgressLifecycle(t *testing.T) {
+	schema := readInitialSchema(t)
+	for _, want := range []string{
+		"CREATE TABLE rejudge_batches",
+		"rejudge_batch_id bigint REFERENCES rejudge_batches(id) ON DELETE SET NULL",
+		"CREATE INDEX rejudge_batches_status_updated_idx",
+		"CREATE INDEX rejudge_batches_problem_created_idx",
+		"CREATE INDEX judge_attempts_rejudge_batch_id_idx",
+	} {
+		if !strings.Contains(schema, want) {
+			t.Fatalf("rejudge schema missing %q", want)
+		}
+	}
+
+	for name, query := range map[string]string{
+		"CreateRejudgeBatch":              createRejudgeBatch,
+		"GetRejudgeBatchByID":             getRejudgeBatchByID,
+		"ListRejudgeBatches":              listRejudgeBatches,
+		"UpdateRejudgeBatchProgress":      updateRejudgeBatchProgress,
+		"CompleteRejudgeBatch":            completeRejudgeBatch,
+		"FailRejudgeBatch":                failRejudgeBatch,
+		"CancelRejudgeBatch":              cancelRejudgeBatch,
+		"ListJudgeAttemptsByRejudgeBatch": listJudgeAttemptsByRejudgeBatch,
+	} {
+		if !strings.Contains(query, "rejudge_") {
+			t.Fatalf("%s does not target rejudge tables:\n%s", name, query)
+		}
+	}
+	if !strings.Contains(createJudgeAttempt, "rejudge_batch_id") {
+		t.Fatalf("CreateJudgeAttempt should accept rejudge_batch_id:\n%s", createJudgeAttempt)
+	}
+	for name, query := range map[string]string{
+		"UpdateRejudgeBatchProgress": updateRejudgeBatchProgress,
+		"CompleteRejudgeBatch":       completeRejudgeBatch,
+		"FailRejudgeBatch":           failRejudgeBatch,
+		"CancelRejudgeBatch":         cancelRejudgeBatch,
+	} {
+		if !strings.Contains(query, "AND status IN ('queued', 'running')") {
+			t.Fatalf("%s should guard mutable statuses:\n%s", name, query)
+		}
+	}
+}
+
 func readInitialSchema(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join("..", "..", "migrations", "000001_init.up.sql")
@@ -164,4 +245,17 @@ func readInitialSchema(t *testing.T) string {
 		t.Fatalf("read initial migration: %v", err)
 	}
 	return string(content)
+}
+
+func tableSchema(t *testing.T, schema, tableName, nextTableName string) string {
+	t.Helper()
+	start := strings.Index(schema, "CREATE TABLE "+tableName)
+	if start < 0 {
+		t.Fatalf("schema missing table %s", tableName)
+	}
+	end := strings.Index(schema[start:], "CREATE TABLE "+nextTableName)
+	if end < 0 {
+		t.Fatalf("schema missing table %s after %s", nextTableName, tableName)
+	}
+	return schema[start : start+end]
 }
