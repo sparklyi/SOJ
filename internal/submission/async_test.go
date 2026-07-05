@@ -3,6 +3,7 @@ package submission
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -128,7 +129,7 @@ func TestResultConsumerIsIdempotentAndAcksAfterPersist(t *testing.T) {
 	event := judgeevents.ResultEvent{
 		EventID:        "evt-result-1",
 		RequestEventID: "evt-request-1",
-		AttemptID:      "attempt-1",
+		AttemptID:      strconv.FormatInt(attempt.ID, 10),
 		TraceID:        "trace-1",
 		Status:         judge.VerdictTimeLimitExceeded,
 		Result:         judge.Result{Verdict: judge.VerdictTimeLimitExceeded, JudgedAt: time.Unix(101, 0).UTC()},

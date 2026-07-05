@@ -107,9 +107,12 @@ type EnsureJudgeAttemptInput struct {
 	SubmissionID    int64
 	TaskID          int64
 	LanguageID      int64
+	TestcaseSetID   int64
+	TestcaseSetHash string
 	ProtocolVersion string
 	JudgeEngine     string
 	TraceID         string
+	StartedAt       time.Time
 }
 
 func NewResultConsumer(options ResultConsumerOptions) *ResultConsumer {
