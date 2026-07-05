@@ -1,9 +1,11 @@
 # SOJ v2 Worker
 
-The worker has two responsibilities:
+The worker has two production responsibilities:
 
 - Dispatch pending `judge_tasks` rows from PostgreSQL to Redis Stream.
-- Consume Redis Stream messages, call `JudgeEngine`, and write terminal results idempotently.
+- Consume judge result events from Redis Stream and write terminal results idempotently.
+
+`soj-judge-agent` is the process that consumes judge request events, runs the JudgeCore pipeline, and publishes result events. The worker remains the only process in this path that writes business database state.
 
 PostgreSQL is the source of truth. Redis Stream messages are delivery hints and may be duplicated. Worker updates must tolerate duplicate messages and repeated terminal writes without changing `judged_at` or `finished_at`.
 
@@ -22,7 +24,20 @@ When a task exhausts retries, the worker first marks PostgreSQL `judge_tasks.sta
 
 ## Local Judge
 
-Docker Compose uses the internal `fake://accepted` engine. It returns accepted results and exposes one language for local sync tests. The compose seed job inserts a matching enabled language row so submissions can be created immediately after startup.
+Docker Compose defaults to the internal `fake://accepted` path. It returns accepted results and exposes one fake language for fast local async-flow tests. The compose seed job also inserts Go and C++17 `soj-agent` language rows for local real-code smoke.
+
+To run the local real-code path, start Compose with:
+
+```bash
+SOJ_ENV=local \
+SOJ_JUDGE_ENDPOINT=agent://local \
+SOJ_JUDGE_SANDBOX_BACKEND=process \
+docker compose -f deploy/docker-compose.yaml up --build -d
+
+SMOKE_REAL_JUDGE=1 ./deploy/smoke.sh
+```
+
+The `process` backend is only for `dev`, `test`, and `local`; it is not a production sandbox.
 
 ## Metrics
 

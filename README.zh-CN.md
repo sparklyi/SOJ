@@ -92,6 +92,15 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 
 本地栈使用 `fake://accepted` 和 `SOJ_JUDGE_SANDBOX_BACKEND=fake`，因此在具备特权 sandbox 运行时之前，也可以跑通完整异步评测流程。
 
+如需在本地跑真实代码 smoke，可使用仅限开发的 process backend：
+
+```bash
+SOJ_ENV=local SOJ_JUDGE_ENDPOINT=agent://local SOJ_JUDGE_SANDBOX_BACKEND=process make up
+SMOKE_REAL_JUDGE=1 make smoke
+```
+
+process backend 适合本地验证，但不是生产 sandbox。
+
 ## 开发
 
 运行主要检查：
@@ -223,8 +232,8 @@ internal/observability  日志、健康检查和 Prometheus 指标
 - 使用生产 PostgreSQL、Redis 和兼容 S3 的对象存储凭据。
 - 将 `/metrics` 保持在私有网络中，或在入口层加保护。
 - 运行 `soj-judge-agent` 时不要提供业务数据库凭据。
-- 生产类真实代码执行应使用 `SOJ_JUDGE_SANDBOX_BACKEND=isolate`。
-- 不要在开发和测试之外使用 `process` sandbox backend。
+- `SOJ_JUDGE_SANDBOX_BACKEND=isolate` 是生产 sandbox 目标，需要等 isolate adapter 完成并验证后再用于生产类真实代码执行。
+- 不要在开发、测试和本地真实代码 smoke 之外使用 `process` sandbox backend。
 - 不要把本地 fake language seed 当作生产语言数据使用。
 
 ## 路线图
