@@ -121,8 +121,16 @@ func TestDockerSandboxProbeReportsRunscReadiness(t *testing.T) {
 	if !capabilities.ProductionReady || capabilities.Runtime != "runsc" {
 		t.Fatalf("capabilities = %+v", capabilities)
 	}
+	if len(client.runs) != 1 {
+		t.Fatalf("probe runs = %d, want 1", len(client.runs))
+	}
+	probe := client.runs[0]
+	if probe.Runtime != "runsc" || !probe.NetworkDisabled || !probe.ReadOnlyRootFS || probe.User == "" || !probe.CapDropAll {
+		t.Fatalf("probe spec is not production-shaped: %+v", probe)
+	}
 
 	client.runtimeAvailable = false
+	client.runs = nil
 	capabilities, err = s.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("Probe returned error: %v", err)

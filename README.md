@@ -101,6 +101,21 @@ SMOKE_REAL_JUDGE=1 make smoke
 
 The process backend is useful for local validation, but it is not a production sandbox.
 
+To run the local real-code smoke path through Docker runner containers:
+
+```bash
+make smoke-real-docker
+```
+
+To validate the same path through gVisor/runsc after installing runsc:
+
+```bash
+./scripts/dev/install-gvisor.sh
+make smoke-real-gvisor
+```
+
+The Docker runner path uses [deploy/docker-compose.docker-runner.yaml](deploy/docker-compose.docker-runner.yaml). Only `soj-judge-agent` receives the Docker socket; runner containers do not receive business service credentials or the Docker socket.
+
 ## Development
 
 Run the main checks:
@@ -232,7 +247,8 @@ Before exposing SOJ outside local development:
 - Use production PostgreSQL, Redis, and S3-compatible object storage credentials.
 - Keep `/metrics` on a private network or protect it at the ingress layer.
 - Run `soj-judge-agent` without business database credentials.
-- Treat `SOJ_JUDGE_SANDBOX_BACKEND=docker` with Docker runtime `runsc`/gVisor as the production sandbox target once the Docker runner backend is completed and validated.
+- Treat `SOJ_JUDGE_SANDBOX_BACKEND=docker` with Docker runtime `runsc`/gVisor as the production sandbox target.
+- Set `SOJ_ENV=prod` and `SOJ_DOCKER_RUNNER_RUNTIME=runsc` on production judge nodes; startup fails if runsc or the no-op runner probe is unavailable.
 - Do not use the `process` sandbox backend outside development, tests, and local real-code smoke.
 - Do not reuse the local fake language seed as production language data.
 

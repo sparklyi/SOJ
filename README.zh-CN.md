@@ -101,6 +101,21 @@ SMOKE_REAL_JUDGE=1 make smoke
 
 process backend 适合本地验证，但不是生产 sandbox。
 
+如需通过 Docker runner 容器跑本地真实代码 smoke：
+
+```bash
+make smoke-real-docker
+```
+
+安装 runsc 后，可以通过 gVisor/runsc 跑同一条链路：
+
+```bash
+./scripts/dev/install-gvisor.sh
+make smoke-real-gvisor
+```
+
+Docker runner 路径使用 [deploy/docker-compose.docker-runner.yaml](deploy/docker-compose.docker-runner.yaml)。只有 `soj-judge-agent` 持有 Docker socket；runner 容器不会拿到业务服务凭据或 Docker socket。
+
 ## 开发
 
 运行主要检查：
@@ -232,7 +247,8 @@ internal/observability  日志、健康检查和 Prometheus 指标
 - 使用生产 PostgreSQL、Redis 和兼容 S3 的对象存储凭据。
 - 将 `/metrics` 保持在私有网络中，或在入口层加保护。
 - 运行 `soj-judge-agent` 时不要提供业务数据库凭据。
-- `SOJ_JUDGE_SANDBOX_BACKEND=docker` 搭配 Docker runtime `runsc`/gVisor 是生产 sandbox 目标，需要等 Docker runner backend 完成并验证后再用于生产类真实代码执行。
+- `SOJ_JUDGE_SANDBOX_BACKEND=docker` 搭配 Docker runtime `runsc`/gVisor 是生产 sandbox 目标。
+- 生产 judge 节点设置 `SOJ_ENV=prod` 和 `SOJ_DOCKER_RUNNER_RUNTIME=runsc`；如果 runsc 或 no-op runner probe 不可用，启动会失败。
 - 不要在开发、测试和本地真实代码 smoke 之外使用 `process` sandbox backend。
 - 不要把本地 fake language seed 当作生产语言数据使用。
 
