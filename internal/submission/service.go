@@ -24,6 +24,7 @@ const (
 	StatusRuntimeErr  = "runtime_error"
 	StatusTimeLimit   = "time_limit"
 	StatusMemoryLimit = "memory_limit"
+	StatusOutputLimit = "output_limit"
 	StatusSystemErr   = "system_error"
 	StatusCanceled    = "canceled"
 
@@ -533,7 +534,7 @@ func (s *Service) UpdateLanguage(ctx context.Context, actor auth.Actor, id int64
 
 func terminalStatus(status string) bool {
 	switch status {
-	case StatusAccepted, StatusWrongAnswer, StatusCompileErr, StatusRuntimeErr, StatusTimeLimit, StatusMemoryLimit, StatusSystemErr, StatusCanceled:
+	case StatusAccepted, StatusWrongAnswer, StatusCompileErr, StatusRuntimeErr, StatusTimeLimit, StatusMemoryLimit, StatusOutputLimit, StatusSystemErr, StatusCanceled:
 		return true
 	default:
 		return false
@@ -550,12 +551,16 @@ func dbStatus(verdict judge.Verdict) string {
 		return StatusCompileErr
 	case judge.VerdictRuntimeError:
 		return StatusRuntimeErr
-	case judge.VerdictTimeLimitExceeded:
+	case judge.VerdictTimeLimitExceeded, judge.VerdictTimeLimit:
 		return StatusTimeLimit
-	case judge.VerdictMemoryLimitExceeded:
+	case judge.VerdictMemoryLimitExceeded, judge.VerdictMemoryLimit:
 		return StatusMemoryLimit
+	case judge.VerdictOutputLimit:
+		return StatusOutputLimit
 	case judge.VerdictSystemError:
 		return StatusSystemErr
+	case judge.VerdictCanceled:
+		return StatusCanceled
 	default:
 		return StatusSystemErr
 	}

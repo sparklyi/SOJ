@@ -228,7 +228,7 @@ CREATE TABLE submissions (
     language_id bigint NOT NULL REFERENCES languages(id),
     testcase_set_id bigint NOT NULL REFERENCES testcase_sets(id),
     status text NOT NULL DEFAULT 'queued' CHECK (
-        status IN ('queued', 'running', 'accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+        status IN ('queued', 'running', 'accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
     ),
     source_artifact_id bigint REFERENCES artifacts(id),
     time_ms integer CHECK (time_ms IS NULL OR time_ms >= 0),
