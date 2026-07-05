@@ -76,6 +76,9 @@ func TestCompleteSubmissionPersistsJudgeEvidence(t *testing.T) {
 	if attempt.ProtocolVersion != judge.ProtocolVersion || attempt.JudgeCoreVersion != "core-2026.07" || attempt.JudgeEngine != judge.EngineSOJAgent {
 		t.Fatalf("attempt protocol fields = %+v", attempt)
 	}
+	if attempt.Status != StatusWrongAnswer {
+		t.Fatalf("attempt status = %q, want %q", attempt.Status, StatusWrongAnswer)
+	}
 	if attempt.FirstFailedCaseIndex == nil || *attempt.FirstFailedCaseIndex != 2 || attempt.TraceID == nil || *attempt.TraceID != "trace-1" {
 		t.Fatalf("attempt failure metadata = %+v", attempt)
 	}
