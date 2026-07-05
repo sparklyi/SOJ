@@ -1114,6 +1114,66 @@ components:
         submitted_at: { type: string, format: date-time }
         judged_at: { type: string, format: date-time, nullable: true }
         updated_at: { type: string, format: date-time }
+        visibility:
+          type: string
+          enum: [visible, frozen]
+          description: Result visibility projection for the requesting actor.
+        result:
+          allOf: [{ $ref: "#/components/schemas/SubmissionResultSummary" }]
+          nullable: true
+        cases:
+          type: array
+          items: { $ref: "#/components/schemas/SubmissionCaseSummary" }
+        admin_diagnostics:
+          allOf: [{ $ref: "#/components/schemas/SubmissionAdminDiagnostics" }]
+          nullable: true
+    SubmissionResultSummary:
+      type: object
+      required: [attempt_id, status, score, updated_at]
+      properties:
+        attempt_id: { type: integer, format: int64 }
+        status: { $ref: "#/components/schemas/JudgeStatus" }
+        score: { type: integer }
+        time_ms: { type: integer, nullable: true }
+        memory_kb: { type: integer, nullable: true }
+        first_failed_case_index: { type: integer, nullable: true }
+        first_failed_group: { type: string, nullable: true }
+        error_class: { type: string, nullable: true }
+        safe_summary:
+          type: object
+          additionalProperties: true
+          nullable: true
+        updated_at: { type: string, format: date-time }
+    SubmissionCaseSummary:
+      type: object
+      required: [case_index, status, score]
+      properties:
+        case_index: { type: integer }
+        group_name: { type: string, nullable: true }
+        status: { $ref: "#/components/schemas/JudgeStatus" }
+        score: { type: integer }
+        time_ms: { type: integer, nullable: true }
+        memory_kb: { type: integer, nullable: true }
+        checker_message: { type: string, nullable: true }
+        output_diff_summary: { type: string, nullable: true }
+    SubmissionAdminDiagnostics:
+      type: object
+      required: [attempt_id, attempt_no, protocol_version, judge_core_version, judge_engine]
+      properties:
+        attempt_id: { type: integer, format: int64 }
+        attempt_no: { type: integer }
+        protocol_version: { type: string }
+        judge_core_version: { type: string }
+        judge_engine: { type: string }
+        judge_agent_id: { type: string, nullable: true }
+        language_runtime: { type: string, nullable: true }
+        sandbox_backend: { type: string, nullable: true }
+        sandbox_profile: { type: string, nullable: true }
+        trace_id: { type: string, nullable: true }
+        compile_output_summary: { type: string, nullable: true }
+        stderr_summary: { type: string, nullable: true }
+        error_class: { type: string, nullable: true }
+        error_message: { type: string, nullable: true }
     RunCreateRequest:
       type: object
       required: [problem_id, language_id, source_code]

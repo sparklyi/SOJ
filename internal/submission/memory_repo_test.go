@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"SOJ/internal/apperror"
 	"SOJ/internal/judge"
 )
 
@@ -208,7 +209,7 @@ func (r *memoryRepo) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, su
 		}
 	}
 	if latest.ID == 0 {
-		return JudgeAttemptRecord{}, fmt.Errorf("judge attempt not found")
+		return JudgeAttemptRecord{}, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
 	}
 	return latest, nil
 }
@@ -218,7 +219,7 @@ func (r *memoryRepo) ListJudgeCaseResults(ctx context.Context, attemptID int64) 
 func (r *memoryRepo) GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error) {
 	row, ok := r.results[submissionID]
 	if !ok {
-		return SubmissionResultRecord{}, fmt.Errorf("submission result not found")
+		return SubmissionResultRecord{}, apperror.NotFound("submission_result.not_found", "submission result not found")
 	}
 	return row, nil
 }

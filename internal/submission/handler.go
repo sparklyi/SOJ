@@ -1,6 +1,7 @@
 package submission
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -38,7 +39,7 @@ func (h *Handler) CreateSubmission(c *gin.Context) {
 		httpapi.Error(c, err)
 		return
 	}
-	httpapi.Accepted(c, submissionResponse(out.Submission))
+	httpapi.Accepted(c, submissionResponse(SubmissionView{Submission: out.Submission, Visibility: "visible"}))
 }
 
 func (h *Handler) ListSubmissions(c *gin.Context) {
@@ -190,23 +191,69 @@ func (h *Handler) UpdateLanguage(c *gin.Context) {
 }
 
 type submissionJSON struct {
-	ID           int64      `json:"id"`
-	UserID       int64      `json:"user_id"`
-	ProblemID    int64      `json:"problem_id"`
-	ContestID    *int64     `json:"contest_id,omitempty"`
-	LanguageID   int64      `json:"language_id"`
-	Status       string     `json:"status"`
-	Score        int32      `json:"score"`
-	TimeMS       *int32     `json:"time_ms,omitempty"`
-	MemoryKB     *int32     `json:"memory_kb,omitempty"`
-	ErrorMessage *string    `json:"error_message,omitempty"`
-	SubmittedAt  time.Time  `json:"submitted_at"`
-	JudgedAt     *time.Time `json:"judged_at,omitempty"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID               int64                  `json:"id"`
+	UserID           int64                  `json:"user_id"`
+	ProblemID        int64                  `json:"problem_id"`
+	ContestID        *int64                 `json:"contest_id,omitempty"`
+	LanguageID       int64                  `json:"language_id"`
+	Status           string                 `json:"status"`
+	Score            int32                  `json:"score"`
+	TimeMS           *int32                 `json:"time_ms,omitempty"`
+	MemoryKB         *int32                 `json:"memory_kb,omitempty"`
+	ErrorMessage     *string                `json:"error_message,omitempty"`
+	SubmittedAt      time.Time              `json:"submitted_at"`
+	JudgedAt         *time.Time             `json:"judged_at,omitempty"`
+	UpdatedAt        time.Time              `json:"updated_at"`
+	Visibility       string                 `json:"visibility,omitempty"`
+	Result           *submissionResultJSON  `json:"result,omitempty"`
+	Cases            []submissionCaseJSON   `json:"cases,omitempty"`
+	AdminDiagnostics *submissionAttemptJSON `json:"admin_diagnostics,omitempty"`
 }
 
-func submissionResponse(record SubmissionRecord) submissionJSON {
-	return submissionJSON{
+type submissionResultJSON struct {
+	AttemptID            int64           `json:"attempt_id"`
+	Status               string          `json:"status"`
+	Score                int32           `json:"score"`
+	TimeMS               *int32          `json:"time_ms,omitempty"`
+	MemoryKB             *int32          `json:"memory_kb,omitempty"`
+	FirstFailedCaseIndex *int32          `json:"first_failed_case_index,omitempty"`
+	FirstFailedGroup     *string         `json:"first_failed_group,omitempty"`
+	ErrorClass           *string         `json:"error_class,omitempty"`
+	SafeSummary          json.RawMessage `json:"safe_summary,omitempty"`
+	UpdatedAt            time.Time       `json:"updated_at"`
+}
+
+type submissionCaseJSON struct {
+	CaseIndex         int32   `json:"case_index"`
+	GroupName         *string `json:"group_name,omitempty"`
+	Status            string  `json:"status"`
+	Score             int32   `json:"score"`
+	TimeMS            *int32  `json:"time_ms,omitempty"`
+	MemoryKB          *int32  `json:"memory_kb,omitempty"`
+	CheckerMessage    *string `json:"checker_message,omitempty"`
+	OutputDiffSummary *string `json:"output_diff_summary,omitempty"`
+}
+
+type submissionAttemptJSON struct {
+	AttemptID            int64   `json:"attempt_id"`
+	AttemptNo            int32   `json:"attempt_no"`
+	ProtocolVersion      string  `json:"protocol_version"`
+	JudgeCoreVersion     string  `json:"judge_core_version"`
+	JudgeEngine          string  `json:"judge_engine"`
+	JudgeAgentID         *string `json:"judge_agent_id,omitempty"`
+	LanguageRuntime      *string `json:"language_runtime,omitempty"`
+	SandboxBackend       *string `json:"sandbox_backend,omitempty"`
+	SandboxProfile       *string `json:"sandbox_profile,omitempty"`
+	TraceID              *string `json:"trace_id,omitempty"`
+	CompileOutputSummary *string `json:"compile_output_summary,omitempty"`
+	StderrSummary        *string `json:"stderr_summary,omitempty"`
+	ErrorClass           *string `json:"error_class,omitempty"`
+	ErrorMessage         *string `json:"error_message,omitempty"`
+}
+
+func submissionResponse(view SubmissionView) submissionJSON {
+	record := view.Submission
+	out := submissionJSON{
 		ID:           record.ID,
 		UserID:       record.UserID,
 		ProblemID:    record.ProblemID,
@@ -220,13 +267,59 @@ func submissionResponse(record SubmissionRecord) submissionJSON {
 		SubmittedAt:  record.SubmittedAt,
 		JudgedAt:     record.JudgedAt,
 		UpdatedAt:    record.UpdatedAt,
+		Visibility:   view.Visibility,
 	}
+	if view.Result != nil {
+		out.Result = &submissionResultJSON{
+			AttemptID:            view.Result.AttemptID,
+			Status:               view.Result.Status,
+			Score:                view.Result.Score,
+			TimeMS:               view.Result.TimeMS,
+			MemoryKB:             view.Result.MemoryKB,
+			FirstFailedCaseIndex: view.Result.FirstFailedCaseIndex,
+			FirstFailedGroup:     view.Result.FirstFailedGroup,
+			ErrorClass:           view.Result.ErrorClass,
+			SafeSummary:          json.RawMessage(view.Result.SafeSummary),
+			UpdatedAt:            view.Result.UpdatedAt,
+		}
+	}
+	for _, item := range view.Cases {
+		out.Cases = append(out.Cases, submissionCaseJSON{
+			CaseIndex:         item.CaseIndex,
+			GroupName:         item.GroupName,
+			Status:            item.Status,
+			Score:             item.Score,
+			TimeMS:            item.TimeMS,
+			MemoryKB:          item.MemoryKB,
+			CheckerMessage:    item.CheckerMessage,
+			OutputDiffSummary: item.OutputDiffSummary,
+		})
+	}
+	if view.AdminDiagnostics != nil {
+		out.AdminDiagnostics = &submissionAttemptJSON{
+			AttemptID:            view.AdminDiagnostics.ID,
+			AttemptNo:            view.AdminDiagnostics.AttemptNo,
+			ProtocolVersion:      view.AdminDiagnostics.ProtocolVersion,
+			JudgeCoreVersion:     view.AdminDiagnostics.JudgeCoreVersion,
+			JudgeEngine:          view.AdminDiagnostics.JudgeEngine,
+			JudgeAgentID:         view.AdminDiagnostics.JudgeAgentID,
+			LanguageRuntime:      view.AdminDiagnostics.LanguageRuntime,
+			SandboxBackend:       view.AdminDiagnostics.SandboxBackend,
+			SandboxProfile:       view.AdminDiagnostics.SandboxProfile,
+			TraceID:              view.AdminDiagnostics.TraceID,
+			CompileOutputSummary: view.AdminDiagnostics.CompileOutputSummary,
+			StderrSummary:        view.AdminDiagnostics.StderrSummary,
+			ErrorClass:           view.AdminDiagnostics.ErrorClass,
+			ErrorMessage:         view.AdminDiagnostics.ErrorMessage,
+		}
+	}
+	return out
 }
 
-func submissionResponses(records []SubmissionRecord) []submissionJSON {
-	out := make([]submissionJSON, 0, len(records))
-	for _, record := range records {
-		out = append(out, submissionResponse(record))
+func submissionResponses(views []SubmissionView) []submissionJSON {
+	out := make([]submissionJSON, 0, len(views))
+	for _, view := range views {
+		out = append(out, submissionResponse(view))
 	}
 	return out
 }

@@ -104,6 +104,26 @@ type ContestSubmissionPolicy interface {
 	ValidateSubmission(ctx context.Context, actor auth.Actor, problemID, contestID int64) error
 }
 
+type ContestResultVisibilityPolicy interface {
+	SubmissionResultVisibility(ctx context.Context, actor auth.Actor, submission ContestSubmissionVisibility) (SubmissionResultVisibility, error)
+}
+
+type ContestSubmissionVisibility struct {
+	ID          int64
+	UserID      int64
+	ProblemID   int64
+	ContestID   int64
+	SubmittedAt time.Time
+	JudgedAt    *time.Time
+}
+
+type SubmissionResultVisibility struct {
+	ShowResult           bool
+	ShowCases            bool
+	ShowAdminDiagnostics bool
+	Visibility           string
+}
+
 type TerminalHook interface {
 	AfterSubmissionTerminal(ctx context.Context, submission TerminalSubmission) error
 }
@@ -145,6 +165,14 @@ type CreateSubmissionOutput struct {
 	Submission SubmissionRecord
 	Task       JudgeTaskRecord
 	StreamID   string
+}
+
+type SubmissionView struct {
+	Submission       SubmissionRecord
+	Result           *SubmissionResultRecord
+	Cases            []JudgeCaseResultRecord
+	AdminDiagnostics *JudgeAttemptRecord
+	Visibility       string
 }
 
 func (s *Service) CreateSubmission(ctx context.Context, actor auth.Actor, input CreateSubmissionInput) (CreateSubmissionOutput, error) {
@@ -299,18 +327,18 @@ func (s *Service) completeRunAsync(runID int64, language LanguageRecord, source 
 	}
 }
 
-func (s *Service) GetSubmission(ctx context.Context, actor auth.Actor, id int64) (SubmissionRecord, error) {
+func (s *Service) GetSubmission(ctx context.Context, actor auth.Actor, id int64) (SubmissionView, error) {
 	record, err := s.repo.GetSubmission(ctx, id)
 	if err != nil {
-		return SubmissionRecord{}, err
+		return SubmissionView{}, err
 	}
 	if !actor.Admin() && (!actor.Authenticated() || actor.UserID != record.UserID) {
-		return SubmissionRecord{}, apperror.Forbidden("submission.not_allowed", "submission access denied")
+		return SubmissionView{}, apperror.Forbidden("submission.not_allowed", "submission access denied")
 	}
-	return record, nil
+	return s.submissionView(ctx, actor, record)
 }
 
-func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input ListSubmissionsInput) ([]SubmissionRecord, int64, error) {
+func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input ListSubmissionsInput) ([]SubmissionView, int64, error) {
 	if !actor.Authenticated() {
 		return nil, 0, apperror.Unauthorized("auth_required", "authentication required")
 	}
@@ -323,7 +351,19 @@ func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input L
 	if input.Offset < 0 {
 		input.Offset = 0
 	}
-	return s.repo.ListSubmissions(ctx, input)
+	records, total, err := s.repo.ListSubmissions(ctx, input)
+	if err != nil {
+		return nil, 0, err
+	}
+	views := make([]SubmissionView, 0, len(records))
+	for _, record := range records {
+		view, err := s.submissionView(ctx, actor, record)
+		if err != nil {
+			return nil, 0, err
+		}
+		views = append(views, view)
+	}
+	return views, total, nil
 }
 
 func (s *Service) GetRun(ctx context.Context, actor auth.Actor, id int64) (RunRecord, error) {
@@ -371,6 +411,64 @@ func (s *Service) CompleteSubmission(ctx context.Context, submissionID int64, re
 		}
 	}
 	return updated, nil
+}
+
+func (s *Service) submissionView(ctx context.Context, actor auth.Actor, record SubmissionRecord) (SubmissionView, error) {
+	visibility := SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: actor.Admin(), Visibility: "visible"}
+	if record.ContestID != nil {
+		visibility = SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: actor.Admin(), Visibility: "visible"}
+		if policy, ok := s.contestPolicy.(ContestResultVisibilityPolicy); ok {
+			policyVisibility, err := policy.SubmissionResultVisibility(ctx, actor, ContestSubmissionVisibility{
+				ID:          record.ID,
+				UserID:      record.UserID,
+				ProblemID:   record.ProblemID,
+				ContestID:   *record.ContestID,
+				SubmittedAt: record.SubmittedAt,
+				JudgedAt:    record.JudgedAt,
+			})
+			if err != nil {
+				return SubmissionView{}, err
+			}
+			visibility = policyVisibility
+			if actor.Admin() {
+				visibility.ShowAdminDiagnostics = true
+			}
+		} else if !actor.Admin() {
+			visibility.ShowCases = false
+		}
+	}
+
+	view := SubmissionView{Submission: record, Visibility: visibility.Visibility}
+	if !visibility.ShowResult {
+		return view, nil
+	}
+	result, err := s.repo.GetSubmissionResult(ctx, record.ID)
+	if err != nil {
+		if appErr, ok := err.(*apperror.Error); ok && appErr.HTTPStatus == 404 {
+			return view, nil
+		}
+		return SubmissionView{}, err
+	}
+	view.Result = &result
+
+	attempt, err := s.repo.GetLatestJudgeAttemptBySubmissionID(ctx, record.ID)
+	if err != nil {
+		if appErr, ok := err.(*apperror.Error); ok && appErr.HTTPStatus == 404 {
+			return view, nil
+		}
+		return SubmissionView{}, err
+	}
+	if visibility.ShowAdminDiagnostics {
+		view.AdminDiagnostics = &attempt
+	}
+	if visibility.ShowCases {
+		cases, err := s.repo.ListJudgeCaseResults(ctx, attempt.ID)
+		if err != nil {
+			return SubmissionView{}, err
+		}
+		view.Cases = cases
+	}
+	return view, nil
 }
 
 func (s *Service) CompleteRun(ctx context.Context, runID int64, result judge.Result) (RunRecord, error) {
