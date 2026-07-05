@@ -372,6 +372,34 @@ func (s *Service) ValidateSubmission(ctx context.Context, actor auth.Actor, prob
 	return nil
 }
 
+func (s *Service) SubmissionResultVisibility(ctx context.Context, actor auth.Actor, sub submission.ContestSubmissionVisibility) (submission.SubmissionResultVisibility, error) {
+	contest, err := s.repo.GetContest(ctx, sub.ContestID)
+	if err != nil {
+		return submission.SubmissionResultVisibility{}, err
+	}
+	if err := s.canReadContest(ctx, actor, contest); err != nil {
+		return submission.SubmissionResultVisibility{}, err
+	}
+	if actor.Admin() || actor.UserID == contest.OwnerUserID {
+		return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: true, Visibility: "visible"}, nil
+	}
+	visible := submissionVisibleInFrozenWindow(contest, sub, s.now())
+	if !visible {
+		return submission.SubmissionResultVisibility{Visibility: "frozen"}, nil
+	}
+	return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, Visibility: "visible"}, nil
+}
+
+func submissionVisibleInFrozenWindow(contest ContestRecord, sub submission.ContestSubmissionVisibility, now time.Time) bool {
+	if now.Before(contest.FreezeAt) || !now.Before(contest.EndAt) {
+		return true
+	}
+	if sub.JudgedAt == nil {
+		return sub.SubmittedAt.Before(contest.FreezeAt)
+	}
+	return sub.SubmittedAt.Before(contest.FreezeAt) && !sub.JudgedAt.After(contest.FreezeAt)
+}
+
 func (s *Service) AfterSubmissionTerminal(ctx context.Context, terminal submission.TerminalSubmission) error {
 	if terminal.ContestID == nil {
 		return nil

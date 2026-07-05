@@ -85,6 +85,14 @@ Submissions and runs:
 - `POST /api/v1/runs`
 - `GET /api/v1/runs/{id}`
 
+Submission result visibility:
+
+- `result` is the current safe projection from `submission_results`; complete evidence stays in `judge_attempts` and `judge_case_results`.
+- `cases` contains sanitized case summaries only. It does not expose testcase keys, artifact ids, storage keys, raw manifest, stdout, stderr, or full diffs.
+- `admin_diagnostics` is present only for admin/root or contest owner contexts that are explicitly allowed by the service policy.
+- ACM contest submissions after freeze return `visibility: "frozen"` and omit `result`, `cases`, and `admin_diagnostics` for contestants until final visibility opens.
+- Admin/root and contest owner views may still inspect frozen contest submissions for operations and adjudication.
+
 Contests:
 
 - `GET /api/v1/contests`

@@ -528,6 +528,157 @@ func TestHandlerListsSubmissions(t *testing.T) {
 	}
 }
 
+func TestHandlerSubmissionDetailProjectsSafeResultForOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newMemoryRepo()
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
+	service := NewService(ServiceOptions{Repository: repo})
+	_, err := service.CompleteSubmission(context.Background(), 1, judge.Result{
+		Verdict: judge.VerdictWrongAnswer,
+		Cases: []judge.CaseResult{
+			{Index: 1, TestcaseKey: "hidden/case-1", Verdict: judge.VerdictAccepted, Score: 50},
+			{Index: 2, TestcaseKey: "hidden/case-2", Verdict: judge.VerdictWrongAnswer, CheckerMessage: "expected 42", OutputDiffSummary: "line 1 differs"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSubmission returned error: %v", err)
+	}
+	handler := NewHandler(service)
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/1", nil)
+	req.Header.Set("X-User-ID", "5")
+	req.Header.Set("X-User-Role", "user")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("hidden/case-2")) || bytes.Contains(rec.Body.Bytes(), []byte("admin_diagnostics")) {
+		t.Fatalf("response leaked hidden evidence: %s", rec.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Visibility string `json:"visibility"`
+			Result     *struct {
+				Status string `json:"status"`
+			} `json:"result"`
+			Cases []struct {
+				CaseIndex      int32   `json:"case_index"`
+				CheckerMessage *string `json:"checker_message"`
+			} `json:"cases"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Data.Visibility != "visible" || envelope.Data.Result == nil || envelope.Data.Result.Status != StatusWrongAnswer || len(envelope.Data.Cases) != 2 {
+		t.Fatalf("response = %+v", envelope.Data)
+	}
+	if envelope.Data.Cases[1].CheckerMessage == nil || *envelope.Data.Cases[1].CheckerMessage != "expected 42" {
+		t.Fatalf("cases = %+v", envelope.Data.Cases)
+	}
+}
+
+func TestHandlerSubmissionDetailIncludesAdminDiagnosticsForAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newMemoryRepo()
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
+	service := NewService(ServiceOptions{Repository: repo})
+	_, err := service.CompleteSubmission(context.Background(), 1, judge.Result{
+		Verdict: judge.VerdictWrongAnswer,
+		Manifest: judge.Manifest{
+			JudgeCoreVersion: "core-2026.07",
+			JudgeAgentID:     "agent-a",
+			LanguageRuntime:  "go1.24",
+			SandboxBackend:   "nsjail",
+			SandboxProfile:   "default",
+			TraceID:          "trace-admin",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSubmission returned error: %v", err)
+	}
+	handler := NewHandler(service)
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/1", nil)
+	req.Header.Set("X-User-ID", "99")
+	req.Header.Set("X-User-Role", "admin")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			AdminDiagnostics *struct {
+				ProtocolVersion string  `json:"protocol_version"`
+				JudgeAgentID    *string `json:"judge_agent_id"`
+				TraceID         *string `json:"trace_id"`
+			} `json:"admin_diagnostics"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Data.AdminDiagnostics == nil || envelope.Data.AdminDiagnostics.ProtocolVersion != judge.ProtocolVersion {
+		t.Fatalf("admin diagnostics = %+v", envelope.Data.AdminDiagnostics)
+	}
+	if envelope.Data.AdminDiagnostics.TraceID == nil || *envelope.Data.AdminDiagnostics.TraceID != "trace-admin" {
+		t.Fatalf("admin diagnostics trace = %+v", envelope.Data.AdminDiagnostics)
+	}
+}
+
+func TestFrozenContestSubmissionHidesResultForContestant(t *testing.T) {
+	start := time.Unix(1000, 0).UTC()
+	freeze := start.Add(time.Hour)
+	policy := frozenSubmissionPolicy{freezeAt: freeze, endAt: start.Add(2 * time.Hour), now: freeze.Add(30 * time.Minute)}
+	repo := newMemoryRepo()
+	contestID := int64(7)
+	judgedAt := freeze.Add(2 * time.Minute)
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, ContestID: &contestID, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning, SubmittedAt: freeze.Add(time.Minute), JudgedAt: &judgedAt}
+	service := NewService(ServiceOptions{Repository: repo, ContestPolicy: policy, Now: func() time.Time { return freeze.Add(30 * time.Minute) }})
+	_, err := service.CompleteSubmission(context.Background(), 1, judge.Result{Verdict: judge.VerdictAccepted})
+	if err != nil {
+		t.Fatalf("CompleteSubmission returned error: %v", err)
+	}
+
+	view, err := service.GetSubmission(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, 1)
+	if err != nil {
+		t.Fatalf("GetSubmission returned error: %v", err)
+	}
+	if view.Visibility != "frozen" || view.Result != nil || len(view.Cases) != 0 || view.AdminDiagnostics != nil {
+		t.Fatalf("view = %+v", view)
+	}
+}
+
+type frozenSubmissionPolicy struct {
+	freezeAt time.Time
+	endAt    time.Time
+	now      time.Time
+}
+
+func (p frozenSubmissionPolicy) ValidateSubmission(ctx context.Context, actor auth.Actor, problemID, contestID int64) error {
+	return nil
+}
+
+func (p frozenSubmissionPolicy) SubmissionResultVisibility(ctx context.Context, actor auth.Actor, sub ContestSubmissionVisibility) (SubmissionResultVisibility, error) {
+	if actor.Admin() {
+		return SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: true, Visibility: "visible"}, nil
+	}
+	now := p.now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if !now.Before(p.freezeAt) && now.Before(p.endAt) && !sub.SubmittedAt.Before(p.freezeAt) {
+		return SubmissionResultVisibility{Visibility: "frozen"}, nil
+	}
+	return SubmissionResultVisibility{ShowResult: true, ShowCases: true, Visibility: "visible"}, nil
+}
+
 func TestHandlerSyncLanguagesReturnsAcceptedEmptyForRoot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
