@@ -22,7 +22,7 @@ When a task exhausts retries, the worker first marks PostgreSQL `judge_tasks.sta
 
 ## Local Judge
 
-Docker Compose uses `SOJ_JUDGE_ENDPOINT=fake://accepted`. The fake engine returns accepted results and exposes one language for local sync tests. The compose seed job inserts a matching enabled language row so submissions can be created immediately after startup.
+Docker Compose uses the internal `fake://accepted` engine. It returns accepted results and exposes one language for local sync tests. The compose seed job inserts a matching enabled language row so submissions can be created immediately after startup.
 
 ## Metrics
 
