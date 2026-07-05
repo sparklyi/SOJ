@@ -132,6 +132,18 @@ func TestDockerSandboxProbeReportsRunscReadiness(t *testing.T) {
 	}
 }
 
+func TestDockerRunArgsKeepsStdinOpenWhenProvided(t *testing.T) {
+	args := dockerRunArgs(DockerRunSpec{
+		Name:    "soj-run",
+		Image:   "soj-runner-go:test",
+		Stdin:   "1 1\n",
+		Command: []string{"/workspace/main"},
+	})
+	if !contains(args, "--interactive") {
+		t.Fatalf("docker run args = %v, want --interactive for stdin", args)
+	}
+}
+
 type recordingDockerClient struct {
 	runs             []DockerRunSpec
 	runOutput        commandOutput

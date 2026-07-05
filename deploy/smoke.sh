@@ -2,6 +2,7 @@
 set -euo pipefail
 
 COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.yaml}"
+COMPOSE_FILES="${COMPOSE_FILES:-$COMPOSE_FILE}"
 API_URL="${API_URL:-http://localhost:8080}"
 RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 SMOKE_REAL_JUDGE="${SMOKE_REAL_JUDGE:-0}"
@@ -11,6 +12,16 @@ need() {
     echo "missing required command: $1" >&2
     exit 1
   fi
+}
+
+compose() {
+  local args=()
+  local files=()
+  IFS=':' read -r -a files <<< "$COMPOSE_FILES"
+  for file in "${files[@]}"; do
+    args+=(-f "$file")
+  done
+  docker compose "${args[@]}" "$@"
 }
 
 wait_http() {
@@ -62,7 +73,7 @@ require_metric "$API_URL" "soj_http_requests_total"
 require_metric "${JUDGE_AGENT_URL:-http://localhost:8082}" "soj_http_requests_total"
 
 if [[ "$SMOKE_REAL_JUDGE" == "1" ]]; then
-  LANG_ID="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'soj-agent' and engine_language_id = 'go' and enabled = true order by id limit 1;")"
+  LANG_ID="$(compose exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'soj-agent' and engine_language_id = 'go' and enabled = true order by id limit 1;")"
   if [[ -z "$LANG_ID" ]]; then
     echo "go language seed was not found" >&2
     exit 1
@@ -90,7 +101,7 @@ func main() {
 SRC
 )"
 else
-  LANG_ID="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'fake' and engine_language_id = 'accepted' and enabled = true order by id limit 1;")"
+  LANG_ID="$(compose exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'fake' and engine_language_id = 'accepted' and enabled = true order by id limit 1;")"
   if [[ -z "$LANG_ID" ]]; then
     echo "fake language seed was not found" >&2
     exit 1
@@ -182,7 +193,7 @@ require_metric "${WORKER_URL:-http://localhost:8081}" "soj_worker_judge_task_dis
 
 RESULT_STREAM_LEN="0"
 for _ in $(seq 1 30); do
-  RESULT_STREAM_LEN="$(docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli XLEN "${SOJ_JUDGE_RESULT_STREAM:-soj:judge:results}" | tr -d '\r')"
+  RESULT_STREAM_LEN="$(compose exec -T redis redis-cli XLEN "${SOJ_JUDGE_RESULT_STREAM:-soj:judge:results}" | tr -d '\r')"
   [[ "$RESULT_STREAM_LEN" != "0" ]] && break
   sleep 1
 done
@@ -191,7 +202,7 @@ if [[ "$RESULT_STREAM_LEN" == "0" ]]; then
   exit 1
 fi
 
-ASYNC_DB_ROWS="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "
+ASYNC_DB_ROWS="$(compose exec -T postgres psql -U soj -d soj -Atc "
 select count(*)
 from submissions s
 join judge_tasks jt on jt.submission_id = s.id
@@ -205,7 +216,7 @@ where s.id in ($SUBMISSION_ID, $CONTEST_SUBMISSION_ID)
 " | tr -d '\r[:space:]')"
 if [[ "$ASYNC_DB_ROWS" != "2" ]]; then
   echo "async judge DB state rows = $ASYNC_DB_ROWS, want 2" >&2
-  docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -c "
+  compose exec -T postgres psql -U soj -d soj -c "
 select s.id as submission_id, s.status as submission_status, jt.status as task_status, ja.id as attempt_id, ja.status as attempt_status, sr.status as result_status
 from submissions s
 left join judge_tasks jt on jt.submission_id = s.id
@@ -217,7 +228,7 @@ order by s.id, ja.id;
   exit 1
 fi
 
-CASE_RESULT_ROWS="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "
+CASE_RESULT_ROWS="$(compose exec -T postgres psql -U soj -d soj -Atc "
 select count(*)
 from judge_case_results jcr
 join judge_attempts ja on ja.id = jcr.attempt_id

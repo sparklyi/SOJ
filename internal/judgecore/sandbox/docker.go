@@ -294,6 +294,9 @@ func (c dockerCLIClient) RuntimeAvailable(ctx context.Context, runtime string) (
 
 func dockerRunArgs(spec DockerRunSpec) []string {
 	args := []string{"run", "--rm", "--name", spec.Name}
+	if spec.Stdin != "" {
+		args = append(args, "--interactive")
+	}
 	if spec.Runtime != "" {
 		args = append(args, "--runtime", spec.Runtime)
 	}
