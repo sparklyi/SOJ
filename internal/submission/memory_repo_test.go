@@ -15,6 +15,9 @@ type memoryRepo struct {
 	runs                map[int64]RunRecord
 	tasks               map[int64]JudgeTaskRecord
 	languages           map[int64]LanguageRecord
+	attempts            map[int64]JudgeAttemptRecord
+	cases               map[int64][]JudgeCaseResultRecord
+	results             map[int64]SubmissionResultRecord
 	submissionUpdates   int
 	events              []string
 	failCreateJudgeTask error
@@ -28,6 +31,9 @@ func newMemoryRepo() *memoryRepo {
 		runs:        make(map[int64]RunRecord),
 		tasks:       make(map[int64]JudgeTaskRecord),
 		languages:   make(map[int64]LanguageRecord),
+		attempts:    make(map[int64]JudgeAttemptRecord),
+		cases:       make(map[int64][]JudgeCaseResultRecord),
+		results:     make(map[int64]SubmissionResultRecord),
 	}
 }
 
@@ -114,7 +120,7 @@ func (r *memoryRepo) MarkSubmissionSystemError(ctx context.Context, id int64, re
 	r.submissions[id] = row
 	return row, nil
 }
-func (r *memoryRepo) UpdateSubmissionStatus(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
+func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
 	row := r.submissions[id]
 	row.Status = dbStatus(result.Verdict)
 	row.Score = score
@@ -123,6 +129,97 @@ func (r *memoryRepo) UpdateSubmissionStatus(ctx context.Context, id int64, resul
 	row.ErrorMessage = stringPtr(result.ErrorMessage)
 	r.submissionUpdates++
 	r.submissions[id] = row
+	attemptNo := int32(1)
+	for _, attempt := range r.attempts {
+		if attempt.SubmissionID != nil && *attempt.SubmissionID == id && attempt.AttemptNo >= attemptNo {
+			attemptNo = attempt.AttemptNo + 1
+		}
+	}
+	attemptID := r.id()
+	attempt := JudgeAttemptRecord{
+		ID:                   attemptID,
+		SubmissionID:         &row.ID,
+		AttemptNo:            attemptNo,
+		ProtocolVersion:      judge.ProtocolVersion,
+		JudgeCoreVersion:     result.Manifest.JudgeCoreVersion,
+		JudgeEngine:          judge.EngineSOJAgent,
+		JudgeAgentID:         stringPtr(result.Manifest.JudgeAgentID),
+		LanguageID:           row.LanguageID,
+		LanguageRuntime:      stringPtr(result.Manifest.LanguageRuntime),
+		SandboxBackend:       stringPtr(result.Manifest.SandboxBackend),
+		SandboxProfile:       stringPtr(result.Manifest.SandboxProfile),
+		TestcaseSetID:        &row.TestcaseSetID,
+		TestcaseSetHash:      stringPtr(result.Manifest.TestcaseSetHash),
+		CheckerHash:          stringPtr(result.Manifest.CheckerHash),
+		ValidatorHash:        stringPtr(result.Manifest.ValidatorHash),
+		Status:               "finished",
+		Verdict:              stringPtr(string(result.Verdict)),
+		Score:                score,
+		TimeMS:               int32Ptr(int32(result.TimeMS)),
+		MemoryKB:             int32Ptr(int32(result.MemoryKB)),
+		FirstFailedCaseIndex: firstFailedCaseIndex(result.Cases),
+		FirstFailedGroup:     firstFailedGroup(result.Cases),
+		CheckerMessage:       firstCheckerMessage(result.Cases),
+		ErrorMessage:         stringPtr(result.ErrorMessage),
+		TraceID:              stringPtr(result.Manifest.TraceID),
+	}
+	if attempt.JudgeCoreVersion == "" {
+		attempt.JudgeCoreVersion = judge.ProtocolVersion
+	}
+	r.attempts[attemptID] = attempt
+	for _, item := range result.Cases {
+		r.cases[attemptID] = append(r.cases[attemptID], JudgeCaseResultRecord{
+			ID:                r.id(),
+			AttemptID:         attemptID,
+			CaseIndex:         int32(item.Index),
+			GroupName:         stringPtr(item.GroupName),
+			TestcaseKey:       stringPtr(item.TestcaseKey),
+			Status:            dbStatus(item.Verdict),
+			Score:             item.Score,
+			TimeMS:            int32Ptr(int32(item.TimeMS)),
+			MemoryKB:          int32Ptr(int32(item.MemoryKB)),
+			ExitCode:          item.ExitCode,
+			Signal:            stringPtr(item.Signal),
+			CheckerMessage:    stringPtr(item.CheckerMessage),
+			OutputDiffSummary: stringPtr(item.OutputDiffSummary),
+		})
+	}
+	r.results[id] = SubmissionResultRecord{
+		SubmissionID:         id,
+		AttemptID:            attemptID,
+		Status:               row.Status,
+		Score:                score,
+		TimeMS:               int32Ptr(int32(result.TimeMS)),
+		MemoryKB:             int32Ptr(int32(result.MemoryKB)),
+		FirstFailedCaseIndex: firstFailedCaseIndex(result.Cases),
+		FirstFailedGroup:     firstFailedGroup(result.Cases),
+		SafeSummary:          []byte(`{"verdict":"` + string(result.Verdict) + `"}`),
+	}
+	return row, nil
+}
+func (r *memoryRepo) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID int64) (JudgeAttemptRecord, error) {
+	var latest JudgeAttemptRecord
+	for _, attempt := range r.attempts {
+		if attempt.SubmissionID == nil || *attempt.SubmissionID != submissionID {
+			continue
+		}
+		if latest.ID == 0 || attempt.AttemptNo > latest.AttemptNo || (attempt.AttemptNo == latest.AttemptNo && attempt.ID > latest.ID) {
+			latest = attempt
+		}
+	}
+	if latest.ID == 0 {
+		return JudgeAttemptRecord{}, fmt.Errorf("judge attempt not found")
+	}
+	return latest, nil
+}
+func (r *memoryRepo) ListJudgeCaseResults(ctx context.Context, attemptID int64) ([]JudgeCaseResultRecord, error) {
+	return append([]JudgeCaseResultRecord(nil), r.cases[attemptID]...), nil
+}
+func (r *memoryRepo) GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error) {
+	row, ok := r.results[submissionID]
+	if !ok {
+		return SubmissionResultRecord{}, fmt.Errorf("submission result not found")
+	}
 	return row, nil
 }
 func (r *memoryRepo) CreateJudgeTask(ctx context.Context, submissionID int64, nextRunAt time.Time) (JudgeTaskRecord, error) {
@@ -266,6 +363,31 @@ func (r *memoryRepo) UpdateLanguage(ctx context.Context, id int64, arg UpdateLan
 }
 
 func int32Ptr(value int32) *int32 { return &value }
+func firstFailedCaseIndex(cases []judge.CaseResult) *int32 {
+	for _, item := range cases {
+		if item.Verdict != judge.VerdictAccepted {
+			value := int32(item.Index)
+			return &value
+		}
+	}
+	return nil
+}
+func firstFailedGroup(cases []judge.CaseResult) *string {
+	for _, item := range cases {
+		if item.Verdict != judge.VerdictAccepted {
+			return stringPtr(item.GroupName)
+		}
+	}
+	return nil
+}
+func firstCheckerMessage(cases []judge.CaseResult) *string {
+	for _, item := range cases {
+		if item.CheckerMessage != "" {
+			return stringPtr(item.CheckerMessage)
+		}
+	}
+	return nil
+}
 func stringPtr(value string) *string {
 	if value == "" {
 		return nil
