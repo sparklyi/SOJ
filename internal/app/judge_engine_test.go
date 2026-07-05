@@ -83,3 +83,15 @@ func TestNewJudgeAgentSandboxAllowsProcessBackend(t *testing.T) {
 		t.Fatalf("backend = %q, want process", got.Name())
 	}
 }
+
+func TestNewJudgeAgentSandboxAllowsDockerBackend(t *testing.T) {
+	t.Setenv("SOJ_DOCKER_RUNNER_RUNTIME", "runsc")
+
+	got, err := newJudgeAgentSandbox(sandbox.BackendDocker)
+	if err != nil {
+		t.Fatalf("newJudgeAgentSandbox returned error: %v", err)
+	}
+	if got.Name() != sandbox.BackendDocker {
+		t.Fatalf("backend = %q, want docker", got.Name())
+	}
+}

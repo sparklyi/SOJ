@@ -229,6 +229,14 @@ func newJudgeAgentSandbox(backend string) (sandbox.Sandbox, error) {
 	switch backend {
 	case sandbox.BackendProcess:
 		return sandbox.NewProcessSandbox(), nil
+	case sandbox.BackendDocker:
+		return sandbox.NewDockerSandbox(sandbox.DockerSandboxOptions{
+			Runtime: envOr("SOJ_DOCKER_RUNNER_RUNTIME", ""),
+			Images: map[string]string{
+				"go":    envOr("SOJ_DOCKER_RUNNER_IMAGE_GO", "soj-runner-go:local"),
+				"cpp17": envOr("SOJ_DOCKER_RUNNER_IMAGE_CPP17", "soj-runner-cpp17:local"),
+			},
+		}), nil
 	case sandbox.BackendIsolate:
 		return nil, errIsolateSandboxUnavailable{}
 	default:
