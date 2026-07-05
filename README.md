@@ -92,6 +92,15 @@ Local services:
 
 The local stack uses `fake://accepted` and `SOJ_JUDGE_SANDBOX_BACKEND=fake` so the full async judge flow can run before a privileged sandbox runtime is available.
 
+To run the local real-code smoke path with the development-only process backend:
+
+```bash
+SOJ_ENV=local SOJ_JUDGE_ENDPOINT=agent://local SOJ_JUDGE_SANDBOX_BACKEND=process make up
+SMOKE_REAL_JUDGE=1 make smoke
+```
+
+The process backend is useful for local validation, but it is not a production sandbox.
+
 ## Development
 
 Run the main checks:
@@ -223,8 +232,8 @@ Before exposing SOJ outside local development:
 - Use production PostgreSQL, Redis, and S3-compatible object storage credentials.
 - Keep `/metrics` on a private network or protect it at the ingress layer.
 - Run `soj-judge-agent` without business database credentials.
-- Use `SOJ_JUDGE_SANDBOX_BACKEND=isolate` for production-like real code execution.
-- Do not use the `process` sandbox backend outside development and tests.
+- Treat `SOJ_JUDGE_SANDBOX_BACKEND=isolate` as the production sandbox target once the isolate adapter is completed and validated.
+- Do not use the `process` sandbox backend outside development, tests, and local real-code smoke.
 - Do not reuse the local fake language seed as production language data.
 
 ## Roadmap
