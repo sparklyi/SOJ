@@ -17,8 +17,10 @@ type memoryRepo struct {
 	tasks               map[int64]JudgeTaskRecord
 	languages           map[int64]LanguageRecord
 	attempts            map[int64]JudgeAttemptRecord
+	attemptKeys         map[string]int64
 	cases               map[int64][]JudgeCaseResultRecord
 	results             map[int64]SubmissionResultRecord
+	processedEvents     map[string]bool
 	submissionUpdates   int
 	events              []string
 	failCreateJudgeTask error
@@ -26,15 +28,17 @@ type memoryRepo struct {
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		nextID:      100,
-		artifacts:   make(map[int64]ArtifactRecord),
-		submissions: make(map[int64]SubmissionRecord),
-		runs:        make(map[int64]RunRecord),
-		tasks:       make(map[int64]JudgeTaskRecord),
-		languages:   make(map[int64]LanguageRecord),
-		attempts:    make(map[int64]JudgeAttemptRecord),
-		cases:       make(map[int64][]JudgeCaseResultRecord),
-		results:     make(map[int64]SubmissionResultRecord),
+		nextID:          100,
+		artifacts:       make(map[int64]ArtifactRecord),
+		submissions:     make(map[int64]SubmissionRecord),
+		runs:            make(map[int64]RunRecord),
+		tasks:           make(map[int64]JudgeTaskRecord),
+		languages:       make(map[int64]LanguageRecord),
+		attempts:        make(map[int64]JudgeAttemptRecord),
+		attemptKeys:     make(map[string]int64),
+		cases:           make(map[int64][]JudgeCaseResultRecord),
+		results:         make(map[int64]SubmissionResultRecord),
+		processedEvents: make(map[string]bool),
 	}
 }
 
@@ -222,6 +226,86 @@ func (r *memoryRepo) GetSubmissionResult(ctx context.Context, submissionID int64
 		return SubmissionResultRecord{}, apperror.NotFound("submission_result.not_found", "submission result not found")
 	}
 	return row, nil
+}
+func (r *memoryRepo) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAttemptInput) (JudgeAttemptRecord, error) {
+	if id, ok := r.attemptKeys[input.AttemptID]; ok {
+		return r.attempts[id], nil
+	}
+	attemptNo := int32(1)
+	for _, attempt := range r.attempts {
+		if attempt.SubmissionID != nil && *attempt.SubmissionID == input.SubmissionID && attempt.AttemptNo >= attemptNo {
+			attemptNo = attempt.AttemptNo + 1
+		}
+	}
+	id := r.id()
+	attempt := JudgeAttemptRecord{
+		ID:               id,
+		SubmissionID:     &input.SubmissionID,
+		TaskID:           &input.TaskID,
+		AttemptNo:        attemptNo,
+		ProtocolVersion:  input.ProtocolVersion,
+		JudgeCoreVersion: input.ProtocolVersion,
+		JudgeEngine:      input.JudgeEngine,
+		LanguageID:       input.LanguageID,
+		Status:           "created",
+		Score:            0,
+		TraceID:          stringPtr(input.TraceID),
+		CreatedAt:        time.Now().UTC(),
+		UpdatedAt:        time.Now().UTC(),
+	}
+	r.attempts[id] = attempt
+	r.attemptKeys[input.AttemptID] = id
+	return attempt, nil
+}
+func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error) {
+	if r.processedEvents[input.EventID] {
+		for _, attempt := range r.attempts {
+			if id, ok := r.attemptKeys[input.AttemptKey]; ok && attempt.ID == id && attempt.SubmissionID != nil {
+				return r.submissions[*attempt.SubmissionID], false, nil
+			}
+		}
+		return SubmissionRecord{}, false, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
+	}
+	attemptID, ok := r.attemptKeys[input.AttemptKey]
+	if !ok {
+		return SubmissionRecord{}, false, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
+	}
+	attempt := r.attempts[attemptID]
+	if attempt.SubmissionID == nil {
+		return SubmissionRecord{}, false, fmt.Errorf("attempt %d is not a submission attempt", attemptID)
+	}
+	submission := r.submissions[*attempt.SubmissionID]
+	status := dbStatus(input.Status)
+	submission.Status = status
+	submission.TimeMS = int32Ptr(int32(input.Result.TimeMS))
+	submission.MemoryKB = int32Ptr(int32(input.Result.MemoryKB))
+	submission.ErrorMessage = stringPtr(input.Result.ErrorMessage)
+	r.submissions[submission.ID] = submission
+	r.submissionUpdates++
+
+	attempt.Status = status
+	attempt.Verdict = stringPtr(status)
+	attempt.Score = submission.Score
+	attempt.TimeMS = int32Ptr(int32(input.Result.TimeMS))
+	attempt.MemoryKB = int32Ptr(int32(input.Result.MemoryKB))
+	attempt.TraceID = stringPtr(input.TraceID)
+	finishedAt := input.Result.JudgedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	attempt.FinishedAt = &finishedAt
+	r.attempts[attemptID] = attempt
+	r.results[submission.ID] = SubmissionResultRecord{
+		SubmissionID: submission.ID,
+		AttemptID:    attemptID,
+		Status:       status,
+		Score:        submission.Score,
+		TimeMS:       int32Ptr(int32(input.Result.TimeMS)),
+		MemoryKB:     int32Ptr(int32(input.Result.MemoryKB)),
+		SafeSummary:  []byte(`{"verdict":"` + status + `"}`),
+	}
+	r.processedEvents[input.EventID] = true
+	return submission, true, nil
 }
 func (r *memoryRepo) CreateJudgeTask(ctx context.Context, submissionID int64, nextRunAt time.Time) (JudgeTaskRecord, error) {
 	if r.failCreateJudgeTask != nil {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"SOJ/internal/judge"
+	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/problem"
 	"SOJ/internal/queue"
 )
@@ -58,11 +59,6 @@ func NewWorker(options WorkerOptions) *Worker {
 	return &Worker{repo: options.Repository, queue: options.Queue, engine: options.Judge, problems: options.ProblemReader, testcases: options.TestcaseResolver, store: options.SourceStore, metrics: options.Metrics, maxAttempts: maxAttempts, backoff: backoff, now: now}
 }
 
-type taskPayload struct {
-	TaskID       int64 `json:"task_id"`
-	SubmissionID int64 `json:"submission_id"`
-}
-
 func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) {
 	if limit <= 0 {
 		limit = 16
@@ -73,7 +69,11 @@ func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) 
 	}
 	dispatched := 0
 	for _, task := range tasks {
-		payload, err := json.Marshal(taskPayload{TaskID: task.ID, SubmissionID: task.SubmissionID})
+		event, err := w.requestEvent(ctx, task)
+		if err != nil {
+			return dispatched, err
+		}
+		payload, err := json.Marshal(event)
 		if err != nil {
 			return dispatched, err
 		}
@@ -91,6 +91,62 @@ func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) 
 		dispatched++
 	}
 	return dispatched, nil
+}
+
+func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgeevents.RequestEvent, error) {
+	submission, err := w.repo.GetSubmission(ctx, task.SubmissionID)
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	artifact, err := w.repo.GetArtifact(ctx, submission.SourceArtifactID)
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	language, err := w.repo.GetEnabledLanguage(ctx, submission.LanguageID)
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	testcaseSet, err := w.readyTestcaseSet(ctx, submission.ProblemID, submission.TestcaseSetID)
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	testcases := make([]judgeevents.TestcaseRef, 0, len(testcaseSet.Cases))
+	for i, tc := range testcaseSet.Cases {
+		testcases = append(testcases, judgeevents.TestcaseRef{
+			Index:             i + 1,
+			InputKey:          tc.InputKey,
+			ExpectedOutputKey: tc.OutputKey,
+			TimeLimitMS:       tc.TimeLimit.Milliseconds(),
+			MemoryKB:          tc.MemoryKB,
+		})
+	}
+	now := w.now()
+	event := judgeevents.RequestEvent{
+		ProtocolVersion: judgeevents.RequestEventType,
+		EventID:         fmt.Sprintf("judge-request-%d-%d", task.ID, task.Attempts+1),
+		AttemptID:       fmt.Sprintf("submission-%d-task-%d-attempt-%d", submission.ID, task.ID, task.Attempts+1),
+		TraceID:         fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID),
+		SubmissionID:    submission.ID,
+		LanguageID:      language.ID,
+		SourceArtifact: judgeevents.ArtifactRef{
+			ID:          artifact.ID,
+			StorageKey:  artifact.StorageKey,
+			ContentHash: artifact.ChecksumSHA256,
+		},
+		TestcaseSet: judgeevents.TestcaseSetRef{
+			ID:   testcaseSet.ID,
+			Hash: fmt.Sprintf("testcase-set-%d", testcaseSet.ID),
+		},
+		Testcases: testcases,
+		TimeoutMS: language.DefaultTimeLimit.Milliseconds(),
+		MemoryKB:  language.DefaultMemoryKB,
+		Priority:  "formal",
+		CreatedAt: now,
+	}
+	if err := event.Validate(); err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	return event, nil
 }
 
 func (w *Worker) ConsumeOnce(ctx context.Context, limit int, block time.Duration) (int, error) {
