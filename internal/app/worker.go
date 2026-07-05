@@ -66,6 +66,15 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := taskQueue.Ensure(ctx); err != nil {
 		return err
 	}
+	resultQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
+		Stream:   envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
+		Group:    envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
+		Consumer: workerConsumerName(),
+		StartID:  "0",
+	})
+	if err := resultQueue.Ensure(ctx); err != nil {
+		return err
+	}
 	judgeEngine := newJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	worker := submission.NewWorker(submission.WorkerOptions{
@@ -77,10 +86,11 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		SourceStore:      sourceStore,
 		Metrics:          metrics,
 	})
+	resultConsumer := submission.NewResultConsumer(submission.ResultConsumerOptions{Repository: submissionRepo})
 	reconciler := submission.NewReconciler(submissionRepo, worker, nil)
 
 	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics})
-	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "redis_stream", cfg.Redis.Stream, "redis_group", cfg.Redis.Group)
+	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"))
 
 	server := &http.Server{
 		Addr:         cfg.Worker.HealthAddr,
@@ -95,7 +105,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, reconciler, cfg.Redis.BatchSize, cfg.Redis.Block)
+		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, resultQueue, reconciler, cfg.Redis.BatchSize, cfg.Redis.Block)
 	}()
 
 	err = <-errCh
@@ -109,10 +119,13 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	return err
 }
 
-func runWorkerLoops(ctx context.Context, worker *submission.Worker, reconciler *submission.Reconciler, batchSize int, block time.Duration) error {
-	errCh := make(chan error, 2)
+func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, resultQueue queue.TaskQueue, reconciler *submission.Reconciler, batchSize int, block time.Duration) error {
+	errCh := make(chan error, 3)
 	go func() {
-		errCh <- worker.Run(ctx, batchSize, block)
+		errCh <- runDispatchLoop(ctx, worker, batchSize, dispatchInterval(block))
+	}()
+	go func() {
+		errCh <- runResultConsumerLoop(ctx, resultConsumer, resultQueue, batchSize, block)
 	}()
 	go func() {
 		errCh <- runReconcilerLoop(ctx, reconciler)
@@ -122,6 +135,57 @@ func runWorkerLoops(ctx context.Context, worker *submission.Worker, reconciler *
 		return nil
 	}
 	return err
+}
+
+func runDispatchLoop(ctx context.Context, worker *submission.Worker, batchSize int, interval time.Duration) error {
+	if batchSize <= 0 {
+		batchSize = 16
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if _, err := worker.DispatchPending(ctx, int32(batchSize)); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func runResultConsumerLoop(ctx context.Context, consumer *submission.ResultConsumer, resultQueue queue.TaskQueue, batchSize int, block time.Duration) error {
+	if batchSize <= 0 {
+		batchSize = 16
+	}
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		messages, err := resultQueue.Consume(ctx, batchSize, block)
+		if err != nil {
+			return err
+		}
+		for _, message := range messages {
+			if err := consumer.ProcessResultMessage(ctx, message, resultQueue); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func dispatchInterval(block time.Duration) time.Duration {
+	if block > 0 && block < time.Second {
+		return block
+	}
+	return time.Second
 }
 
 func runReconcilerLoop(ctx context.Context, reconciler *submission.Reconciler) error {

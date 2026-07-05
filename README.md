@@ -10,7 +10,7 @@ The v2 backend currently includes:
 
 - User registration, login, refresh tokens, and admin user management.
 - Problem metadata, statements, tags, testcase archive upload, publish checks, and stats.
-- Submissions, self-runs, judge tasks, async judge event DTOs, Redis Stream worker, retry/dead-letter handling, and reconciliation loops.
+- Submissions, self-runs, judge tasks, async judge request/result streams, worker-side result consumer, retry/dead-letter handling, and reconciliation loops.
 - ACM contests, registration, contest submission policy, and live/frozen/final scoreboard responses.
 - Versioned PostgreSQL migrations and an OpenAPI contract for frontend integration.
 - Prometheus metrics for API, worker, and judge-agent processes.
@@ -92,7 +92,7 @@ Runtime dependencies:
 - JudgeCore: modular compile/run/check pipeline with Go and C++17 profiles and dev-only process sandbox.
 - Prometheus: local metrics scraping for API, worker, and judge-agent processes.
 
-PostgreSQL remains the source of truth for submissions, runs, judge tasks, and contest results. Redis Stream messages are delivery hints and workers must tolerate duplicate deliveries.
+PostgreSQL remains the source of truth for submissions, runs, judge attempts, judge tasks, and contest results. Redis Stream messages are delivery hints: the dispatcher creates a durable attempt before publishing, the judge agent publishes results before acknowledging requests, and the worker result consumer commits terminal state before acknowledging result events.
 
 ## API And Docs
 

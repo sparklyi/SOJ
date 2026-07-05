@@ -268,7 +268,7 @@ CREATE TABLE runs (
     problem_id bigint NOT NULL REFERENCES problems(id),
     language_id bigint NOT NULL REFERENCES languages(id),
     status text NOT NULL DEFAULT 'queued' CHECK (
-        status IN ('queued', 'running', 'accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+        status IN ('queued', 'running', 'accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
     ),
     source_artifact_id bigint REFERENCES artifacts(id),
     stdin text,
@@ -402,7 +402,7 @@ CREATE TABLE submission_results (
     submission_id bigint NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
     attempt_id bigint NOT NULL REFERENCES judge_attempts(id) ON DELETE CASCADE,
     status text NOT NULL CHECK (
-        status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+        status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
     ),
     score integer NOT NULL DEFAULT 0 CHECK (score >= 0),
     time_ms integer CHECK (time_ms IS NULL OR time_ms >= 0),

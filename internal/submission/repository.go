@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -179,6 +180,8 @@ type Repository interface {
 	MarkSubmissionQueued(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
 	MarkSubmissionSystemError(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
 	CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error)
+	EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAttemptInput) (JudgeAttemptRecord, error)
+	CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error)
 	GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID int64) (JudgeAttemptRecord, error)
 	ListJudgeCaseResults(ctx context.Context, attemptID int64) ([]JudgeCaseResultRecord, error)
 	GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error)
@@ -369,6 +372,203 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 		return updateContestProblemResult(ctx, q, record, attempt.ID)
 	})
 	return record, err
+}
+
+func (r *SQLRepository) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAttemptInput) (JudgeAttemptRecord, error) {
+	if input.AttemptID != "" {
+		if id, err := strconv.ParseInt(input.AttemptID, 10, 64); err == nil {
+			row, err := r.q.GetJudgeAttemptByID(ctx, id)
+			if err == nil {
+				return judgeAttemptRecord(row), nil
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return JudgeAttemptRecord{}, err
+			}
+		}
+	}
+	latest, err := r.q.GetLatestJudgeAttemptBySubmissionID(ctx, pgtype.Int8{Int64: input.SubmissionID, Valid: true})
+	attemptNo := int32(1)
+	if err == nil {
+		if latest.TaskID.Valid && latest.TaskID.Int64 == input.TaskID && !terminalStatus(latest.Status) {
+			return judgeAttemptRecord(latest), nil
+		}
+		attemptNo = latest.AttemptNo + 1
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return JudgeAttemptRecord{}, err
+	}
+	manifest, err := json.Marshal(map[string]any{
+		"trace_id":          input.TraceID,
+		"testcase_set_hash": input.TestcaseSetHash,
+	})
+	if err != nil {
+		return JudgeAttemptRecord{}, err
+	}
+	startedAt := input.StartedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	row, err := r.q.CreateJudgeAttempt(ctx, db.CreateJudgeAttemptParams{
+		SubmissionID:     pgtype.Int8{Int64: input.SubmissionID, Valid: true},
+		TaskID:           pgtype.Int8{Int64: input.TaskID, Valid: input.TaskID > 0},
+		AttemptNo:        attemptNo,
+		ProtocolVersion:  input.ProtocolVersion,
+		JudgeCoreVersion: input.ProtocolVersion,
+		JudgeEngine:      input.JudgeEngine,
+		LanguageID:       input.LanguageID,
+		TestcaseSetID:    pgtype.Int8{Int64: input.TestcaseSetID, Valid: input.TestcaseSetID > 0},
+		TestcaseSetHash:  text(input.TestcaseSetHash),
+		Status:           "created",
+		Score:            0,
+		Manifest:         manifest,
+		Metrics:          []byte(`{}`),
+		TraceID:          text(input.TraceID),
+		StartedAt:        timestamptz(startedAt),
+	})
+	return judgeAttemptRecord(row), err
+}
+
+func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error) {
+	if r.txRunner == nil {
+		return SubmissionRecord{}, false, errors.New("transaction runner is required to complete judge attempt result")
+	}
+	attemptID, err := strconv.ParseInt(input.AttemptKey, 10, 64)
+	if err != nil {
+		return SubmissionRecord{}, false, fmt.Errorf("invalid attempt_id %q: %w", input.AttemptKey, err)
+	}
+	score := int32(0)
+	if input.Result.Verdict == judge.VerdictAccepted {
+		score = 100
+	}
+	status := dbStatus(input.Status)
+
+	var record SubmissionRecord
+	var persisted bool
+	err = postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		attempt, err := q.GetJudgeAttemptByID(ctx, attemptID)
+		if err != nil {
+			return err
+		}
+		if attempt.SubmissionID.Valid {
+			submissionRow, err := q.GetSubmissionByID(ctx, attempt.SubmissionID.Int64)
+			if err != nil {
+				return err
+			}
+			record = submissionRecord(submissionRow)
+		}
+		if terminalStatus(attempt.Status) {
+			return nil
+		}
+		if !attempt.SubmissionID.Valid {
+			return fmt.Errorf("judge attempt %d is not linked to a submission", attempt.ID)
+		}
+
+		params := db.UpdateSubmissionStatusParams{
+			Status:       status,
+			TimeMs:       int4(input.Result.TimeMS),
+			MemoryKb:     int4(input.Result.MemoryKB),
+			Score:        pgtype.Int4{Int32: score, Valid: true},
+			ErrorMessage: text(input.Result.ErrorMessage),
+			ID:           attempt.SubmissionID.Int64,
+		}
+		submissionRow, err := q.UpdateSubmissionStatus(ctx, params)
+		if errors.Is(err, pgx.ErrNoRows) {
+			submissionRow, err = q.GetSubmissionByID(ctx, attempt.SubmissionID.Int64)
+		}
+		if err != nil {
+			return err
+		}
+		record = submissionRecord(submissionRow)
+
+		summary := judgeSummary(input.Result)
+		manifest, err := judgeManifestJSON(input.Result.Manifest)
+		if err != nil {
+			return err
+		}
+		safeSummary, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		metrics, err := json.Marshal(map[string]any{})
+		if err != nil {
+			return err
+		}
+		finishedAt := input.Result.JudgedAt
+		if finishedAt.IsZero() {
+			finishedAt = time.Now().UTC()
+		}
+		finished, err := q.MarkJudgeAttemptFinished(ctx, db.MarkJudgeAttemptFinishedParams{
+			ID:                   attempt.ID,
+			Status:               status,
+			Verdict:              text(status),
+			Score:                score,
+			TimeMs:               int4(input.Result.TimeMS),
+			MemoryKb:             int4(input.Result.MemoryKB),
+			FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
+			FirstFailedGroup:     text(summary.FirstFailedGroup),
+			CompileOutputSummary: text(summary.CompileOutputSummary),
+			StderrSummary:        text(summary.StderrSummary),
+			CheckerMessage:       text(summary.CheckerMessage),
+			ErrorClass:           text(summary.ErrorClass),
+			ErrorMessage:         text(input.Result.ErrorMessage),
+			Manifest:             manifest,
+			Metrics:              metrics,
+			TraceID:              text(input.TraceID),
+			FinishedAt:           timestamptz(finishedAt),
+		})
+		if err != nil {
+			return err
+		}
+		for i, item := range input.Result.Cases {
+			index := item.Index
+			if index == 0 {
+				index = i + 1
+			}
+			_, err := q.CreateJudgeCaseResult(ctx, db.CreateJudgeCaseResultParams{
+				AttemptID:         attempt.ID,
+				CaseIndex:         int32(index),
+				GroupName:         text(item.GroupName),
+				TestcaseKey:       text(item.TestcaseKey),
+				Status:            dbStatus(item.Verdict),
+				Score:             item.Score,
+				TimeMs:            int4(item.TimeMS),
+				MemoryKb:          int4(item.MemoryKB),
+				ExitCode:          int32Pg(item.ExitCode),
+				Signal:            text(item.Signal),
+				CheckerMessage:    text(item.CheckerMessage),
+				OutputDiffSummary: text(item.OutputDiffSummary),
+			})
+			if err != nil {
+				return err
+			}
+		}
+		_, err = q.UpsertSubmissionResult(ctx, db.UpsertSubmissionResultParams{
+			SubmissionID:         record.ID,
+			AttemptID:            attempt.ID,
+			Status:               status,
+			Score:                score,
+			TimeMs:               int4(input.Result.TimeMS),
+			MemoryKb:             int4(input.Result.MemoryKB),
+			FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
+			FirstFailedGroup:     text(summary.FirstFailedGroup),
+			ErrorClass:           text(summary.ErrorClass),
+			SafeSummary:          safeSummary,
+		})
+		if err != nil {
+			return err
+		}
+		if err := updateContestProblemResult(ctx, q, record, finished.ID); err != nil {
+			return err
+		}
+		if finished.TaskID.Valid {
+			if _, err := q.MarkJudgeTaskDone(ctx, finished.TaskID.Int64); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
+		persisted = true
+		return nil
+	})
+	return record, persisted, err
 }
 
 func persistJudgeResult(ctx context.Context, q *db.Queries, submission SubmissionRecord, result judge.Result, score int32) (db.JudgeAttempt, error) {

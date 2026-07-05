@@ -8,7 +8,7 @@ import (
 )
 
 func TestTerminalStatusUpdatesAreGuardedInSQL(t *testing.T) {
-	terminalGuard := "status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')"
+	terminalGuard := "status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')"
 	for name, query := range map[string]string{
 		"UpdateSubmissionStatus": updateSubmissionStatus,
 		"UpdateRunStatus":        updateRunStatus,
@@ -69,8 +69,8 @@ func TestJudgeTaskDispatchSQLHasStrictClaimAndMarkBoundaries(t *testing.T) {
 			t.Fatalf("%s missing status guard:\n%s", name, query)
 		}
 	}
-	if !strings.Contains(markJudgeTaskDispatched, "status IN ('dispatching', 'running')") {
-		t.Fatalf("MarkJudgeTaskDispatched should tolerate already-running tasks:\n%s", markJudgeTaskDispatched)
+	if !strings.Contains(markJudgeTaskDispatched, "status IN ('dispatching', 'running', 'done')") {
+		t.Fatalf("MarkJudgeTaskDispatched should tolerate already-running or already-done tasks:\n%s", markJudgeTaskDispatched)
 	}
 	if !strings.Contains(markJudgeTaskDispatched, "WHEN status = 'dispatching' THEN 'dispatched'") {
 		t.Fatalf("MarkJudgeTaskDispatched should not regress running tasks to dispatched:\n%s", markJudgeTaskDispatched)

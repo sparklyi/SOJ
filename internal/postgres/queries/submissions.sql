@@ -372,12 +372,12 @@ SET status = sqlc.arg('status'),
     error_message = sqlc.narg('error_message'),
     judged_at = CASE
         WHEN judged_at IS NULL
-          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled') THEN now()
+          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN now()
         ELSE judged_at
     END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING *;
 
 -- name: MarkSubmissionRunning :one
@@ -394,7 +394,7 @@ SET status = 'queued',
     error_message = sqlc.arg('error_message'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING *;
 
 -- name: MarkSubmissionSystemError :one
@@ -404,7 +404,7 @@ SET status = 'system_error',
     judged_at = CASE WHEN judged_at IS NULL THEN now() ELSE judged_at END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING *;
 
 -- name: CreateJudgeTask :one
@@ -462,7 +462,7 @@ SET status = CASE
     stream_id = $2,
     updated_at = now()
 WHERE id = $1
-  AND status IN ('dispatching', 'running')
+  AND status IN ('dispatching', 'running', 'done')
 RETURNING *;
 
 -- name: MarkJudgeTaskDone :one
@@ -470,7 +470,7 @@ UPDATE judge_tasks
 SET status = 'done',
     updated_at = now()
 WHERE id = $1
-  AND status IN ('dispatched', 'running')
+  AND status IN ('dispatching', 'dispatched', 'running')
 RETURNING *;
 
 -- name: MarkJudgeTaskRunning :one
@@ -514,7 +514,7 @@ WITH reset_tasks AS (
           SELECT 1
           FROM submissions
           WHERE submissions.id = judge_tasks.submission_id
-            AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+            AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
       )
     RETURNING *
 ), reset_submissions AS (
@@ -570,10 +570,10 @@ SET status = sqlc.arg('status'),
     error_message = sqlc.narg('error_message'),
     finished_at = CASE
         WHEN finished_at IS NULL
-          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled') THEN now()
+          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN now()
         ELSE finished_at
     END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING *;

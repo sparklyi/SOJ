@@ -1613,7 +1613,7 @@ SET status = CASE
     stream_id = $2,
     updated_at = now()
 WHERE id = $1
-  AND status IN ('dispatching', 'running')
+  AND status IN ('dispatching', 'running', 'done')
 RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
 `
 
@@ -1644,7 +1644,7 @@ UPDATE judge_tasks
 SET status = 'done',
     updated_at = now()
 WHERE id = $1
-  AND status IN ('dispatched', 'running')
+  AND status IN ('dispatching', 'dispatched', 'running')
 RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
 `
 
@@ -1750,7 +1750,7 @@ SET status = 'queued',
     error_message = $1,
     updated_at = now()
 WHERE id = $2
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
 `
 
@@ -1821,7 +1821,7 @@ SET status = 'system_error',
     judged_at = CASE WHEN judged_at IS NULL THEN now() ELSE judged_at END,
     updated_at = now()
 WHERE id = $2
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
 `
 
@@ -1866,7 +1866,7 @@ WITH reset_tasks AS (
           SELECT 1
           FROM submissions
           WHERE submissions.id = judge_tasks.submission_id
-            AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+            AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
       )
     RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
 ), reset_submissions AS (
@@ -2055,12 +2055,12 @@ SET status = $1,
     error_message = $7,
     finished_at = CASE
         WHEN finished_at IS NULL
-          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled') THEN now()
+          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN now()
         ELSE finished_at
     END,
     updated_at = now()
 WHERE id = $8
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING id, user_id, problem_id, language_id, status, source_artifact_id, stdin, stdout, stderr, compile_output, time_ms, memory_kb, error_message, created_at, finished_at, updated_at
 `
 
@@ -2117,12 +2117,12 @@ SET status = $1,
     error_message = $5,
     judged_at = CASE
         WHEN judged_at IS NULL
-          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled') THEN now()
+          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN now()
         ELSE judged_at
     END,
     updated_at = now()
 WHERE id = $6
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
+  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
 `
 

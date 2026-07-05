@@ -3,6 +3,7 @@ package submission
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"SOJ/internal/apperror"
@@ -228,12 +229,22 @@ func (r *memoryRepo) GetSubmissionResult(ctx context.Context, submissionID int64
 	return row, nil
 }
 func (r *memoryRepo) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAttemptInput) (JudgeAttemptRecord, error) {
-	if id, ok := r.attemptKeys[input.AttemptID]; ok {
-		return r.attempts[id], nil
+	if input.AttemptID != "" {
+		if id, ok := r.attemptKeys[input.AttemptID]; ok {
+			return r.attempts[id], nil
+		}
+	}
+	if id, err := strconv.ParseInt(input.AttemptID, 10, 64); err == nil && id > 0 {
+		if attempt, ok := r.attempts[id]; ok {
+			return attempt, nil
+		}
 	}
 	attemptNo := int32(1)
 	for _, attempt := range r.attempts {
 		if attempt.SubmissionID != nil && *attempt.SubmissionID == input.SubmissionID && attempt.AttemptNo >= attemptNo {
+			if attempt.TaskID != nil && *attempt.TaskID == input.TaskID && !terminalStatus(attempt.Status) {
+				return attempt, nil
+			}
 			attemptNo = attempt.AttemptNo + 1
 		}
 	}
@@ -254,7 +265,10 @@ func (r *memoryRepo) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAt
 		UpdatedAt:        time.Now().UTC(),
 	}
 	r.attempts[id] = attempt
-	r.attemptKeys[input.AttemptID] = id
+	r.attemptKeys[fmt.Sprintf("%d", id)] = id
+	if input.AttemptID != "" {
+		r.attemptKeys[input.AttemptID] = id
+	}
 	return attempt, nil
 }
 func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error) {
@@ -267,6 +281,12 @@ func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input Compl
 		return SubmissionRecord{}, false, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
 	}
 	attemptID, ok := r.attemptKeys[input.AttemptKey]
+	if !ok {
+		if id, err := strconv.ParseInt(input.AttemptKey, 10, 64); err == nil {
+			_, ok = r.attempts[id]
+			attemptID = id
+		}
+	}
 	if !ok {
 		return SubmissionRecord{}, false, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
 	}
