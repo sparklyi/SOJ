@@ -174,6 +174,9 @@ func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
 	if len(result.Result.Cases) != 1 || result.Result.Cases[0].Verdict != judge.VerdictAccepted {
 		t.Fatalf("cases = %+v", result.Result.Cases)
 	}
+	if result.Result.Cases[0].TestcaseKey != "testcase-set-3/case-1" {
+		t.Fatalf("testcase key = %q", result.Result.Cases[0].TestcaseKey)
+	}
 	if result.Result.Manifest.TestcaseSetHash != "cases-hash" || result.Result.Manifest.TraceID != "trace-core" {
 		t.Fatalf("manifest = %+v", result.Result.Manifest)
 	}
