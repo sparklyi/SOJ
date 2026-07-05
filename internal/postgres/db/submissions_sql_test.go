@@ -134,6 +134,28 @@ func TestContestProjectionReferencesJudgeAttempts(t *testing.T) {
 	}
 }
 
+func TestJudgeResultQueriesExposeAttemptsCasesAndProjection(t *testing.T) {
+	for name, query := range map[string]string{
+		"CreateJudgeAttempt":                  createJudgeAttempt,
+		"GetJudgeAttemptByID":                 getJudgeAttemptByID,
+		"GetLatestJudgeAttemptBySubmissionID": getLatestJudgeAttemptBySubmissionID,
+		"GetLatestJudgeAttemptByRunID":        getLatestJudgeAttemptByRunID,
+		"ListJudgeAttemptsBySubmissionID":     listJudgeAttemptsBySubmissionID,
+		"MarkJudgeAttemptFinished":            markJudgeAttemptFinished,
+		"CreateJudgeCaseResult":               createJudgeCaseResult,
+		"ListJudgeCaseResultsByAttemptID":     listJudgeCaseResultsByAttemptID,
+		"UpsertSubmissionResult":              upsertSubmissionResult,
+		"GetSubmissionResultBySubmissionID":   getSubmissionResultBySubmissionID,
+	} {
+		if !strings.Contains(query, "judge_") && !strings.Contains(query, "submission_results") {
+			t.Fatalf("%s does not target judge result tables:\n%s", name, query)
+		}
+	}
+	if !strings.Contains(upsertSubmissionResult, "ON CONFLICT (submission_id) DO UPDATE") {
+		t.Fatalf("UpsertSubmissionResult should maintain current projection:\n%s", upsertSubmissionResult)
+	}
+}
+
 func readInitialSchema(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join("..", "..", "migrations", "000001_init.up.sql")

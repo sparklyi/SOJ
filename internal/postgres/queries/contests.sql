@@ -153,9 +153,12 @@ INSERT INTO contest_problem_results (
     attempts,
     accepted_at,
     penalty_minutes,
-    last_submission_id
+    last_submission_id,
+    best_submission_id,
+    best_attempt_id,
+    last_attempt_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 ON CONFLICT (contest_id, user_id, problem_id) DO UPDATE
 SET status = EXCLUDED.status,
@@ -163,6 +166,9 @@ SET status = EXCLUDED.status,
     accepted_at = EXCLUDED.accepted_at,
     penalty_minutes = EXCLUDED.penalty_minutes,
     last_submission_id = EXCLUDED.last_submission_id,
+    best_submission_id = EXCLUDED.best_submission_id,
+    best_attempt_id = EXCLUDED.best_attempt_id,
+    last_attempt_id = EXCLUDED.last_attempt_id,
     updated_at = now()
 RETURNING *;
 
