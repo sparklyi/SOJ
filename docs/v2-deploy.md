@@ -7,9 +7,15 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 ./deploy/smoke.sh
 ```
 
-The Compose stack starts PostgreSQL, Redis, MinIO, a one-shot migration job, a local seed job, API, worker, judge-agent, and Prometheus. Local development uses the internal `fake://accepted` engine and seeds one enabled fake language so the submit/worker smoke flow can run before a privileged judge sandbox is available.
+The Compose stack starts PostgreSQL, Redis, MinIO, a one-shot migration job, a local seed job, API, worker, judge-agent, and Prometheus. Local development uses the internal `fake://accepted` engine and seeds one enabled fake language so the submit/worker/agent/result-consumer smoke flow can run before a privileged judge sandbox is available.
 
 Production should run `soj-judge-agent` behind the async judge event boundary. Do not reuse the local fake language seed as production language data.
+
+## Judge Event Flow
+
+The worker process has two production loops: a dispatcher that claims `judge_tasks` and publishes `judge.request.v1` to `SOJ_REDIS_STREAM`, and a result consumer that reads `judge.result.v1` from `SOJ_JUDGE_RESULT_STREAM`. The result consumer acknowledges Redis only after the PostgreSQL transaction updates `judge_attempts`, `submission_results`, `judge_tasks`, and contest projections.
+
+`soj-judge-agent` consumes requests from `SOJ_JUDGE_REQUEST_STREAM` and publishes results to `SOJ_JUDGE_RESULT_STREAM`. The agent does not receive business database credentials. The result consumer group is created from Redis stream ID `0` so already-published result events are not skipped during first startup or recovery.
 
 ## Files
 
@@ -49,7 +55,7 @@ Current API readiness checks PostgreSQL. Worker readiness is process-level only;
 - Judge agent metrics: `GET http://localhost:8082/metrics`
 - Prometheus UI: `http://localhost:9090`
 
-The local Prometheus service scrapes `api:8080`, `worker:8081`, and `judge-agent:8082`. Current application metrics include HTTP request counts and latency, judge task dispatch counts, judge task processing counts, and judge task processing latency. Keep `/metrics` on a private network in production or protect it at the ingress layer.
+The local Prometheus service scrapes `api:8080`, `worker:8081`, and `judge-agent:8082`. Current application metrics include HTTP request counts and latency plus judge task dispatch counts. Keep `/metrics` on a private network in production or protect it at the ingress layer.
 
 Distributed tracing is not enabled yet. The intended next step is OpenTelemetry with OTLP export, disabled by default and switchable by environment.
 

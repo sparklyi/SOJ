@@ -15,6 +15,7 @@ type RedisStreamConfig struct {
 	Stream   string
 	Group    string
 	Consumer string
+	StartID  string
 }
 
 type RedisStreamQueue struct {
@@ -32,11 +33,14 @@ func NewRedisStreamQueue(client redis.UniversalClient, cfg RedisStreamConfig) *R
 	if cfg.Consumer == "" {
 		cfg.Consumer = "worker"
 	}
+	if cfg.StartID == "" {
+		cfg.StartID = "$"
+	}
 	return &RedisStreamQueue{client: client, cfg: cfg}
 }
 
 func (q *RedisStreamQueue) Ensure(ctx context.Context) error {
-	err := q.client.XGroupCreateMkStream(ctx, q.cfg.Stream, q.cfg.Group, "$").Err()
+	err := q.client.XGroupCreateMkStream(ctx, q.cfg.Stream, q.cfg.Group, q.cfg.StartID).Err()
 	if err == nil || strings.Contains(err.Error(), "BUSYGROUP") {
 		return nil
 	}

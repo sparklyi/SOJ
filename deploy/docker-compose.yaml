@@ -153,6 +153,10 @@ services:
       SOJ_WORKER_HEALTH_ADDR: ":8081"
       SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
       SOJ_REDIS_ADDR: redis:6379
+      SOJ_REDIS_STREAM: soj:judge:tasks
+      SOJ_REDIS_GROUP: judge-workers
+      SOJ_JUDGE_RESULT_STREAM: soj:judge:results
+      SOJ_JUDGE_RESULT_GROUP: judge-result-consumers
       SOJ_STORAGE_ENDPOINT: http://minio:9000
       SOJ_STORAGE_BUCKET: soj
       SOJ_STORAGE_ACCESS_KEY: minioadmin
@@ -198,8 +202,10 @@ services:
       SOJ_STORAGE_PATH_STYLE: "true"
       SOJ_JUDGE_ENDPOINT: fake://accepted
       SOJ_JUDGE_SANDBOX_BACKEND: fake
+      SOJ_JUDGE_REQUEST_STREAM: soj:judge:tasks
       SOJ_JUDGE_AGENT_GROUP: judge-agents
       SOJ_JUDGE_RESULT_STREAM: soj:judge:results
+      SOJ_JUDGE_RESULT_GROUP: judge-result-consumers
     depends_on:
       redis:
         condition: service_healthy

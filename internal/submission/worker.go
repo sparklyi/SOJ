@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"SOJ/internal/judge"
@@ -121,11 +122,31 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 		})
 	}
 	now := w.now()
+	if submission.Status == StatusQueued {
+		if _, err := w.repo.MarkSubmissionRunning(ctx, submission.ID); err != nil {
+			return judgeevents.RequestEvent{}, err
+		}
+	}
+	attempt, err := w.repo.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
+		SubmissionID:    submission.ID,
+		TaskID:          task.ID,
+		LanguageID:      language.ID,
+		TestcaseSetID:   testcaseSet.ID,
+		TestcaseSetHash: fmt.Sprintf("testcase-set-%d", testcaseSet.ID),
+		ProtocolVersion: judgeevents.RequestEventType,
+		JudgeEngine:     judge.EngineSOJAgent,
+		TraceID:         fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID),
+		StartedAt:       now,
+	})
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	attemptID := strconv.FormatInt(attempt.ID, 10)
 	event := judgeevents.RequestEvent{
 		ProtocolVersion: judgeevents.RequestEventType,
-		EventID:         fmt.Sprintf("judge-request-%d-%d", task.ID, task.Attempts+1),
-		AttemptID:       fmt.Sprintf("submission-%d-task-%d-attempt-%d", submission.ID, task.ID, task.Attempts+1),
-		TraceID:         fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID),
+		EventID:         fmt.Sprintf("judge-request-%s", attemptID),
+		AttemptID:       attemptID,
+		TraceID:         valueOr(attempt.TraceID, fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID)),
 		SubmissionID:    submission.ID,
 		LanguageID:      language.ID,
 		SourceArtifact: judgeevents.ArtifactRef{
@@ -147,6 +168,13 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 		return judgeevents.RequestEvent{}, err
 	}
 	return event, nil
+}
+
+func valueOr(value *string, fallback string) string {
+	if value == nil || *value == "" {
+		return fallback
+	}
+	return *value
 }
 
 func (w *Worker) ConsumeOnce(ctx context.Context, limit int, block time.Duration) (int, error) {

@@ -127,7 +127,7 @@ if [[ "$CONTEST_STATUS" != "accepted" ]]; then
   echo "contest submission $CONTEST_SUBMISSION_ID ended with status $CONTEST_STATUS" >&2
   exit 1
 fi
-require_metric "${WORKER_URL:-http://localhost:8081}" "soj_worker_judge_tasks_total"
+require_metric "${WORKER_URL:-http://localhost:8081}" "soj_worker_judge_task_dispatch_total"
 
 RESULT_STREAM_LEN="0"
 for _ in $(seq 1 30); do
@@ -140,6 +140,39 @@ if [[ "$RESULT_STREAM_LEN" == "0" ]]; then
   exit 1
 fi
 
+ASYNC_DB_ROWS="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "
+select count(*)
+from submissions s
+join judge_tasks jt on jt.submission_id = s.id
+join judge_attempts ja on ja.submission_id = s.id and ja.task_id = jt.id
+join submission_results sr on sr.submission_id = s.id and sr.attempt_id = ja.id
+where s.id in ($SUBMISSION_ID, $CONTEST_SUBMISSION_ID)
+  and s.status = 'accepted'
+  and ja.status = 'accepted'
+  and sr.status = 'accepted'
+  and jt.status = 'done';
+" | tr -d '\r[:space:]')"
+if [[ "$ASYNC_DB_ROWS" != "2" ]]; then
+  echo "async judge DB state rows = $ASYNC_DB_ROWS, want 2" >&2
+  docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -c "
+select s.id as submission_id, s.status as submission_status, jt.status as task_status, ja.id as attempt_id, ja.status as attempt_status, sr.status as result_status
+from submissions s
+left join judge_tasks jt on jt.submission_id = s.id
+left join judge_attempts ja on ja.submission_id = s.id
+left join submission_results sr on sr.submission_id = s.id
+where s.id in ($SUBMISSION_ID, $CONTEST_SUBMISSION_ID)
+order by s.id, ja.id;
+" >&2
+  exit 1
+fi
+
+CASE_RESULT_ROWS="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "
+select count(*)
+from judge_case_results jcr
+join judge_attempts ja on ja.id = jcr.attempt_id
+where ja.submission_id in ($SUBMISSION_ID, $CONTEST_SUBMISSION_ID);
+" | tr -d '\r[:space:]')"
+
 SCOREBOARD="$(api_json GET "/api/v1/contests/$CONTEST_ID/scoreboard?view=live")"
 ACCEPTED_COUNT="$(jq -r '.data.rows[0].accepted_count' <<<"$SCOREBOARD")"
 if [[ "$ACCEPTED_COUNT" != "1" ]]; then
@@ -147,4 +180,4 @@ if [[ "$ACCEPTED_COUNT" != "1" ]]; then
   exit 1
 fi
 
-echo "smoke ok: problem=$PROBLEM_ID submission=$SUBMISSION_ID contest=$CONTEST_ID contest_submission=$CONTEST_SUBMISSION_ID judge_results=$RESULT_STREAM_LEN"
+echo "smoke ok: problem=$PROBLEM_ID submission=$SUBMISSION_ID contest=$CONTEST_ID contest_submission=$CONTEST_SUBMISSION_ID judge_results=$RESULT_STREAM_LEN async_rows=$ASYNC_DB_ROWS case_results=$CASE_RESULT_ROWS"
