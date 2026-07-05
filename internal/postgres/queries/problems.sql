@@ -227,6 +227,87 @@ SELECT coalesce(max(version), 0)::integer + 1 AS next_version
 FROM testcase_sets
 WHERE problem_id = $1;
 
+-- name: CreateProblemCheckRun :one
+INSERT INTO problem_check_runs (
+    problem_id,
+    testcase_set_id,
+    requested_by,
+    status,
+    summary
+) VALUES (
+    sqlc.arg('problem_id'),
+    sqlc.narg('testcase_set_id'),
+    sqlc.narg('requested_by'),
+    sqlc.arg('status'),
+    sqlc.arg('summary')
+)
+RETURNING *;
+
+-- name: GetProblemCheckRunByID :one
+SELECT *
+FROM problem_check_runs
+WHERE id = $1;
+
+-- name: ListProblemCheckRunsByProblemID :many
+SELECT *
+FROM problem_check_runs
+WHERE problem_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
+
+-- name: CompleteProblemCheckRun :one
+UPDATE problem_check_runs
+SET status = 'completed',
+    summary = sqlc.arg('summary'),
+    error_message = NULL,
+    finished_at = coalesce(sqlc.narg('finished_at'), finished_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status IN ('queued', 'running')
+RETURNING *;
+
+-- name: FailProblemCheckRun :one
+UPDATE problem_check_runs
+SET status = 'failed',
+    summary = sqlc.arg('summary'),
+    error_message = sqlc.arg('error_message'),
+    finished_at = coalesce(sqlc.narg('finished_at'), finished_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status IN ('queued', 'running')
+RETURNING *;
+
+-- name: CreateProblemCheckFinding :one
+INSERT INTO problem_check_findings (
+    run_id,
+    severity,
+    code,
+    message,
+    case_index,
+    testcase_key,
+    details
+) VALUES (
+    sqlc.arg('run_id'),
+    sqlc.arg('severity'),
+    sqlc.arg('code'),
+    sqlc.arg('message'),
+    sqlc.narg('case_index'),
+    sqlc.narg('testcase_key'),
+    sqlc.arg('details')
+)
+RETURNING *;
+
+-- name: GetProblemCheckFindingByID :one
+SELECT *
+FROM problem_check_findings
+WHERE id = $1;
+
+-- name: ListProblemCheckFindingsByRunID :many
+SELECT *
+FROM problem_check_findings
+WHERE run_id = $1
+ORDER BY id;
+
 -- name: GetProblemStats :one
 SELECT
     p.id AS problem_id,

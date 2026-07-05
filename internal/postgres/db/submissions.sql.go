@@ -11,6 +11,54 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelRejudgeBatch = `-- name: CancelRejudgeBatch :one
+UPDATE rejudge_batches
+SET status = 'canceled',
+    canceled_count = $1,
+    error_message = $2,
+    finished_at = coalesce($3, finished_at, now()),
+    updated_at = now()
+WHERE id = $4
+  AND status IN ('queued', 'running')
+RETURNING id, problem_id, contest_id, requested_by, status, reason, filters, total_count, completed_count, failed_count, canceled_count, error_message, started_at, finished_at, created_at, updated_at
+`
+
+type CancelRejudgeBatchParams struct {
+	CanceledCount int32              `db:"canceled_count" json:"canceled_count"`
+	ErrorMessage  pgtype.Text        `db:"error_message" json:"error_message"`
+	FinishedAt    pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
+	ID            int64              `db:"id" json:"id"`
+}
+
+func (q *Queries) CancelRejudgeBatch(ctx context.Context, arg CancelRejudgeBatchParams) (RejudgeBatch, error) {
+	row := q.db.QueryRow(ctx, cancelRejudgeBatch,
+		arg.CanceledCount,
+		arg.ErrorMessage,
+		arg.FinishedAt,
+		arg.ID,
+	)
+	var i RejudgeBatch
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Reason,
+		&i.Filters,
+		&i.TotalCount,
+		&i.CompletedCount,
+		&i.FailedCount,
+		&i.CanceledCount,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const claimPendingJudgeTasks = `-- name: ClaimPendingJudgeTasks :many
 WITH claimed AS (
     SELECT id
@@ -58,6 +106,59 @@ func (q *Queries) ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]Ju
 		return nil, err
 	}
 	return items, nil
+}
+
+const completeRejudgeBatch = `-- name: CompleteRejudgeBatch :one
+UPDATE rejudge_batches
+SET status = 'completed',
+    completed_count = $1,
+    failed_count = $2,
+    canceled_count = $3,
+    error_message = NULL,
+    started_at = coalesce(started_at, now()),
+    finished_at = coalesce($4, finished_at, now()),
+    updated_at = now()
+WHERE id = $5
+  AND status IN ('queued', 'running')
+RETURNING id, problem_id, contest_id, requested_by, status, reason, filters, total_count, completed_count, failed_count, canceled_count, error_message, started_at, finished_at, created_at, updated_at
+`
+
+type CompleteRejudgeBatchParams struct {
+	CompletedCount int32              `db:"completed_count" json:"completed_count"`
+	FailedCount    int32              `db:"failed_count" json:"failed_count"`
+	CanceledCount  int32              `db:"canceled_count" json:"canceled_count"`
+	FinishedAt     pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
+	ID             int64              `db:"id" json:"id"`
+}
+
+func (q *Queries) CompleteRejudgeBatch(ctx context.Context, arg CompleteRejudgeBatchParams) (RejudgeBatch, error) {
+	row := q.db.QueryRow(ctx, completeRejudgeBatch,
+		arg.CompletedCount,
+		arg.FailedCount,
+		arg.CanceledCount,
+		arg.FinishedAt,
+		arg.ID,
+	)
+	var i RejudgeBatch
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Reason,
+		&i.Filters,
+		&i.TotalCount,
+		&i.CompletedCount,
+		&i.FailedCount,
+		&i.CanceledCount,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const countSubmissions = `-- name: CountSubmissions :one
@@ -145,6 +246,7 @@ INSERT INTO judge_attempts (
     submission_id,
     run_id,
     task_id,
+    rejudge_batch_id,
     attempt_no,
     protocol_version,
     judge_core_version,
@@ -208,15 +310,17 @@ INSERT INTO judge_attempts (
     $30,
     $31,
     $32,
-    $33
+    $33,
+    $34
 )
-RETURNING id, submission_id, run_id, task_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+RETURNING id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 `
 
 type CreateJudgeAttemptParams struct {
 	SubmissionID         pgtype.Int8        `db:"submission_id" json:"submission_id"`
 	RunID                pgtype.Int8        `db:"run_id" json:"run_id"`
 	TaskID               pgtype.Int8        `db:"task_id" json:"task_id"`
+	RejudgeBatchID       pgtype.Int8        `db:"rejudge_batch_id" json:"rejudge_batch_id"`
 	AttemptNo            int32              `db:"attempt_no" json:"attempt_no"`
 	ProtocolVersion      string             `db:"protocol_version" json:"protocol_version"`
 	JudgeCoreVersion     string             `db:"judge_core_version" json:"judge_core_version"`
@@ -254,6 +358,7 @@ func (q *Queries) CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttempt
 		arg.SubmissionID,
 		arg.RunID,
 		arg.TaskID,
+		arg.RejudgeBatchID,
 		arg.AttemptNo,
 		arg.ProtocolVersion,
 		arg.JudgeCoreVersion,
@@ -291,6 +396,7 @@ func (q *Queries) CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttempt
 		&i.SubmissionID,
 		&i.RunID,
 		&i.TaskID,
+		&i.RejudgeBatchID,
 		&i.AttemptNo,
 		&i.ProtocolVersion,
 		&i.JudgeCoreVersion,
@@ -457,6 +563,69 @@ func (q *Queries) CreateJudgeTask(ctx context.Context, arg CreateJudgeTaskParams
 	return i, err
 }
 
+const createRejudgeBatch = `-- name: CreateRejudgeBatch :one
+INSERT INTO rejudge_batches (
+    problem_id,
+    contest_id,
+    requested_by,
+    status,
+    reason,
+    filters,
+    total_count
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7
+)
+RETURNING id, problem_id, contest_id, requested_by, status, reason, filters, total_count, completed_count, failed_count, canceled_count, error_message, started_at, finished_at, created_at, updated_at
+`
+
+type CreateRejudgeBatchParams struct {
+	ProblemID   pgtype.Int8 `db:"problem_id" json:"problem_id"`
+	ContestID   pgtype.Int8 `db:"contest_id" json:"contest_id"`
+	RequestedBy int64       `db:"requested_by" json:"requested_by"`
+	Status      string      `db:"status" json:"status"`
+	Reason      string      `db:"reason" json:"reason"`
+	Filters     []byte      `db:"filters" json:"filters"`
+	TotalCount  int32       `db:"total_count" json:"total_count"`
+}
+
+func (q *Queries) CreateRejudgeBatch(ctx context.Context, arg CreateRejudgeBatchParams) (RejudgeBatch, error) {
+	row := q.db.QueryRow(ctx, createRejudgeBatch,
+		arg.ProblemID,
+		arg.ContestID,
+		arg.RequestedBy,
+		arg.Status,
+		arg.Reason,
+		arg.Filters,
+		arg.TotalCount,
+	)
+	var i RejudgeBatch
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Reason,
+		&i.Filters,
+		&i.TotalCount,
+		&i.CompletedCount,
+		&i.FailedCount,
+		&i.CanceledCount,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createRun = `-- name: CreateRun :one
 INSERT INTO runs (
     user_id,
@@ -567,6 +736,61 @@ func (q *Queries) CreateSubmission(ctx context.Context, arg CreateSubmissionPara
 	return i, err
 }
 
+const failRejudgeBatch = `-- name: FailRejudgeBatch :one
+UPDATE rejudge_batches
+SET status = 'failed',
+    completed_count = $1,
+    failed_count = $2,
+    canceled_count = $3,
+    error_message = $4,
+    started_at = coalesce(started_at, now()),
+    finished_at = coalesce($5, finished_at, now()),
+    updated_at = now()
+WHERE id = $6
+  AND status IN ('queued', 'running')
+RETURNING id, problem_id, contest_id, requested_by, status, reason, filters, total_count, completed_count, failed_count, canceled_count, error_message, started_at, finished_at, created_at, updated_at
+`
+
+type FailRejudgeBatchParams struct {
+	CompletedCount int32              `db:"completed_count" json:"completed_count"`
+	FailedCount    int32              `db:"failed_count" json:"failed_count"`
+	CanceledCount  int32              `db:"canceled_count" json:"canceled_count"`
+	ErrorMessage   pgtype.Text        `db:"error_message" json:"error_message"`
+	FinishedAt     pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
+	ID             int64              `db:"id" json:"id"`
+}
+
+func (q *Queries) FailRejudgeBatch(ctx context.Context, arg FailRejudgeBatchParams) (RejudgeBatch, error) {
+	row := q.db.QueryRow(ctx, failRejudgeBatch,
+		arg.CompletedCount,
+		arg.FailedCount,
+		arg.CanceledCount,
+		arg.ErrorMessage,
+		arg.FinishedAt,
+		arg.ID,
+	)
+	var i RejudgeBatch
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Reason,
+		&i.Filters,
+		&i.TotalCount,
+		&i.CompletedCount,
+		&i.FailedCount,
+		&i.CanceledCount,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getArtifactByID = `-- name: GetArtifactByID :one
 SELECT id, owner_type, owner_id, kind, storage_key, checksum_sha256, size_bytes, content_type, created_at
 FROM artifacts
@@ -591,7 +815,7 @@ func (q *Queries) GetArtifactByID(ctx context.Context, id int64) (Artifact, erro
 }
 
 const getJudgeAttemptByID = `-- name: GetJudgeAttemptByID :one
-SELECT id, submission_id, run_id, task_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE id = $1
 `
@@ -604,6 +828,7 @@ func (q *Queries) GetJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttem
 		&i.SubmissionID,
 		&i.RunID,
 		&i.TaskID,
+		&i.RejudgeBatchID,
 		&i.AttemptNo,
 		&i.ProtocolVersion,
 		&i.JudgeCoreVersion,
@@ -687,7 +912,7 @@ func (q *Queries) GetJudgeTaskBySubmissionID(ctx context.Context, submissionID i
 }
 
 const getLatestJudgeAttemptByRunID = `-- name: GetLatestJudgeAttemptByRunID :one
-SELECT id, submission_id, run_id, task_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE run_id = $1
 ORDER BY attempt_no DESC, id DESC
@@ -702,6 +927,7 @@ func (q *Queries) GetLatestJudgeAttemptByRunID(ctx context.Context, runID pgtype
 		&i.SubmissionID,
 		&i.RunID,
 		&i.TaskID,
+		&i.RejudgeBatchID,
 		&i.AttemptNo,
 		&i.ProtocolVersion,
 		&i.JudgeCoreVersion,
@@ -739,7 +965,7 @@ func (q *Queries) GetLatestJudgeAttemptByRunID(ctx context.Context, runID pgtype
 }
 
 const getLatestJudgeAttemptBySubmissionID = `-- name: GetLatestJudgeAttemptBySubmissionID :one
-SELECT id, submission_id, run_id, task_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE submission_id = $1
 ORDER BY attempt_no DESC, id DESC
@@ -754,6 +980,7 @@ func (q *Queries) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submi
 		&i.SubmissionID,
 		&i.RunID,
 		&i.TaskID,
+		&i.RejudgeBatchID,
 		&i.AttemptNo,
 		&i.ProtocolVersion,
 		&i.JudgeCoreVersion,
@@ -818,6 +1045,36 @@ func (q *Queries) GetReadyTestcaseSetByID(ctx context.Context, arg GetReadyTestc
 		&i.IsCurrent,
 		&i.CreatedBy,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getRejudgeBatchByID = `-- name: GetRejudgeBatchByID :one
+SELECT id, problem_id, contest_id, requested_by, status, reason, filters, total_count, completed_count, failed_count, canceled_count, error_message, started_at, finished_at, created_at, updated_at
+FROM rejudge_batches
+WHERE id = $1
+`
+
+func (q *Queries) GetRejudgeBatchByID(ctx context.Context, id int64) (RejudgeBatch, error) {
+	row := q.db.QueryRow(ctx, getRejudgeBatchByID, id)
+	var i RejudgeBatch
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Reason,
+		&i.Filters,
+		&i.TotalCount,
+		&i.CompletedCount,
+		&i.FailedCount,
+		&i.CanceledCount,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -907,8 +1164,73 @@ func (q *Queries) GetSubmissionResultBySubmissionID(ctx context.Context, submiss
 	return i, err
 }
 
+const listJudgeAttemptsByRejudgeBatch = `-- name: ListJudgeAttemptsByRejudgeBatch :many
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+FROM judge_attempts
+WHERE rejudge_batch_id = $1
+ORDER BY id
+`
+
+func (q *Queries) ListJudgeAttemptsByRejudgeBatch(ctx context.Context, rejudgeBatchID pgtype.Int8) ([]JudgeAttempt, error) {
+	rows, err := q.db.Query(ctx, listJudgeAttemptsByRejudgeBatch, rejudgeBatchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JudgeAttempt
+	for rows.Next() {
+		var i JudgeAttempt
+		if err := rows.Scan(
+			&i.ID,
+			&i.SubmissionID,
+			&i.RunID,
+			&i.TaskID,
+			&i.RejudgeBatchID,
+			&i.AttemptNo,
+			&i.ProtocolVersion,
+			&i.JudgeCoreVersion,
+			&i.JudgeEngine,
+			&i.JudgeAgentID,
+			&i.LanguageID,
+			&i.LanguageRuntime,
+			&i.SandboxBackend,
+			&i.SandboxProfile,
+			&i.TestcaseSetID,
+			&i.TestcaseSetHash,
+			&i.CheckerHash,
+			&i.ValidatorHash,
+			&i.Status,
+			&i.Verdict,
+			&i.Score,
+			&i.TimeMs,
+			&i.MemoryKb,
+			&i.FirstFailedCaseIndex,
+			&i.FirstFailedGroup,
+			&i.CompileOutputSummary,
+			&i.StderrSummary,
+			&i.CheckerMessage,
+			&i.ErrorClass,
+			&i.ErrorMessage,
+			&i.Manifest,
+			&i.Metrics,
+			&i.TraceID,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listJudgeAttemptsBySubmissionID = `-- name: ListJudgeAttemptsBySubmissionID :many
-SELECT id, submission_id, run_id, task_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE submission_id = $1
 ORDER BY attempt_no DESC, id DESC
@@ -928,6 +1250,7 @@ func (q *Queries) ListJudgeAttemptsBySubmissionID(ctx context.Context, submissio
 			&i.SubmissionID,
 			&i.RunID,
 			&i.TaskID,
+			&i.RejudgeBatchID,
 			&i.AttemptNo,
 			&i.ProtocolVersion,
 			&i.JudgeCoreVersion,
@@ -1005,6 +1328,70 @@ func (q *Queries) ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID
 			&i.StderrArtifactID,
 			&i.DiffArtifactID,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRejudgeBatches = `-- name: ListRejudgeBatches :many
+SELECT id, problem_id, contest_id, requested_by, status, reason, filters, total_count, completed_count, failed_count, canceled_count, error_message, started_at, finished_at, created_at, updated_at
+FROM rejudge_batches
+WHERE ($1::bigint IS NULL OR problem_id = $1::bigint)
+  AND ($2::bigint IS NULL OR contest_id = $2::bigint)
+  AND ($3::bigint IS NULL OR requested_by = $3::bigint)
+  AND ($4::text IS NULL OR status = $4::text)
+ORDER BY created_at DESC, id DESC
+LIMIT $6 OFFSET $5
+`
+
+type ListRejudgeBatchesParams struct {
+	ProblemID   pgtype.Int8 `db:"problem_id" json:"problem_id"`
+	ContestID   pgtype.Int8 `db:"contest_id" json:"contest_id"`
+	RequestedBy pgtype.Int8 `db:"requested_by" json:"requested_by"`
+	Status      pgtype.Text `db:"status" json:"status"`
+	Offset      int32       `db:"offset" json:"offset"`
+	Limit       int32       `db:"limit" json:"limit"`
+}
+
+func (q *Queries) ListRejudgeBatches(ctx context.Context, arg ListRejudgeBatchesParams) ([]RejudgeBatch, error) {
+	rows, err := q.db.Query(ctx, listRejudgeBatches,
+		arg.ProblemID,
+		arg.ContestID,
+		arg.RequestedBy,
+		arg.Status,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RejudgeBatch
+	for rows.Next() {
+		var i RejudgeBatch
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProblemID,
+			&i.ContestID,
+			&i.RequestedBy,
+			&i.Status,
+			&i.Reason,
+			&i.Filters,
+			&i.TotalCount,
+			&i.CompletedCount,
+			&i.FailedCount,
+			&i.CanceledCount,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1099,7 +1486,7 @@ SET status = $1,
     finished_at = coalesce($16, finished_at, now()),
     updated_at = now()
 WHERE id = $17
-RETURNING id, submission_id, run_id, task_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+RETURNING id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 `
 
 type MarkJudgeAttemptFinishedParams struct {
@@ -1148,6 +1535,7 @@ func (q *Queries) MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAtt
 		&i.SubmissionID,
 		&i.RunID,
 		&i.TaskID,
+		&i.RejudgeBatchID,
 		&i.AttemptNo,
 		&i.ProtocolVersion,
 		&i.JudgeCoreVersion,
@@ -1598,6 +1986,58 @@ func (q *Queries) UpdateJudgeTaskDispatching(ctx context.Context, id int64) (Jud
 		&i.Attempts,
 		&i.NextRunAt,
 		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateRejudgeBatchProgress = `-- name: UpdateRejudgeBatchProgress :one
+UPDATE rejudge_batches
+SET status = CASE
+        WHEN status = 'queued' THEN 'running'
+        ELSE status
+    END,
+    completed_count = $1,
+    failed_count = $2,
+    canceled_count = $3,
+    started_at = coalesce(started_at, now()),
+    updated_at = now()
+WHERE id = $4
+  AND status IN ('queued', 'running')
+RETURNING id, problem_id, contest_id, requested_by, status, reason, filters, total_count, completed_count, failed_count, canceled_count, error_message, started_at, finished_at, created_at, updated_at
+`
+
+type UpdateRejudgeBatchProgressParams struct {
+	CompletedCount int32 `db:"completed_count" json:"completed_count"`
+	FailedCount    int32 `db:"failed_count" json:"failed_count"`
+	CanceledCount  int32 `db:"canceled_count" json:"canceled_count"`
+	ID             int64 `db:"id" json:"id"`
+}
+
+func (q *Queries) UpdateRejudgeBatchProgress(ctx context.Context, arg UpdateRejudgeBatchProgressParams) (RejudgeBatch, error) {
+	row := q.db.QueryRow(ctx, updateRejudgeBatchProgress,
+		arg.CompletedCount,
+		arg.FailedCount,
+		arg.CanceledCount,
+		arg.ID,
+	)
+	var i RejudgeBatch
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.ContestID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Reason,
+		&i.Filters,
+		&i.TotalCount,
+		&i.CompletedCount,
+		&i.FailedCount,
+		&i.CanceledCount,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
