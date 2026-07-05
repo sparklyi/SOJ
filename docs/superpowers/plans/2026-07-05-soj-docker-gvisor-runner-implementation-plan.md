@@ -54,7 +54,7 @@
 
 - 增加 Go/C++17 runner image 构建。
 - 增加本地 Docker/gVisor 安装和检查脚本。
-- 增加 `make runner-images`、`make smoke-real-docker`、`make smoke-real-gvisor`。
+- 增加 `make runner-images-pull`、`make runner-images-build`、`make smoke-real-docker`、`make smoke-real-gvisor`。
 
 验收：
 

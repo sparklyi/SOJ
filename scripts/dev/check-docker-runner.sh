@@ -2,8 +2,8 @@
 set -euo pipefail
 
 RUNTIME="${SOJ_DOCKER_RUNNER_RUNTIME:-${1:-}}"
-GO_IMAGE="${SOJ_DOCKER_RUNNER_IMAGE_GO:-soj-runner-go:local}"
-CPP_IMAGE="${SOJ_DOCKER_RUNNER_IMAGE_CPP17:-soj-runner-cpp17:local}"
+GO_IMAGE="${SOJ_DOCKER_RUNNER_IMAGE_GO:-ghcr.io/sparklyi/soj-runner-go:main}"
+CPP_IMAGE="${SOJ_DOCKER_RUNNER_IMAGE_CPP17:-ghcr.io/sparklyi/soj-runner-cpp17:main}"
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -24,7 +24,8 @@ fi
 check_image() {
   local image="$1"
   if ! docker image inspect "$image" >/dev/null 2>&1; then
-    echo "runner image $image was not found; run: make runner-images" >&2
+    echo "runner image $image was not found; run: make runner-images-pull" >&2
+    echo "or use make runner-images-build while developing runner Dockerfiles" >&2
     exit 1
   fi
 }

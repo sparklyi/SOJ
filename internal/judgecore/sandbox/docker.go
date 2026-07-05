@@ -87,8 +87,8 @@ func NewDockerSandbox(options DockerSandboxOptions) *DockerSandbox {
 		client = dockerCLIClient{binary: "docker"}
 	}
 	images := map[string]string{
-		"go":    "soj-runner-go:local",
-		"cpp17": "soj-runner-cpp17:local",
+		"go":    "ghcr.io/sparklyi/soj-runner-go:main",
+		"cpp17": "ghcr.io/sparklyi/soj-runner-cpp17:main",
 	}
 	for language, image := range options.Images {
 		if strings.TrimSpace(image) != "" {

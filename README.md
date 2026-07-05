@@ -107,6 +107,14 @@ To run the local real-code smoke path through Docker runner containers:
 make smoke-real-docker
 ```
 
+`make smoke-real-docker` pulls the published runner images from GHCR by default. To build runner images locally while changing Dockerfiles, run:
+
+```bash
+RUNNER_IMAGES_PREPARE=build make smoke-real-docker
+```
+
+Runner images are published by [publish-runner-images.yml](.github/workflows/publish-runner-images.yml) when runner image files change on `main`, on version tags, and by manual workflow dispatch.
+
 To validate the same path through gVisor/runsc after installing runsc:
 
 ```bash
@@ -179,6 +187,8 @@ Important variables:
 | `SOJ_JUDGE_PARALLELISM` | Global judge-agent sandbox slots. |
 | `SOJ_JUDGE_LANGUAGE_SLOTS` | Per-language slot limits, such as `go=4,cpp17=4`. |
 | `SOJ_DOCKER_RUNNER_RUNTIME` | Docker runtime for runner containers; production should use `runsc`. |
+| `SOJ_DOCKER_RUNNER_IMAGE_GO` | Go runner image, defaults to `ghcr.io/sparklyi/soj-runner-go:main` for local smoke. |
+| `SOJ_DOCKER_RUNNER_IMAGE_CPP17` | C++17 runner image, defaults to `ghcr.io/sparklyi/soj-runner-cpp17:main` for local smoke. |
 
 ## API Documentation
 
@@ -261,6 +271,8 @@ Before exposing SOJ outside local development:
 - Run `soj-judge-agent` without business database credentials.
 - Treat `SOJ_JUDGE_SANDBOX_BACKEND=docker` with Docker runtime `runsc`/gVisor as the production sandbox target.
 - Set `SOJ_ENV=prod` and `SOJ_DOCKER_RUNNER_RUNTIME=runsc` on production judge nodes; startup fails if runsc or the no-op runner probe is unavailable.
+- Pin `SOJ_DOCKER_RUNNER_IMAGE_GO` and `SOJ_DOCKER_RUNNER_IMAGE_CPP17` to release or `sha-*` runner image tags in production.
+- Make GHCR runner packages public or log in to `ghcr.io` on private judge nodes before pulling images.
 - Do not use the `process` sandbox backend outside development, tests, and local real-code smoke.
 - Do not reuse the local fake language seed as production language data.
 
