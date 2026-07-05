@@ -8,6 +8,7 @@ import (
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
+	"SOJ/internal/submission"
 )
 
 func TestScoreboardUsesACMPenaltyAndTieRank(t *testing.T) {
@@ -96,6 +97,103 @@ func TestFrozenScoreboardHidesAttemptsAfterFreeze(t *testing.T) {
 	}
 	if row.Cells[1].Status != CellFrozen || row.Cells[1].FrozenAttempts != 2 || row.Cells[1].AcceptedAt != nil {
 		t.Fatalf("second cell = %+v, want hidden frozen attempts", row.Cells[1])
+	}
+}
+
+func TestSubmissionResultVisibilityUsesContestFreezePolicy(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	freeze := start.Add(time.Hour)
+	end := start.Add(3 * time.Hour)
+	repo := newMemoryRepository()
+	repo.contests[1] = ContestRecord{
+		ID:          1,
+		OwnerUserID: 10,
+		Title:       "Frozen",
+		Visibility:  VisibilityPublic,
+		Status:      StatusPublished,
+		StartAt:     start,
+		EndAt:       end,
+		FreezeAt:    freeze,
+	}
+	service := NewService(repo, WithNow(func() time.Time { return freeze.Add(30 * time.Minute) }))
+	contestant := auth.Actor{UserID: 20, Role: auth.RoleUser}
+
+	judgedBeforeFreeze := freeze.Add(-time.Minute)
+	visible, err := service.SubmissionResultVisibility(context.Background(), contestant, submission.ContestSubmissionVisibility{
+		ID:          1,
+		UserID:      20,
+		ProblemID:   101,
+		ContestID:   1,
+		SubmittedAt: freeze.Add(-2 * time.Minute),
+		JudgedAt:    &judgedBeforeFreeze,
+	})
+	if err != nil {
+		t.Fatalf("visible SubmissionResultVisibility returned error: %v", err)
+	}
+	if visible.Visibility != "visible" || !visible.ShowResult || !visible.ShowCases || visible.ShowAdminDiagnostics {
+		t.Fatalf("visible policy = %+v", visible)
+	}
+
+	judgedAfterFreeze := freeze.Add(time.Minute)
+	hidden, err := service.SubmissionResultVisibility(context.Background(), contestant, submission.ContestSubmissionVisibility{
+		ID:          2,
+		UserID:      20,
+		ProblemID:   101,
+		ContestID:   1,
+		SubmittedAt: freeze.Add(-2 * time.Minute),
+		JudgedAt:    &judgedAfterFreeze,
+	})
+	if err != nil {
+		t.Fatalf("hidden SubmissionResultVisibility returned error: %v", err)
+	}
+	if hidden.Visibility != "frozen" || hidden.ShowResult || hidden.ShowCases || hidden.ShowAdminDiagnostics {
+		t.Fatalf("hidden pre-freeze submission policy = %+v", hidden)
+	}
+
+	afterFreeze, err := service.SubmissionResultVisibility(context.Background(), contestant, submission.ContestSubmissionVisibility{
+		ID:          3,
+		UserID:      20,
+		ProblemID:   101,
+		ContestID:   1,
+		SubmittedAt: freeze.Add(time.Minute),
+		JudgedAt:    &judgedAfterFreeze,
+	})
+	if err != nil {
+		t.Fatalf("after-freeze SubmissionResultVisibility returned error: %v", err)
+	}
+	if afterFreeze.Visibility != "frozen" || afterFreeze.ShowResult || afterFreeze.ShowCases || afterFreeze.ShowAdminDiagnostics {
+		t.Fatalf("after-freeze policy = %+v", afterFreeze)
+	}
+
+	adminVisible, err := service.SubmissionResultVisibility(context.Background(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, submission.ContestSubmissionVisibility{
+		ID:          4,
+		UserID:      20,
+		ProblemID:   101,
+		ContestID:   1,
+		SubmittedAt: freeze.Add(time.Minute),
+		JudgedAt:    &judgedAfterFreeze,
+	})
+	if err != nil {
+		t.Fatalf("admin SubmissionResultVisibility returned error: %v", err)
+	}
+	if adminVisible.Visibility != "visible" || !adminVisible.ShowResult || !adminVisible.ShowCases || !adminVisible.ShowAdminDiagnostics {
+		t.Fatalf("admin policy = %+v", adminVisible)
+	}
+
+	finalService := NewService(repo, WithNow(func() time.Time { return end.Add(time.Minute) }))
+	finalVisible, err := finalService.SubmissionResultVisibility(context.Background(), contestant, submission.ContestSubmissionVisibility{
+		ID:          5,
+		UserID:      20,
+		ProblemID:   101,
+		ContestID:   1,
+		SubmittedAt: freeze.Add(time.Minute),
+		JudgedAt:    &judgedAfterFreeze,
+	})
+	if err != nil {
+		t.Fatalf("final SubmissionResultVisibility returned error: %v", err)
+	}
+	if finalVisible.Visibility != "visible" || !finalVisible.ShowResult || !finalVisible.ShowCases || finalVisible.ShowAdminDiagnostics {
+		t.Fatalf("final policy = %+v", finalVisible)
 	}
 }
 

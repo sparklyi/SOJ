@@ -1120,13 +1120,11 @@ components:
           description: Result visibility projection for the requesting actor.
         result:
           allOf: [{ $ref: "#/components/schemas/SubmissionResultSummary" }]
-          nullable: true
         cases:
           type: array
           items: { $ref: "#/components/schemas/SubmissionCaseSummary" }
         admin_diagnostics:
           allOf: [{ $ref: "#/components/schemas/SubmissionAdminDiagnostics" }]
-          nullable: true
     SubmissionResultSummary:
       type: object
       required: [attempt_id, status, score, updated_at]
