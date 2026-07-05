@@ -10,11 +10,11 @@ The v2 backend currently includes:
 
 - User registration, login, refresh tokens, and admin user management.
 - Problem metadata, statements, tags, testcase archive upload, publish checks, and stats.
-- Submissions, self-runs, judge tasks, Redis Stream worker, retry/dead-letter handling, and reconciliation loops.
+- Submissions, self-runs, judge tasks, async judge event DTOs, Redis Stream worker, retry/dead-letter handling, and reconciliation loops.
 - ACM contests, registration, contest submission policy, and live/frozen/final scoreboard responses.
 - Versioned PostgreSQL migrations and an OpenAPI contract for frontend integration.
-- Prometheus metrics for API requests and judge worker task processing.
-- Local Docker Compose deployment with PostgreSQL, Redis, MinIO, API, worker, migration, seed, Prometheus, and smoke test flow.
+- Prometheus metrics for API, worker, and judge-agent processes.
+- Local Docker Compose deployment with PostgreSQL, Redis, MinIO, API, worker, judge-agent, migration, seed, Prometheus, and smoke test flow.
 
 Known follow-up: frozen/final scoreboard snapshots are read when present and otherwise generated synchronously from current data. Automated snapshot generation is planned as a later worker responsibility.
 
@@ -33,9 +33,9 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 ./deploy/smoke.sh
 ```
 
-The API listens on `http://localhost:8080`; the worker health endpoint listens on `http://localhost:8081`; Prometheus listens on `http://localhost:9090`.
+The API listens on `http://localhost:8080`; the worker health endpoint listens on `http://localhost:8081`; the judge-agent health endpoint listens on `http://localhost:8082`; Prometheus listens on `http://localhost:9090`.
 
-Local Docker uses the internal `fake://accepted` engine and seeds one enabled fake language so the submit/worker flow can be tested before the privileged `soj-judge-agent` runtime is available.
+Local Docker uses the internal `fake://accepted` engine and `SOJ_JUDGE_SANDBOX_BACKEND=fake` so the async judge-agent process can be exercised before a privileged `isolate` runtime is available.
 
 ## Development
 
@@ -60,6 +60,7 @@ The v2 runtime is built and verified with Go 1.24.
 ```text
 api/                    OpenAPI contract
 cmd/soj-api             HTTP API entrypoint
+cmd/soj-judge-agent     Judge agent entrypoint
 cmd/soj-worker          Judge worker entrypoint
 cmd/soj-migrate         PostgreSQL migration entrypoint
 deploy/                 Docker Compose, env examples, smoke test
@@ -69,6 +70,8 @@ internal/auth           Actor, JWT, password, token primitives
 internal/user           Account and admin user use cases
 internal/problem        Problems, statements, tags, testcase sets
 internal/submission     Submissions, runs, judge tasks, worker logic
+internal/judge          Judge protocol and async event contracts
+internal/judgecore      Judge core pipeline, language profiles, checker, sandbox adapters
 internal/contest        ACM contests, registrations, scoreboards
 internal/postgres       SQL queries and generated sqlc code
 internal/queue          Redis Stream task queue
@@ -83,10 +86,11 @@ Gin is kept at the transport boundary. Business services receive `context.Contex
 Runtime dependencies:
 
 - PostgreSQL: primary relational data store.
-- Redis: judge task stream and consumer group coordination.
+- Redis: judge request/result streams and consumer group coordination.
 - MinIO/S3: source code, testcase archives, and future large artifacts.
-- JudgeEngine: abstraction for the internal fake engine and the future `soj-judge-agent` protocol client.
-- Prometheus: local metrics scraping for API and worker processes.
+- Judge agent: independent process consuming judge requests and publishing judge results.
+- JudgeCore: modular compile/run/check pipeline with Go and C++17 profiles and dev-only process sandbox.
+- Prometheus: local metrics scraping for API, worker, and judge-agent processes.
 
 PostgreSQL remains the source of truth for submissions, runs, judge tasks, and contest results. Redis Stream messages are delivery hints and workers must tolerate duplicate deliveries.
 
@@ -108,7 +112,8 @@ Production deployment should replace local defaults before exposure:
 
 - Use a real `SOJ_JWT_SECRET`.
 - Use production PostgreSQL, Redis, and object storage credentials.
-- Replace the local fake engine with `soj-judge-agent` once the judge-agent process and sandbox adapter are deployed.
+- Use `SOJ_JUDGE_SANDBOX_BACKEND=isolate` for production-like real code execution.
+- Do not use the `process` sandbox backend outside local development and tests.
 - Do not reuse the local fake language seed as production language data.
 
 ## Legacy Code
