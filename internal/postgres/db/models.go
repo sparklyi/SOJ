@@ -82,6 +82,7 @@ type JudgeAttempt struct {
 	SubmissionID         pgtype.Int8        `db:"submission_id" json:"submission_id"`
 	RunID                pgtype.Int8        `db:"run_id" json:"run_id"`
 	TaskID               pgtype.Int8        `db:"task_id" json:"task_id"`
+	RejudgeBatchID       pgtype.Int8        `db:"rejudge_batch_id" json:"rejudge_batch_id"`
 	AttemptNo            int32              `db:"attempt_no" json:"attempt_no"`
 	ProtocolVersion      string             `db:"protocol_version" json:"protocol_version"`
 	JudgeCoreVersion     string             `db:"judge_core_version" json:"judge_core_version"`
@@ -178,6 +179,32 @@ type Problem struct {
 	PublishedAt   pgtype.Timestamptz `db:"published_at" json:"published_at"`
 }
 
+type ProblemCheckFinding struct {
+	ID          int64              `db:"id" json:"id"`
+	RunID       int64              `db:"run_id" json:"run_id"`
+	Severity    string             `db:"severity" json:"severity"`
+	Code        string             `db:"code" json:"code"`
+	Message     string             `db:"message" json:"message"`
+	CaseIndex   pgtype.Int4        `db:"case_index" json:"case_index"`
+	TestcaseKey pgtype.Text        `db:"testcase_key" json:"testcase_key"`
+	Details     []byte             `db:"details" json:"details"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
+type ProblemCheckRun struct {
+	ID            int64              `db:"id" json:"id"`
+	ProblemID     int64              `db:"problem_id" json:"problem_id"`
+	TestcaseSetID pgtype.Int8        `db:"testcase_set_id" json:"testcase_set_id"`
+	RequestedBy   pgtype.Int8        `db:"requested_by" json:"requested_by"`
+	Status        string             `db:"status" json:"status"`
+	Summary       []byte             `db:"summary" json:"summary"`
+	ErrorMessage  pgtype.Text        `db:"error_message" json:"error_message"`
+	StartedAt     pgtype.Timestamptz `db:"started_at" json:"started_at"`
+	FinishedAt    pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
+	CreatedAt     pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+}
+
 type ProblemStatement struct {
 	ID                int64              `db:"id" json:"id"`
 	ProblemID         int64              `db:"problem_id" json:"problem_id"`
@@ -214,6 +241,25 @@ type RefreshToken struct {
 	ExpiresAt pgtype.Timestamptz `db:"expires_at" json:"expires_at"`
 	RevokedAt pgtype.Timestamptz `db:"revoked_at" json:"revoked_at"`
 	CreatedAt pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
+type RejudgeBatch struct {
+	ID             int64              `db:"id" json:"id"`
+	ProblemID      pgtype.Int8        `db:"problem_id" json:"problem_id"`
+	ContestID      pgtype.Int8        `db:"contest_id" json:"contest_id"`
+	RequestedBy    int64              `db:"requested_by" json:"requested_by"`
+	Status         string             `db:"status" json:"status"`
+	Reason         string             `db:"reason" json:"reason"`
+	Filters        []byte             `db:"filters" json:"filters"`
+	TotalCount     int32              `db:"total_count" json:"total_count"`
+	CompletedCount int32              `db:"completed_count" json:"completed_count"`
+	FailedCount    int32              `db:"failed_count" json:"failed_count"`
+	CanceledCount  int32              `db:"canceled_count" json:"canceled_count"`
+	ErrorMessage   pgtype.Text        `db:"error_message" json:"error_message"`
+	StartedAt      pgtype.Timestamptz `db:"started_at" json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
+	CreatedAt      pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
 
 type Run struct {
