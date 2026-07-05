@@ -24,6 +24,7 @@ storage:
 
 judge:
   endpoint: "agent://local"
+  sandbox_backend: "fake"
   timeout: "30s"
 
 auth:

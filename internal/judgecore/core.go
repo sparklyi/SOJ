@@ -28,12 +28,13 @@ type Options struct {
 }
 
 type Request struct {
-	LanguageID int64
-	Source     []byte
-	Cases      []Case
-	Timeout    time.Duration
-	MemoryKB   int64
-	Policy     checker.Policy
+	LanguageID       int64
+	Source           []byte
+	Cases            []Case
+	Timeout          time.Duration
+	MemoryKB         int64
+	OutputLimitBytes int64
+	Policy           checker.Policy
 }
 
 type Case struct {
@@ -76,7 +77,7 @@ func (c *Core) Judge(ctx context.Context, request Request) (judge.Result, error)
 	workspace, err := c.sandbox.Prepare(ctx, sandbox.PrepareRequest{
 		Profile: profile,
 		Source:  request.Source,
-		Limits:  limits(request.Timeout, request.MemoryKB),
+		Limits:  limits(request.Timeout, request.MemoryKB, request.OutputLimitBytes),
 	})
 	if err != nil {
 		return judge.Result{}, err
@@ -107,7 +108,7 @@ func (c *Core) Judge(ctx context.Context, request Request) (judge.Result, error)
 		}
 		run, err := c.sandbox.Run(ctx, workspace, profile, sandbox.RunRequest{
 			Stdin:  item.Input,
-			Limits: limits(caseTimeout(item.TimeLimit, request.Timeout), caseMemory(item.MemoryKB, request.MemoryKB)),
+			Limits: limits(caseTimeout(item.TimeLimit, request.Timeout), caseMemory(item.MemoryKB, request.MemoryKB), request.OutputLimitBytes),
 		})
 		if err != nil {
 			return judge.Result{}, err
@@ -158,8 +159,12 @@ func (c *Core) result(profile language.Profile, result judge.Result) judge.Resul
 	return result
 }
 
-func limits(timeout time.Duration, memoryKB int64) sandbox.Limits {
-	return sandbox.Limits{TimeLimit: timeout, MemoryKB: memoryKB}
+func limits(timeout time.Duration, memoryKB int64, outputLimitBytes ...int64) sandbox.Limits {
+	var outputLimit int64
+	if len(outputLimitBytes) > 0 {
+		outputLimit = outputLimitBytes[0]
+	}
+	return sandbox.Limits{TimeLimit: timeout, MemoryKB: memoryKB, OutputLimitBytes: outputLimit}
 }
 
 func caseTimeout(value, fallback time.Duration) time.Duration {
