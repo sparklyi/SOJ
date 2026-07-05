@@ -11,6 +11,19 @@ The Compose stack starts PostgreSQL, Redis, MinIO, a one-shot migration job, a l
 
 Production should run `soj-judge-agent` behind the async judge event boundary. Do not reuse the local fake language seed as production language data.
 
+For a local real-code smoke path, use the development-only process backend:
+
+```bash
+SOJ_ENV=local \
+SOJ_JUDGE_ENDPOINT=agent://local \
+SOJ_JUDGE_SANDBOX_BACKEND=process \
+docker compose -f deploy/docker-compose.yaml up --build -d
+
+SMOKE_REAL_JUDGE=1 ./deploy/smoke.sh
+```
+
+This mode runs real Go/C++ toolchains in the judge-agent container, but it is not a production sandbox.
+
 ## Judge Event Flow
 
 The worker process has two production loops: a dispatcher that claims `judge_tasks` and publishes `judge.request.v1` to `SOJ_REDIS_STREAM`, and a result consumer that reads `judge.result.v1` from `SOJ_JUDGE_RESULT_STREAM`. The result consumer acknowledges Redis only after the PostgreSQL transaction updates `judge_attempts`, `submission_results`, `judge_tasks`, and contest projections.
@@ -36,6 +49,10 @@ Set these through environment variables in real deployments:
 - `SOJ_STORAGE_SECRET_KEY`
 
 Do not commit production DSNs, JWT secrets, or object storage credentials.
+
+## Judge Agent Credential Boundary
+
+`soj-judge-agent` consumes Redis request events, reads source/testcase artifacts from object storage, and publishes Redis result events. It must not receive business PostgreSQL credentials. The worker result consumer owns all business database writes for attempts, case results, submission projections, and contest projections.
 
 ## Health Checks
 
@@ -63,14 +80,30 @@ Distributed tracing is not enabled yet. The intended next step is OpenTelemetry 
 
 Local Docker uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and `SOJ_JUDGE_SANDBOX_BACKEND=fake` while the real sandbox path is being built.
 
-For production-like real code execution:
+Backend safety matrix:
+
+| Backend | Allowed environments | Purpose |
+| --- | --- | --- |
+| `fake` | local, dev, CI smoke | Deterministic async pipeline validation. It does not execute user code. |
+| `process` | `dev`, `test`, `local` only | Development-only real code execution with wall-time and output guards. It is not a security sandbox. |
+| `isolate` | production target | Reserved production sandbox target. Current startup probes for the `isolate` binary, but this build does not yet ship a complete isolate execution adapter. |
+
+For production-like real code execution after the isolate adapter is completed:
 
 - set `SOJ_JUDGE_SANDBOX_BACKEND=isolate`
 - install and validate `isolate` inside the judge-agent runtime
 - do not set `SOJ_JUDGE_SANDBOX_BACKEND=process` outside `dev`, `test`, or `local`
 - keep judge-agent isolated from business database credentials
 
-The process backend exists only for development tests and is rejected in non-development environments.
+The process backend exists only for development tests and local real-code smoke. It is rejected in non-development environments.
+
+## Troubleshooting
+
+- Queue backlog: check Redis stream length for `SOJ_REDIS_STREAM`, worker logs, and `soj_worker_judge_task_dispatch_total`.
+- No result events: check judge-agent readiness, `SOJ_JUDGE_REQUEST_STREAM`, `SOJ_JUDGE_RESULT_STREAM`, and object storage credentials.
+- Agent startup failure: verify `SOJ_REDIS_ADDR`, object storage credentials, and `SOJ_JUDGE_SANDBOX_BACKEND` safety rules.
+- Sandbox verdict anomalies: compare the attempt manifest fields for judge core version, sandbox backend/profile, language runtime, testcase set hash, and trace id.
+- Local real smoke fails with compile errors: confirm the judge-agent image contains `go` and `g++`, and run with `SOJ_ENV=local SOJ_JUDGE_SANDBOX_BACKEND=process`.
 
 ## Local Reset
 

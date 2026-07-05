@@ -65,6 +65,26 @@ func main() { for {} }
 	}
 }
 
+func TestCoreJudgesGoOutputLimit(t *testing.T) {
+	core := New(Options{})
+	result, err := core.Judge(context.Background(), Request{
+		LanguageID: language.GoID,
+		Source: []byte(`package main
+import "fmt"
+func main() { for i := 0; i < 4096; i++ { fmt.Print("x") } }
+`),
+		Cases:            []Case{{Input: "", ExpectedOutput: "", TimeLimit: time.Second}},
+		Policy:           checker.PolicyExact,
+		OutputLimitBytes: 1024,
+	})
+	if err != nil {
+		t.Fatalf("Judge returned error: %v", err)
+	}
+	if result.Verdict != judge.VerdictOutputLimit {
+		t.Fatalf("verdict = %q, want output_limit; result=%+v", result.Verdict, result)
+	}
+}
+
 func TestCoreJudgesCpp17AcceptedWhenCompilerExists(t *testing.T) {
 	if _, err := exec.LookPath("g++"); err != nil {
 		t.Skip("g++ is not available")

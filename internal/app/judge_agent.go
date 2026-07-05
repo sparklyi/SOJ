@@ -12,6 +12,7 @@ import (
 	"SOJ/internal/config"
 	"SOJ/internal/httpapi"
 	judgeevents "SOJ/internal/judge/events"
+	"SOJ/internal/judgecore"
 	"SOJ/internal/judgecore/sandbox"
 	"SOJ/internal/observability"
 	"SOJ/internal/queue"
@@ -63,11 +64,10 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 
-	agent := submission.NewFakeAsyncAgent(submission.FakeAsyncAgentOptions{
-		Judge:           newJudgeEngine(cfg.Judge),
-		SourceStore:     submission.NewObjectSourceStore(objectStore),
-		ResultPublisher: queueResultPublisher{queue: resultQueue},
-	})
+	agent, err := newJudgeAgentProcessor(sandboxBackend, cfg, objectStore, queueResultPublisher{queue: resultQueue})
+	if err != nil {
+		return err
+	}
 
 	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics, ReadyCheck: func(ctx context.Context) error {
 		return redisClient.Ping(ctx).Err()
@@ -101,7 +101,11 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	return err
 }
 
-func runJudgeAgentLoop(ctx context.Context, agent *submission.FakeAsyncAgent, requestQueue queue.TaskQueue, batchSize int, block time.Duration) error {
+type judgeRequestProcessor interface {
+	ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error
+}
+
+func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, requestQueue queue.TaskQueue, batchSize int, block time.Duration) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -121,6 +125,49 @@ func runJudgeAgentLoop(ctx context.Context, agent *submission.FakeAsyncAgent, re
 			}
 		}
 	}
+}
+
+func newJudgeAgentProcessor(backend string, cfg config.Config, objectStore storage.ObjectStorage, publisher submission.ResultPublisher) (judgeRequestProcessor, error) {
+	sourceStore := submission.NewObjectSourceStore(objectStore)
+	if backend == sandbox.BackendFake {
+		return submission.NewFakeAsyncAgent(submission.FakeAsyncAgentOptions{
+			Judge:           newJudgeEngine(cfg.Judge),
+			SourceStore:     sourceStore,
+			ResultPublisher: publisher,
+		}), nil
+	}
+	sandboxBackend, err := newJudgeAgentSandbox(backend)
+	if err != nil {
+		return nil, err
+	}
+	return submission.NewCoreAsyncAgent(submission.CoreAsyncAgentOptions{
+		Core:            judgecore.New(judgecore.Options{Sandbox: sandboxBackend}),
+		SourceStore:     sourceStore,
+		ResultPublisher: publisher,
+	}), nil
+}
+
+func newJudgeAgentSandbox(backend string) (sandbox.Sandbox, error) {
+	switch backend {
+	case sandbox.BackendProcess:
+		return sandbox.NewProcessSandbox(), nil
+	case sandbox.BackendIsolate:
+		return nil, errIsolateSandboxUnavailable{}
+	default:
+		return nil, errUnsupportedSandboxBackend(backend)
+	}
+}
+
+type errIsolateSandboxUnavailable struct{}
+
+func (errIsolateSandboxUnavailable) Error() string {
+	return "isolate sandbox execution is not implemented in this build"
+}
+
+type errUnsupportedSandboxBackend string
+
+func (e errUnsupportedSandboxBackend) Error() string {
+	return "unsupported judge-agent sandbox backend " + string(e)
 }
 
 type queueResultPublisher struct {

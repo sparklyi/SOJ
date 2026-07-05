@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Validate Compose
+        run: docker compose -f deploy/docker-compose.yaml config
+
+      - name: Build API image
+        run: docker build -f Dockerfile.v2 --build-arg COMMAND=soj-api -t soj-api:ci .
+
+      - name: Build worker image
+        run: docker build -f Dockerfile.v2 --build-arg COMMAND=soj-worker -t soj-worker:ci .
+
+      - name: Build judge-agent image
+        run: docker build -f Dockerfile.v2 --build-arg COMMAND=soj-judge-agent -t soj-judge-agent:ci .
+
+      - name: Build migrate image
+        run: docker build -f Dockerfile.v2 --build-arg COMMAND=soj-migrate -t soj-migrate:ci .
