@@ -8,9 +8,18 @@ import (
 
 const (
 	BackendProcess = "process"
+	BackendDocker  = "docker"
 	BackendIsolate = "isolate"
 	BackendFake    = "fake"
 )
+
+type Capabilities struct {
+	Backend         string
+	Profile         string
+	Runtime         string
+	ProductionReady bool
+	UnsafeReason    string
+}
 
 func SelectBackend(env, configured, judgeEndpoint string) (string, error) {
 	backend := strings.TrimSpace(configured)
@@ -20,7 +29,7 @@ func SelectBackend(env, configured, judgeEndpoint string) (string, error) {
 		} else if developmentEnv(env) {
 			backend = BackendProcess
 		} else {
-			backend = BackendIsolate
+			backend = BackendDocker
 		}
 	}
 	if backend == BackendProcess && !developmentEnv(env) {
@@ -32,11 +41,25 @@ func SelectBackend(env, configured, judgeEndpoint string) (string, error) {
 		}
 	}
 	switch backend {
-	case BackendProcess, BackendIsolate, BackendFake:
+	case BackendProcess, BackendDocker, BackendIsolate, BackendFake:
 		return backend, nil
 	default:
 		return "", fmt.Errorf("unsupported sandbox backend %q", backend)
 	}
+}
+
+func ValidateProductionCapabilities(env string, capabilities Capabilities) error {
+	if !productionEnv(env) {
+		return nil
+	}
+	if capabilities.ProductionReady {
+		return nil
+	}
+	reason := strings.TrimSpace(capabilities.UnsafeReason)
+	if reason == "" {
+		reason = fmt.Sprintf("%s sandbox backend is not production ready", capabilities.Backend)
+	}
+	return fmt.Errorf("unsafe sandbox capabilities for production: %s", reason)
 }
 
 func ProbeIsolate() error {
@@ -53,4 +76,8 @@ func developmentEnv(env string) bool {
 	default:
 		return false
 	}
+}
+
+func productionEnv(env string) bool {
+	return strings.EqualFold(strings.TrimSpace(env), "prod")
 }
