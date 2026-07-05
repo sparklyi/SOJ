@@ -32,6 +32,9 @@ jobs:
       - name: Validate Compose
         run: docker compose -f deploy/docker-compose.yaml config
 
+      - name: Validate Docker runner Compose
+        run: COMPOSE_FILE=deploy/docker-compose.yaml:deploy/docker-compose.docker-runner.yaml docker compose config
+
       - name: Build API image
         run: docker build -f Dockerfile.v2 --build-arg COMMAND=soj-api -t soj-api:ci .
 

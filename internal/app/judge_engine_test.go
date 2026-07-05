@@ -68,18 +68,30 @@ func TestNewWorkerObjectStorageAcceptsHTTPEndpoint(t *testing.T) {
 }
 
 func TestNewJudgeAgentSandboxRejectsIsolateUntilAdapterExists(t *testing.T) {
-	_, err := newJudgeAgentSandbox(sandbox.BackendIsolate)
+	_, err := newJudgeAgentSandbox(sandbox.BackendIsolate, nil)
 	if err == nil || !strings.Contains(err.Error(), "isolate sandbox execution is not implemented") {
 		t.Fatalf("err = %v, want explicit isolate unavailable error", err)
 	}
 }
 
 func TestNewJudgeAgentSandboxAllowsProcessBackend(t *testing.T) {
-	got, err := newJudgeAgentSandbox(sandbox.BackendProcess)
+	got, err := newJudgeAgentSandbox(sandbox.BackendProcess, nil)
 	if err != nil {
 		t.Fatalf("newJudgeAgentSandbox returned error: %v", err)
 	}
 	if got.Name() != sandbox.BackendProcess {
 		t.Fatalf("backend = %q, want process", got.Name())
+	}
+}
+
+func TestNewJudgeAgentSandboxAllowsDockerBackend(t *testing.T) {
+	t.Setenv("SOJ_DOCKER_RUNNER_RUNTIME", "runsc")
+
+	got, err := newJudgeAgentSandbox(sandbox.BackendDocker, nil)
+	if err != nil {
+		t.Fatalf("newJudgeAgentSandbox returned error: %v", err)
+	}
+	if got.Name() != sandbox.BackendDocker {
+		t.Fatalf("backend = %q, want docker", got.Name())
 	}
 }

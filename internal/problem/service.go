@@ -490,6 +490,10 @@ func (s *Service) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) 
 	if strings.TrimSpace(set.StorageKey) == "" {
 		return TestcaseSet{}, apperror.BadRequest("testcase.archive_missing", "testcase archive storage key is missing")
 	}
+	p, err := s.repo.GetProblem(ctx, problemID)
+	if err != nil {
+		return TestcaseSet{}, err
+	}
 	body, _, err := s.storage.Get(ctx, set.StorageKey)
 	if err != nil {
 		return TestcaseSet{}, err
@@ -499,7 +503,7 @@ func (s *Service) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) 
 	if err != nil {
 		return TestcaseSet{}, err
 	}
-	cases, err := parseTestcaseArchiveCases(data, 0, 0)
+	cases, err := parseTestcaseArchiveCases(data, time.Duration(p.TimeLimitMS)*time.Millisecond, int64(p.MemoryLimitKB))
 	if err != nil {
 		return TestcaseSet{}, err
 	}
