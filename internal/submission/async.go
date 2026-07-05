@@ -8,6 +8,7 @@ import (
 
 	"SOJ/internal/judge"
 	judgeevents "SOJ/internal/judge/events"
+	"SOJ/internal/judgecore"
 	"SOJ/internal/queue"
 )
 
@@ -29,12 +30,38 @@ type FakeAsyncAgent struct {
 	now             func() time.Time
 }
 
+type CoreJudge interface {
+	Judge(ctx context.Context, request judgecore.Request) (judge.Result, error)
+}
+
+type CoreAsyncAgentOptions struct {
+	Core            CoreJudge
+	SourceStore     SourceStore
+	ResultPublisher ResultPublisher
+	Now             func() time.Time
+}
+
+type CoreAsyncAgent struct {
+	core            CoreJudge
+	sourceStore     SourceStore
+	resultPublisher ResultPublisher
+	now             func() time.Time
+}
+
 func NewFakeAsyncAgent(options FakeAsyncAgentOptions) *FakeAsyncAgent {
 	now := options.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &FakeAsyncAgent{judge: options.Judge, sourceStore: options.SourceStore, resultPublisher: options.ResultPublisher, now: now}
+}
+
+func NewCoreAsyncAgent(options CoreAsyncAgentOptions) *CoreAsyncAgent {
+	now := options.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	return &CoreAsyncAgent{core: options.Core, sourceStore: options.SourceStore, resultPublisher: options.ResultPublisher, now: now}
 }
 
 func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error {
@@ -79,6 +106,70 @@ func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 		return err
 	}
 	return requestQueue.Ack(ctx, message.ID)
+}
+
+func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error {
+	var request judgeevents.RequestEvent
+	if err := json.Unmarshal(message.Payload, &request); err != nil {
+		return err
+	}
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	source, err := a.sourceStore.Get(ctx, request.SourceArtifact.StorageKey)
+	if err != nil {
+		return err
+	}
+	cases := make([]judgecore.Case, 0, len(request.Testcases))
+	for _, item := range request.Testcases {
+		cases = append(cases, judgecore.Case{
+			Index:          item.Index,
+			Input:          item.InputKey,
+			ExpectedOutput: item.ExpectedOutputKey,
+			TimeLimit:      time.Duration(item.TimeLimitMS) * time.Millisecond,
+			MemoryKB:       item.MemoryKB,
+			Score:          item.Score,
+		})
+	}
+	result, err := a.core.Judge(ctx, judgecore.Request{
+		LanguageID: request.LanguageID,
+		Source:     source,
+		Cases:      cases,
+		Timeout:    time.Duration(request.TimeoutMS) * time.Millisecond,
+		MemoryKB:   request.MemoryKB,
+	})
+	if err != nil {
+		return err
+	}
+	result.Manifest.TestcaseSetHash = request.TestcaseSet.Hash
+	result.Manifest.TraceID = request.TraceID
+	if err := publishAsyncResult(ctx, a.resultPublisher, request, result, a.now); err != nil {
+		return err
+	}
+	return requestQueue.Ack(ctx, message.ID)
+}
+
+func publishAsyncResult(ctx context.Context, publisher ResultPublisher, request judgeevents.RequestEvent, result judge.Result, now func() time.Time) error {
+	result, err := judgeevents.NormalizeResult(result)
+	if err != nil {
+		return err
+	}
+	judgedAt := result.JudgedAt
+	if judgedAt.IsZero() {
+		judgedAt = now()
+		result.JudgedAt = judgedAt
+	}
+	_, err = publisher.PublishResult(ctx, judgeevents.ResultEvent{
+		ProtocolVersion: judgeevents.ResultEventType,
+		EventID:         fmt.Sprintf("%s:result", request.EventID),
+		RequestEventID:  request.EventID,
+		AttemptID:       request.AttemptID,
+		TraceID:         request.TraceID,
+		Status:          result.Verdict,
+		Result:          result,
+		JudgedAt:        judgedAt,
+	})
+	return err
 }
 
 type ResultConsumerOptions struct {

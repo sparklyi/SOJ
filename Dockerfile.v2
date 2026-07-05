@@ -15,10 +15,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/${COMMA
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates tzdata
+ARG COMMAND=soj-api
+RUN apk add --no-cache ca-certificates tzdata \
+    && if [ "$COMMAND" = "soj-judge-agent" ]; then \
+        apk add --no-cache go g++ musl-dev; \
+    fi
 WORKDIR /app
 
-ARG COMMAND=soj-api
 COPY --from=builder /out/${COMMAND} /app/soj
 COPY internal/migrations /app/internal/migrations
 

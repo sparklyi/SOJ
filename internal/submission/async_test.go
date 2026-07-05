@@ -9,6 +9,8 @@ import (
 
 	"SOJ/internal/judge"
 	judgeevents "SOJ/internal/judge/events"
+	"SOJ/internal/judgecore"
+	"SOJ/internal/judgecore/language"
 	"SOJ/internal/queue"
 )
 
@@ -108,6 +110,72 @@ func TestFakeAsyncAgentPublishesResultBeforeRequestAck(t *testing.T) {
 	}
 	if result.RequestEventID != request.EventID || result.AttemptID != request.AttemptID || result.Status != judge.VerdictMemoryLimit {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestCoreAsyncAgentRunsJudgeCoreCasesAndPublishesResult(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySourceStore()
+	store.objects["source/key"] = []byte(`package main
+import "fmt"
+func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
+`)
+	request := judgeevents.RequestEvent{
+		EventID:        "evt-request-core",
+		AttemptID:      "attempt-core",
+		TraceID:        "trace-core",
+		SubmissionID:   9,
+		LanguageID:     language.GoID,
+		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
+		TestcaseSet:    judgeevents.TestcaseSetRef{ID: 3, Hash: "cases-hash"},
+		Testcases: []judgeevents.TestcaseRef{{
+			Index:             1,
+			InputKey:          "1 2\n",
+			ExpectedOutputKey: "3\n",
+			TimeLimitMS:       1000,
+			MemoryKB:          262144,
+		}},
+		TimeoutMS: 1000,
+		MemoryKB:  262144,
+		CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	resultQueue := &recordingResultPublisher{}
+	agent := NewCoreAsyncAgent(CoreAsyncAgentOptions{
+		Core:            judgecore.New(judgecore.Options{}),
+		SourceStore:     store,
+		ResultPublisher: resultQueue,
+		Now:             func() time.Time { return time.Unix(101, 0).UTC() },
+	})
+	requestQueue := &memoryQueue{events: &[]string{}}
+	events := []string{}
+	requestQueue.events = &events
+	resultQueue.events = &events
+
+	if err := agent.ProcessRequestMessage(ctx, queue.Message{ID: "1-0", TaskID: 7, Payload: payload}, requestQueue); err != nil {
+		t.Fatalf("ProcessRequestMessage returned error: %v", err)
+	}
+	if len(events) != 2 || events[0] != "publish_result" || events[1] != "ack" {
+		t.Fatalf("events = %v", events)
+	}
+	if len(resultQueue.eventsPayloads) != 1 {
+		t.Fatalf("result payload count = %d", len(resultQueue.eventsPayloads))
+	}
+	var result judgeevents.ResultEvent
+	if err := json.Unmarshal(resultQueue.eventsPayloads[0], &result); err != nil {
+		t.Fatalf("decode result event: %v", err)
+	}
+	if result.Status != judge.VerdictAccepted || result.Result.Verdict != judge.VerdictAccepted {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(result.Result.Cases) != 1 || result.Result.Cases[0].Verdict != judge.VerdictAccepted {
+		t.Fatalf("cases = %+v", result.Result.Cases)
+	}
+	if result.Result.Manifest.TestcaseSetHash != "cases-hash" || result.Result.Manifest.TraceID != "trace-core" {
+		t.Fatalf("manifest = %+v", result.Result.Manifest)
 	}
 }
 
