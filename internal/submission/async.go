@@ -143,10 +143,24 @@ func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 	}
 	result.Manifest.TestcaseSetHash = request.TestcaseSet.Hash
 	result.Manifest.TraceID = request.TraceID
+	attachTestcaseKeys(request, result.Cases)
 	if err := publishAsyncResult(ctx, a.resultPublisher, request, result, a.now); err != nil {
 		return err
 	}
 	return requestQueue.Ack(ctx, message.ID)
+}
+
+func attachTestcaseKeys(request judgeevents.RequestEvent, cases []judge.CaseResult) {
+	for i := range cases {
+		if cases[i].TestcaseKey != "" {
+			continue
+		}
+		index := cases[i].Index
+		if index == 0 {
+			index = i + 1
+		}
+		cases[i].TestcaseKey = fmt.Sprintf("testcase-set-%d/case-%d", request.TestcaseSet.ID, index)
+	}
 }
 
 func publishAsyncResult(ctx context.Context, publisher ResultPublisher, request judgeevents.RequestEvent, result judge.Result, now func() time.Time) error {
