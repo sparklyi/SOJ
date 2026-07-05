@@ -181,6 +181,37 @@ services:
     ports:
       - "8081:8081"
 
+  judge-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile.v2
+      args:
+        COMMAND: soj-judge-agent
+    environment:
+      SOJ_ENV: docker
+      SOJ_JUDGE_AGENT_HEALTH_ADDR: ":8082"
+      SOJ_REDIS_ADDR: redis:6379
+      SOJ_STORAGE_ENDPOINT: http://minio:9000
+      SOJ_STORAGE_BUCKET: soj
+      SOJ_STORAGE_ACCESS_KEY: minioadmin
+      SOJ_STORAGE_SECRET_KEY: minioadmin
+      SOJ_STORAGE_PATH_STYLE: "true"
+      SOJ_JUDGE_ENDPOINT: fake://accepted
+      SOJ_JUDGE_AGENT_GROUP: judge-agents
+      SOJ_JUDGE_RESULT_STREAM: soj:judge:results
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/readyz >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "8082:8082"
+
   prometheus:
     image: prom/prometheus:v3.4.1
     command:
@@ -192,6 +223,8 @@ services:
       api:
         condition: service_healthy
       worker:
+        condition: service_healthy
+      judge-agent:
         condition: service_healthy
     ports:
       - "9090:9090"
