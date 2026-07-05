@@ -131,7 +131,7 @@ Final verification also needs an empty PostgreSQL migration run through the proj
 ## Deferred Work
 
 - Real `soj-judge-agent` execution.
-- Sandbox hardening with `isolate`/`nsjail`.
+- Sandbox hardening with Docker runner + gVisor/runsc; `isolate`/`nsjail` remain future backend options.
 - Judge cache and performance baselines.
 - Problem validator runtime.
 - Rejudge queue fanout and worker orchestration.

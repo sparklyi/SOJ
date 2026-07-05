@@ -72,13 +72,46 @@ Current API readiness checks PostgreSQL. Worker readiness is process-level only;
 - Judge agent metrics: `GET http://localhost:8082/metrics`
 - Prometheus UI: `http://localhost:9090`
 
-The local Prometheus service scrapes `api:8080`, `worker:8081`, and `judge-agent:8082`. Current application metrics include HTTP request counts and latency plus judge task dispatch counts. Keep `/metrics` on a private network in production or protect it at the ingress layer.
+The local Prometheus service scrapes `api:8080`, `worker:8081`, and `judge-agent:8082`. Current application metrics include HTTP request counts and latency, judge task dispatch counts, judge-agent slot usage, sandbox phase duration, sandbox backend errors, and sandbox cleanup failures. Keep `/metrics` on a private network in production or protect it at the ingress layer.
+
+Judge-agent runner metrics to watch during Docker/gVisor rollout:
+
+- `soj_judge_agent_slots_used` and `soj_judge_agent_slots_capacity`
+- `soj_sandbox_phase_duration_seconds`
+- `soj_sandbox_backend_errors_total`
+- `soj_sandbox_cleanup_failures_total`
 
 Distributed tracing is not enabled yet. The intended next step is OpenTelemetry with OTLP export, disabled by default and switchable by environment.
 
 ## Judge Sandbox
 
-Local Docker uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and `SOJ_JUDGE_SANDBOX_BACKEND=fake` while the real sandbox path is being built.
+Local Docker uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and `SOJ_JUDGE_SANDBOX_BACKEND=fake` for the fastest deterministic smoke path.
+
+Real local Docker runner validation:
+
+```bash
+make smoke-real-docker
+```
+
+The smoke target pulls published GHCR runner images by default. Use `RUNNER_IMAGES_PREPARE=build make smoke-real-docker` only when developing runner Dockerfiles locally.
+
+Runner images are published by `.github/workflows/publish-runner-images.yml` when runner image files change on `main`, on version tags, and by manual workflow dispatch.
+
+Real local gVisor/runsc validation:
+
+```bash
+./scripts/dev/install-gvisor.sh
+make smoke-real-gvisor
+```
+
+Runner capacity smoke:
+
+```bash
+make smoke-runner-capacity
+SOJ_DOCKER_RUNNER_RUNTIME=runsc make smoke-runner-capacity
+```
+
+The capacity smoke recreates the local Docker runner stack and runs `1/2/4/8/16` judge-agent slot profiles by default. It prints submissions per minute, P95/P99 submission latency, P95/P99 judge attempt duration, no-op container startup overhead, maximum attempt memory, judge-agent memory curve, queue oldest pending age, backend error deltas, and cleanup failure deltas. Override the profile with `SOJ_CAPACITY_SLOTS`, `SOJ_CAPACITY_SUBMISSIONS_PER_SLOT`, `SOJ_CAPACITY_SUBMISSIONS_MAX`, `SOJ_CAPACITY_TIME_LIMIT_MS`, and `SOJ_CAPACITY_SKIP_BUILD=1` for heavier or repeated manual tests.
 
 Backend safety matrix:
 
@@ -86,14 +119,25 @@ Backend safety matrix:
 | --- | --- | --- |
 | `fake` | local, dev, CI smoke | Deterministic async pipeline validation. It does not execute user code. |
 | `process` | `dev`, `test`, `local` only | Development-only real code execution with wall-time and output guards. It is not a security sandbox. |
-| `isolate` | production target | Reserved production sandbox target. Current startup probes for the `isolate` binary, but this build does not yet ship a complete isolate execution adapter. |
+| `docker` | production target | Docker runner backend with gVisor/runsc in production. Development may explicitly allow the default Docker runtime for local smoke only. |
+| `isolate` | future backend | Reserved host sandbox adapter behind the same sandbox contract. It is not the current production mainline. |
 
-For production-like real code execution after the isolate adapter is completed:
+For production real code execution:
 
-- set `SOJ_JUDGE_SANDBOX_BACKEND=isolate`
-- install and validate `isolate` inside the judge-agent runtime
+- set `SOJ_JUDGE_SANDBOX_BACKEND=docker`
+- set `SOJ_ENV=prod`
+- install and validate Docker plus gVisor/runsc on the judge node
+- configure `SOJ_DOCKER_RUNNER_RUNTIME=runsc` for production
+- pin `SOJ_DOCKER_RUNNER_IMAGE_GO` and `SOJ_DOCKER_RUNNER_IMAGE_CPP17` to release or `sha-*` tags
+- make GHCR runner packages public or run `docker login ghcr.io` on private judge nodes before pulling images
 - do not set `SOJ_JUDGE_SANDBOX_BACKEND=process` outside `dev`, `test`, or `local`
 - keep judge-agent isolated from business database credentials
+
+Production startup runs a Docker capability probe. It fails if Docker is unavailable, the configured runtime is not `runsc`, the `runsc` runtime is not registered, the runner image is missing, or a no-op runner container cannot start with no network, read-only rootfs, dropped capabilities, `no-new-privileges`, and non-root user.
+
+Single-node deployment can run API, worker, Redis, PostgreSQL, object storage, and one judge-agent on the same host for small installations. The judge-agent still needs a dedicated Docker runner work directory and Docker socket access, and runner containers must not mount the Docker socket.
+
+Multi-node deployment runs additional `soj-judge-agent` processes on dedicated judge nodes. They share Redis request/result streams and object storage with the main stack, use the same runner images, and should set `SOJ_JUDGE_PARALLELISM` and `SOJ_JUDGE_LANGUAGE_SLOTS` according to host CPU and memory.
 
 The process backend exists only for development tests and local real-code smoke. It is rejected in non-development environments.
 
@@ -101,9 +145,11 @@ The process backend exists only for development tests and local real-code smoke.
 
 - Queue backlog: check Redis stream length for `SOJ_REDIS_STREAM`, worker logs, and `soj_worker_judge_task_dispatch_total`.
 - No result events: check judge-agent readiness, `SOJ_JUDGE_REQUEST_STREAM`, `SOJ_JUDGE_RESULT_STREAM`, and object storage credentials.
-- Agent startup failure: verify `SOJ_REDIS_ADDR`, object storage credentials, and `SOJ_JUDGE_SANDBOX_BACKEND` safety rules.
+- Agent startup failure: verify `SOJ_REDIS_ADDR`, object storage credentials, Docker socket access, runner images, `SOJ_JUDGE_SANDBOX_BACKEND`, and `SOJ_DOCKER_RUNNER_RUNTIME` safety rules.
 - Sandbox verdict anomalies: compare the attempt manifest fields for judge core version, sandbox backend/profile, language runtime, testcase set hash, and trace id.
-- Local real smoke fails with compile errors: confirm the judge-agent image contains `go` and `g++`, and run with `SOJ_ENV=local SOJ_JUDGE_SANDBOX_BACKEND=process`.
+- Local Docker runner smoke fails with wrong answers on input-reading programs: confirm Docker run uses the current code and `--interactive` is present in the runner args.
+- Local real smoke fails with compile errors: confirm runner images exist with `make runner-images-pull`, or use `RUNNER_IMAGES_PREPARE=build` while developing Dockerfiles locally.
+- Capacity smoke below target: compare `container_startup_p95_ms`, `p95_attempt_ms`, queue oldest pending age, and `soj_sandbox_backend_errors_total` before raising slots or adding judge-agent nodes.
 
 ## Local Reset
 

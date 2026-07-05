@@ -101,6 +101,36 @@ SMOKE_REAL_JUDGE=1 make smoke
 
 The process backend is useful for local validation, but it is not a production sandbox.
 
+To run the local real-code smoke path through Docker runner containers:
+
+```bash
+make smoke-real-docker
+```
+
+`make smoke-real-docker` pulls the published runner images from GHCR by default. To build runner images locally while changing Dockerfiles, run:
+
+```bash
+RUNNER_IMAGES_PREPARE=build make smoke-real-docker
+```
+
+Runner images are published by [publish-runner-images.yml](.github/workflows/publish-runner-images.yml) when runner image files change on `main`, on version tags, and by manual workflow dispatch.
+
+To validate the same path through gVisor/runsc after installing runsc:
+
+```bash
+./scripts/dev/install-gvisor.sh
+make smoke-real-gvisor
+```
+
+To run the local runner capacity smoke across `1/2/4/8/16` judge-agent slots:
+
+```bash
+make smoke-runner-capacity
+SOJ_DOCKER_RUNNER_RUNTIME=runsc make smoke-runner-capacity
+```
+
+The Docker runner path uses [deploy/docker-compose.docker-runner.yaml](deploy/docker-compose.docker-runner.yaml). Only `soj-judge-agent` receives the Docker socket; runner containers do not receive business service credentials or the Docker socket.
+
 ## Development
 
 Run the main checks:
@@ -109,6 +139,7 @@ Run the main checks:
 make test
 make vet
 make compose-config
+make compose-config-docker-runner
 ```
 
 Or run Go commands directly:
@@ -152,6 +183,12 @@ Important variables:
 | `SOJ_JWT_SECRET` | JWT signing secret. Must be changed for real deployments. |
 | `SOJ_JUDGE_ENDPOINT` | Judge endpoint, such as `fake://accepted` or `agent://local`. |
 | `SOJ_JUDGE_TIMEOUT` | Judge timeout, defaults to `30s`. |
+| `SOJ_JUDGE_SANDBOX_BACKEND` | Judge-agent sandbox backend: `fake`, `process`, or `docker`. |
+| `SOJ_JUDGE_PARALLELISM` | Global judge-agent sandbox slots. |
+| `SOJ_JUDGE_LANGUAGE_SLOTS` | Per-language slot limits, such as `go=4,cpp17=4`. |
+| `SOJ_DOCKER_RUNNER_RUNTIME` | Docker runtime for runner containers; production should use `runsc`. |
+| `SOJ_DOCKER_RUNNER_IMAGE_GO` | Go runner image, defaults to `ghcr.io/sparklyi/soj-runner-go:main` for local smoke. |
+| `SOJ_DOCKER_RUNNER_IMAGE_CPP17` | C++17 runner image, defaults to `ghcr.io/sparklyi/soj-runner-cpp17:main` for local smoke. |
 
 ## API Documentation
 
@@ -232,7 +269,10 @@ Before exposing SOJ outside local development:
 - Use production PostgreSQL, Redis, and S3-compatible object storage credentials.
 - Keep `/metrics` on a private network or protect it at the ingress layer.
 - Run `soj-judge-agent` without business database credentials.
-- Treat `SOJ_JUDGE_SANDBOX_BACKEND=isolate` as the production sandbox target once the isolate adapter is completed and validated.
+- Treat `SOJ_JUDGE_SANDBOX_BACKEND=docker` with Docker runtime `runsc`/gVisor as the production sandbox target.
+- Set `SOJ_ENV=prod` and `SOJ_DOCKER_RUNNER_RUNTIME=runsc` on production judge nodes; startup fails if runsc or the no-op runner probe is unavailable.
+- Pin `SOJ_DOCKER_RUNNER_IMAGE_GO` and `SOJ_DOCKER_RUNNER_IMAGE_CPP17` to release or `sha-*` runner image tags in production.
+- Make GHCR runner packages public or log in to `ghcr.io` on private judge nodes before pulling images.
 - Do not use the `process` sandbox backend outside development, tests, and local real-code smoke.
 - Do not reuse the local fake language seed as production language data.
 
@@ -241,7 +281,7 @@ Before exposing SOJ outside local development:
 Known follow-up work:
 
 - Automated frozen/final scoreboard snapshot generation in the worker.
-- Production-grade judge sandbox image and isolate runtime validation.
+- Runner pool or warmed execution optimization based on Docker/gVisor capacity data.
 - Broader readiness probes for worker dependencies.
 - OpenTelemetry tracing with OTLP export disabled by default.
 
