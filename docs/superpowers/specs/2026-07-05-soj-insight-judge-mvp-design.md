@@ -139,6 +139,8 @@ Administrator-facing capabilities should include:
 
 `soj-worker` keeps PostgreSQL as the source of truth and Redis Stream as the delivery mechanism. `soj-judge-agent` should be called through the existing `JudgeEngine` abstraction or a compatible internal protocol.
 
+The judge data model is defined separately in `docs/superpowers/specs/2026-07-05-soj-judge-data-model-design.md`. Implementation work must use that model as the durable schema boundary before adding case-level results, manifests, rejudge batches, problem checks, or visibility projections.
+
 The active protocol boundary is named `soj-judge-agent.v1`. Business code should depend on `JudgeEngine`; process or repository extraction should depend on serializable agent protocol DTOs instead of database models, HTTP handlers, or worker internals. Language profiles owned by this path use the `soj-agent` engine namespace.
 
 Initial protocol shape:
@@ -192,6 +194,7 @@ Goal: persist complete judge evidence while returning only safe projections to e
 
 Deliverables:
 
+- migration update based on `docs/superpowers/specs/2026-07-05-soj-judge-data-model-design.md`
 - internal result model for attempts, case results, manifests, and infrastructure errors
 - database schema for full internal results and safe summary fields
 - service-layer visibility policy for owner/admin/root/problem author/contest participant
