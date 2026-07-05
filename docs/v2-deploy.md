@@ -78,7 +78,20 @@ Distributed tracing is not enabled yet. The intended next step is OpenTelemetry 
 
 ## Judge Sandbox
 
-Local Docker uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and `SOJ_JUDGE_SANDBOX_BACKEND=fake` while the real sandbox path is being built.
+Local Docker uses `SOJ_JUDGE_ENDPOINT=fake://accepted` and `SOJ_JUDGE_SANDBOX_BACKEND=fake` for the fastest deterministic smoke path.
+
+Real local Docker runner validation:
+
+```bash
+make smoke-real-docker
+```
+
+Real local gVisor/runsc validation:
+
+```bash
+./scripts/dev/install-gvisor.sh
+make smoke-real-gvisor
+```
 
 Backend safety matrix:
 
@@ -89,13 +102,20 @@ Backend safety matrix:
 | `docker` | production target | Docker runner backend with gVisor/runsc in production. Development may explicitly allow the default Docker runtime for local smoke only. |
 | `isolate` | future backend | Reserved host sandbox adapter behind the same sandbox contract. It is not the current production mainline. |
 
-For production-like real code execution after the Docker runner backend is completed:
+For production real code execution:
 
 - set `SOJ_JUDGE_SANDBOX_BACKEND=docker`
+- set `SOJ_ENV=prod`
 - install and validate Docker plus gVisor/runsc on the judge node
 - configure `SOJ_DOCKER_RUNNER_RUNTIME=runsc` for production
 - do not set `SOJ_JUDGE_SANDBOX_BACKEND=process` outside `dev`, `test`, or `local`
 - keep judge-agent isolated from business database credentials
+
+Production startup runs a Docker capability probe. It fails if Docker is unavailable, the configured runtime is not `runsc`, the `runsc` runtime is not registered, the runner image is missing, or a no-op runner container cannot start with no network, read-only rootfs, dropped capabilities, `no-new-privileges`, and non-root user.
+
+Single-node deployment can run API, worker, Redis, PostgreSQL, object storage, and one judge-agent on the same host for small installations. The judge-agent still needs a dedicated Docker runner work directory and Docker socket access, and runner containers must not mount the Docker socket.
+
+Multi-node deployment runs additional `soj-judge-agent` processes on dedicated judge nodes. They share Redis request/result streams and object storage with the main stack, use the same runner images, and should set `SOJ_JUDGE_PARALLELISM` and `SOJ_JUDGE_LANGUAGE_SLOTS` according to host CPU and memory.
 
 The process backend exists only for development tests and local real-code smoke. It is rejected in non-development environments.
 
@@ -103,9 +123,10 @@ The process backend exists only for development tests and local real-code smoke.
 
 - Queue backlog: check Redis stream length for `SOJ_REDIS_STREAM`, worker logs, and `soj_worker_judge_task_dispatch_total`.
 - No result events: check judge-agent readiness, `SOJ_JUDGE_REQUEST_STREAM`, `SOJ_JUDGE_RESULT_STREAM`, and object storage credentials.
-- Agent startup failure: verify `SOJ_REDIS_ADDR`, object storage credentials, and `SOJ_JUDGE_SANDBOX_BACKEND` safety rules.
+- Agent startup failure: verify `SOJ_REDIS_ADDR`, object storage credentials, Docker socket access, runner images, `SOJ_JUDGE_SANDBOX_BACKEND`, and `SOJ_DOCKER_RUNNER_RUNTIME` safety rules.
 - Sandbox verdict anomalies: compare the attempt manifest fields for judge core version, sandbox backend/profile, language runtime, testcase set hash, and trace id.
-- Local real smoke fails with compile errors: confirm the judge-agent image contains `go` and `g++`, and run with `SOJ_ENV=local SOJ_JUDGE_SANDBOX_BACKEND=process`.
+- Local Docker runner smoke fails with wrong answers on input-reading programs: confirm Docker run uses the current code and `--interactive` is present in the runner args.
+- Local real smoke fails with compile errors: confirm runner images exist with `make runner-images`.
 
 ## Local Reset
 

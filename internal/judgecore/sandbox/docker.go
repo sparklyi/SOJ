@@ -128,6 +128,10 @@ func (s *DockerSandbox) Probe(ctx context.Context) (Capabilities, error) {
 		capabilities.UnsafeReason = fmt.Sprintf("docker runtime %q is not the required runsc runtime", s.runtime)
 		return capabilities, nil
 	}
+	if err := s.probeNoopContainer(ctx); err != nil {
+		capabilities.UnsafeReason = fmt.Sprintf("docker runsc probe container failed: %v", err)
+		return capabilities, nil
+	}
 	capabilities.ProductionReady = true
 	return capabilities, nil
 }
@@ -242,6 +246,40 @@ func (s *DockerSandbox) runSpec(workspace Workspace, profile language.Profile, p
 			"soj.workspace": filepath.Base(workspace.Dir),
 		},
 	}, nil
+}
+
+func (s *DockerSandbox) probeNoopContainer(ctx context.Context) error {
+	image := s.images["go"]
+	if image == "" {
+		return fmt.Errorf("go runner image is not configured")
+	}
+	spec := DockerRunSpec{
+		Name:             dockerContainerName("probe", "probe"),
+		Image:            image,
+		Runtime:          s.runtime,
+		Workdir:          "/workspace",
+		User:             s.user,
+		NetworkDisabled:  true,
+		ReadOnlyRootFS:   true,
+		CapDropAll:       true,
+		SecurityOpt:      []string{"no-new-privileges"},
+		Tmpfs:            []string{defaultDockerTmpfs},
+		Env:              []string{"HOME=/tmp", "TMPDIR=/tmp"},
+		Command:          []string{"sh", "-lc", `test "$(id -u)" = "1000" && test ! -e /var/run/docker.sock`},
+		TimeLimit:        5 * time.Second,
+		MemoryBytes:      128 * 1024 * 1024,
+		PidsLimit:        32,
+		OutputLimitBytes: 64 * 1024,
+		Labels: map[string]string{
+			"soj.sandbox": BackendDocker,
+			"soj.phase":   "probe",
+		},
+	}
+	defer func() {
+		_ = s.client.RemoveContainer(context.Background(), spec.Name)
+	}()
+	_, err := s.client.Run(ctx, spec)
+	return err
 }
 
 func dockerWorkspace(workspace Workspace) Workspace {
