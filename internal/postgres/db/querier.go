@@ -6,6 +6,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -27,6 +29,8 @@ type Querier interface {
 	CreateContest(ctx context.Context, arg CreateContestParams) (Contest, error)
 	CreateContestRegistration(ctx context.Context, arg CreateContestRegistrationParams) (ContestRegistration, error)
 	CreateContestScoreSnapshot(ctx context.Context, arg CreateContestScoreSnapshotParams) (ContestScoreSnapshot, error)
+	CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttemptParams) (JudgeAttempt, error)
+	CreateJudgeCaseResult(ctx context.Context, arg CreateJudgeCaseResultParams) (JudgeCaseResult, error)
 	CreateJudgeTask(ctx context.Context, arg CreateJudgeTaskParams) (JudgeTask, error)
 	// Owner: WP3 Problem/Storage
 	CreateProblem(ctx context.Context, arg CreateProblemParams) (Problem, error)
@@ -45,10 +49,13 @@ type Querier interface {
 	GetCurrentProblemStatement(ctx context.Context, problemID int64) (ProblemStatement, error)
 	GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error)
 	GetEnabledLanguageByID(ctx context.Context, id int64) (Language, error)
+	GetJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttempt, error)
 	GetJudgeTaskByID(ctx context.Context, id int64) (JudgeTask, error)
 	GetJudgeTaskBySubmissionID(ctx context.Context, submissionID int64) (JudgeTask, error)
 	GetLanguageByID(ctx context.Context, id int64) (Language, error)
 	GetLatestContestScoreSnapshot(ctx context.Context, arg GetLatestContestScoreSnapshotParams) (ContestScoreSnapshot, error)
+	GetLatestJudgeAttemptByRunID(ctx context.Context, runID pgtype.Int8) (JudgeAttempt, error)
+	GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID pgtype.Int8) (JudgeAttempt, error)
 	GetProblemByID(ctx context.Context, id int64) (GetProblemByIDRow, error)
 	GetProblemBySlug(ctx context.Context, slug string) (GetProblemBySlugRow, error)
 	GetProblemStats(ctx context.Context, id int64) (GetProblemStatsRow, error)
@@ -56,6 +63,7 @@ type Querier interface {
 	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
 	GetRunByID(ctx context.Context, id int64) (Run, error)
 	GetSubmissionByID(ctx context.Context, id int64) (Submission, error)
+	GetSubmissionResultBySubmissionID(ctx context.Context, submissionID int64) (SubmissionResult, error)
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	LinkProblemTag(ctx context.Context, arg LinkProblemTagParams) error
@@ -64,12 +72,15 @@ type Querier interface {
 	ListContestRegistrations(ctx context.Context, arg ListContestRegistrationsParams) ([]ContestRegistration, error)
 	ListContestTerminalSubmissions(ctx context.Context, dollar_1 int64) ([]ListContestTerminalSubmissionsRow, error)
 	ListContests(ctx context.Context, arg ListContestsParams) ([]Contest, error)
+	ListJudgeAttemptsBySubmissionID(ctx context.Context, submissionID pgtype.Int8) ([]JudgeAttempt, error)
+	ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID int64) ([]JudgeCaseResult, error)
 	ListLanguages(ctx context.Context, arg ListLanguagesParams) ([]Language, error)
 	ListProblemTags(ctx context.Context, problemID int64) ([]ProblemTag, error)
 	ListProblems(ctx context.Context, arg ListProblemsParams) ([]ListProblemsRow, error)
 	ListSubmissions(ctx context.Context, arg ListSubmissionsParams) ([]Submission, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	LockProblemForUpdate(ctx context.Context, id int64) (LockProblemForUpdateRow, error)
+	MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAttemptFinishedParams) (JudgeAttempt, error)
 	MarkJudgeTaskDead(ctx context.Context, arg MarkJudgeTaskDeadParams) (JudgeTask, error)
 	MarkJudgeTaskDispatched(ctx context.Context, arg MarkJudgeTaskDispatchedParams) (JudgeTask, error)
 	MarkJudgeTaskDone(ctx context.Context, id int64) (JudgeTask, error)
@@ -96,6 +107,7 @@ type Querier interface {
 	// Sync intentionally preserves enabled on existing rows so JudgeEngine language
 	// refreshes do not re-enable languages disabled by an admin.
 	UpsertLanguage(ctx context.Context, arg UpsertLanguageParams) (Language, error)
+	UpsertSubmissionResult(ctx context.Context, arg UpsertSubmissionResultParams) (SubmissionResult, error)
 }
 
 var _ Querier = (*Queries)(nil)

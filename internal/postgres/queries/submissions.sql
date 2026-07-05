@@ -38,6 +38,209 @@ SELECT *
 FROM submissions
 WHERE id = $1;
 
+-- name: CreateJudgeAttempt :one
+INSERT INTO judge_attempts (
+    submission_id,
+    run_id,
+    task_id,
+    attempt_no,
+    protocol_version,
+    judge_core_version,
+    judge_engine,
+    judge_agent_id,
+    language_id,
+    language_runtime,
+    sandbox_backend,
+    sandbox_profile,
+    testcase_set_id,
+    testcase_set_hash,
+    checker_hash,
+    validator_hash,
+    status,
+    verdict,
+    score,
+    time_ms,
+    memory_kb,
+    first_failed_case_index,
+    first_failed_group,
+    compile_output_summary,
+    stderr_summary,
+    checker_message,
+    error_class,
+    error_message,
+    manifest,
+    metrics,
+    trace_id,
+    started_at,
+    finished_at
+) VALUES (
+    sqlc.narg('submission_id'),
+    sqlc.narg('run_id'),
+    sqlc.narg('task_id'),
+    sqlc.arg('attempt_no'),
+    sqlc.arg('protocol_version'),
+    sqlc.arg('judge_core_version'),
+    sqlc.arg('judge_engine'),
+    sqlc.narg('judge_agent_id'),
+    sqlc.arg('language_id'),
+    sqlc.narg('language_runtime'),
+    sqlc.narg('sandbox_backend'),
+    sqlc.narg('sandbox_profile'),
+    sqlc.narg('testcase_set_id'),
+    sqlc.narg('testcase_set_hash'),
+    sqlc.narg('checker_hash'),
+    sqlc.narg('validator_hash'),
+    sqlc.arg('status'),
+    sqlc.narg('verdict'),
+    sqlc.arg('score'),
+    sqlc.narg('time_ms'),
+    sqlc.narg('memory_kb'),
+    sqlc.narg('first_failed_case_index'),
+    sqlc.narg('first_failed_group'),
+    sqlc.narg('compile_output_summary'),
+    sqlc.narg('stderr_summary'),
+    sqlc.narg('checker_message'),
+    sqlc.narg('error_class'),
+    sqlc.narg('error_message'),
+    sqlc.arg('manifest'),
+    sqlc.arg('metrics'),
+    sqlc.narg('trace_id'),
+    sqlc.narg('started_at'),
+    sqlc.narg('finished_at')
+)
+RETURNING *;
+
+-- name: GetJudgeAttemptByID :one
+SELECT *
+FROM judge_attempts
+WHERE id = $1;
+
+-- name: GetLatestJudgeAttemptBySubmissionID :one
+SELECT *
+FROM judge_attempts
+WHERE submission_id = $1
+ORDER BY attempt_no DESC, id DESC
+LIMIT 1;
+
+-- name: GetLatestJudgeAttemptByRunID :one
+SELECT *
+FROM judge_attempts
+WHERE run_id = $1
+ORDER BY attempt_no DESC, id DESC
+LIMIT 1;
+
+-- name: ListJudgeAttemptsBySubmissionID :many
+SELECT *
+FROM judge_attempts
+WHERE submission_id = $1
+ORDER BY attempt_no DESC, id DESC;
+
+-- name: MarkJudgeAttemptFinished :one
+UPDATE judge_attempts
+SET status = sqlc.arg('status'),
+    verdict = sqlc.narg('verdict'),
+    score = sqlc.arg('score'),
+    time_ms = sqlc.narg('time_ms'),
+    memory_kb = sqlc.narg('memory_kb'),
+    first_failed_case_index = sqlc.narg('first_failed_case_index'),
+    first_failed_group = sqlc.narg('first_failed_group'),
+    compile_output_summary = sqlc.narg('compile_output_summary'),
+    stderr_summary = sqlc.narg('stderr_summary'),
+    checker_message = sqlc.narg('checker_message'),
+    error_class = sqlc.narg('error_class'),
+    error_message = sqlc.narg('error_message'),
+    manifest = sqlc.arg('manifest'),
+    metrics = sqlc.arg('metrics'),
+    trace_id = sqlc.narg('trace_id'),
+    finished_at = coalesce(sqlc.narg('finished_at'), finished_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+RETURNING *;
+
+-- name: CreateJudgeCaseResult :one
+INSERT INTO judge_case_results (
+    attempt_id,
+    case_index,
+    group_name,
+    testcase_key,
+    status,
+    score,
+    time_ms,
+    memory_kb,
+    exit_code,
+    signal,
+    checker_message,
+    output_diff_summary,
+    stdout_artifact_id,
+    stderr_artifact_id,
+    diff_artifact_id
+) VALUES (
+    sqlc.arg('attempt_id'),
+    sqlc.arg('case_index'),
+    sqlc.narg('group_name'),
+    sqlc.narg('testcase_key'),
+    sqlc.arg('status'),
+    sqlc.arg('score'),
+    sqlc.narg('time_ms'),
+    sqlc.narg('memory_kb'),
+    sqlc.narg('exit_code'),
+    sqlc.narg('signal'),
+    sqlc.narg('checker_message'),
+    sqlc.narg('output_diff_summary'),
+    sqlc.narg('stdout_artifact_id'),
+    sqlc.narg('stderr_artifact_id'),
+    sqlc.narg('diff_artifact_id')
+)
+RETURNING *;
+
+-- name: ListJudgeCaseResultsByAttemptID :many
+SELECT *
+FROM judge_case_results
+WHERE attempt_id = $1
+ORDER BY case_index;
+
+-- name: UpsertSubmissionResult :one
+INSERT INTO submission_results (
+    submission_id,
+    attempt_id,
+    status,
+    score,
+    time_ms,
+    memory_kb,
+    first_failed_case_index,
+    first_failed_group,
+    error_class,
+    safe_summary
+) VALUES (
+    sqlc.arg('submission_id'),
+    sqlc.arg('attempt_id'),
+    sqlc.arg('status'),
+    sqlc.arg('score'),
+    sqlc.narg('time_ms'),
+    sqlc.narg('memory_kb'),
+    sqlc.narg('first_failed_case_index'),
+    sqlc.narg('first_failed_group'),
+    sqlc.narg('error_class'),
+    sqlc.arg('safe_summary')
+)
+ON CONFLICT (submission_id) DO UPDATE
+SET attempt_id = EXCLUDED.attempt_id,
+    status = EXCLUDED.status,
+    score = EXCLUDED.score,
+    time_ms = EXCLUDED.time_ms,
+    memory_kb = EXCLUDED.memory_kb,
+    first_failed_case_index = EXCLUDED.first_failed_case_index,
+    first_failed_group = EXCLUDED.first_failed_group,
+    error_class = EXCLUDED.error_class,
+    safe_summary = EXCLUDED.safe_summary,
+    updated_at = now()
+RETURNING *;
+
+-- name: GetSubmissionResultBySubmissionID :one
+SELECT *
+FROM submission_results
+WHERE submission_id = $1;
+
 -- name: GetReadyTestcaseSetByID :one
 SELECT *
 FROM testcase_sets

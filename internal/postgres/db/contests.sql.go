@@ -346,7 +346,7 @@ func (q *Queries) GetLatestContestScoreSnapshot(ctx context.Context, arg GetLate
 }
 
 const listContestProblemResults = `-- name: ListContestProblemResults :many
-SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, updated_at
+SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
 FROM contest_problem_results
 WHERE contest_id = $1
 ORDER BY user_id, problem_id
@@ -370,6 +370,9 @@ func (q *Queries) ListContestProblemResults(ctx context.Context, contestID int64
 			&i.AcceptedAt,
 			&i.PenaltyMinutes,
 			&i.LastSubmissionID,
+			&i.BestSubmissionID,
+			&i.BestAttemptID,
+			&i.LastAttemptID,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -650,9 +653,12 @@ INSERT INTO contest_problem_results (
     attempts,
     accepted_at,
     penalty_minutes,
-    last_submission_id
+    last_submission_id,
+    best_submission_id,
+    best_attempt_id,
+    last_attempt_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 ON CONFLICT (contest_id, user_id, problem_id) DO UPDATE
 SET status = EXCLUDED.status,
@@ -660,8 +666,11 @@ SET status = EXCLUDED.status,
     accepted_at = EXCLUDED.accepted_at,
     penalty_minutes = EXCLUDED.penalty_minutes,
     last_submission_id = EXCLUDED.last_submission_id,
+    best_submission_id = EXCLUDED.best_submission_id,
+    best_attempt_id = EXCLUDED.best_attempt_id,
+    last_attempt_id = EXCLUDED.last_attempt_id,
     updated_at = now()
-RETURNING contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, updated_at
+RETURNING contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
 `
 
 type UpsertContestProblemResultParams struct {
@@ -673,6 +682,9 @@ type UpsertContestProblemResultParams struct {
 	AcceptedAt       pgtype.Timestamptz `db:"accepted_at" json:"accepted_at"`
 	PenaltyMinutes   int32              `db:"penalty_minutes" json:"penalty_minutes"`
 	LastSubmissionID pgtype.Int8        `db:"last_submission_id" json:"last_submission_id"`
+	BestSubmissionID pgtype.Int8        `db:"best_submission_id" json:"best_submission_id"`
+	BestAttemptID    pgtype.Int8        `db:"best_attempt_id" json:"best_attempt_id"`
+	LastAttemptID    pgtype.Int8        `db:"last_attempt_id" json:"last_attempt_id"`
 }
 
 func (q *Queries) UpsertContestProblemResult(ctx context.Context, arg UpsertContestProblemResultParams) (ContestProblemResult, error) {
@@ -685,6 +697,9 @@ func (q *Queries) UpsertContestProblemResult(ctx context.Context, arg UpsertCont
 		arg.AcceptedAt,
 		arg.PenaltyMinutes,
 		arg.LastSubmissionID,
+		arg.BestSubmissionID,
+		arg.BestAttemptID,
+		arg.LastAttemptID,
 	)
 	var i ContestProblemResult
 	err := row.Scan(
@@ -696,6 +711,9 @@ func (q *Queries) UpsertContestProblemResult(ctx context.Context, arg UpsertCont
 		&i.AcceptedAt,
 		&i.PenaltyMinutes,
 		&i.LastSubmissionID,
+		&i.BestSubmissionID,
+		&i.BestAttemptID,
+		&i.LastAttemptID,
 		&i.UpdatedAt,
 	)
 	return i, err
