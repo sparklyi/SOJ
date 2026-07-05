@@ -197,6 +197,7 @@ services:
       SOJ_STORAGE_SECRET_KEY: minioadmin
       SOJ_STORAGE_PATH_STYLE: "true"
       SOJ_JUDGE_ENDPOINT: fake://accepted
+      SOJ_JUDGE_SANDBOX_BACKEND: fake
       SOJ_JUDGE_AGENT_GROUP: judge-agents
       SOJ_JUDGE_RESULT_STREAM: soj:judge:results
     depends_on:
