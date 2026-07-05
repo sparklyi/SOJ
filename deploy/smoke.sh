@@ -56,7 +56,9 @@ need zip
 
 wait_http "$API_URL/readyz"
 wait_http "${WORKER_URL:-http://localhost:8081}/readyz"
+wait_http "${JUDGE_AGENT_URL:-http://localhost:8082}/readyz"
 require_metric "$API_URL" "soj_http_requests_total"
+require_metric "${JUDGE_AGENT_URL:-http://localhost:8082}" "soj_http_requests_total"
 
 LANG_ID="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'fake' and engine_language_id = 'accepted' and enabled = true order by id limit 1;")"
 if [[ -z "$LANG_ID" ]]; then
@@ -127,6 +129,17 @@ if [[ "$CONTEST_STATUS" != "accepted" ]]; then
 fi
 require_metric "${WORKER_URL:-http://localhost:8081}" "soj_worker_judge_tasks_total"
 
+RESULT_STREAM_LEN="0"
+for _ in $(seq 1 30); do
+  RESULT_STREAM_LEN="$(docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli XLEN "${SOJ_JUDGE_RESULT_STREAM:-soj:judge:results}" | tr -d '\r')"
+  [[ "$RESULT_STREAM_LEN" != "0" ]] && break
+  sleep 1
+done
+if [[ "$RESULT_STREAM_LEN" == "0" ]]; then
+  echo "judge result stream did not receive any result events" >&2
+  exit 1
+fi
+
 SCOREBOARD="$(api_json GET "/api/v1/contests/$CONTEST_ID/scoreboard?view=live")"
 ACCEPTED_COUNT="$(jq -r '.data.rows[0].accepted_count' <<<"$SCOREBOARD")"
 if [[ "$ACCEPTED_COUNT" != "1" ]]; then
@@ -134,4 +147,4 @@ if [[ "$ACCEPTED_COUNT" != "1" ]]; then
   exit 1
 fi
 
-echo "smoke ok: problem=$PROBLEM_ID submission=$SUBMISSION_ID contest=$CONTEST_ID contest_submission=$CONTEST_SUBMISSION_ID"
+echo "smoke ok: problem=$PROBLEM_ID submission=$SUBMISSION_ID contest=$CONTEST_ID contest_submission=$CONTEST_SUBMISSION_ID judge_results=$RESULT_STREAM_LEN"
