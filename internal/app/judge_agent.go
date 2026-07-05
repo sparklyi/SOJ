@@ -80,7 +80,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	slotLimiter := newJudgeAgentSlotLimiter(parallelism, languageSlots)
 
-	agent, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, queueResultPublisher{queue: resultQueue})
+	agent, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, metrics, queueResultPublisher{queue: resultQueue})
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runJudgeAgentLoop(runCtx, agent, requestQueue, maxBatch, cfg.Redis.Block, slotLimiter)
+		errCh <- runJudgeAgentLoop(runCtx, agent, requestQueue, maxBatch, cfg.Redis.Block, slotLimiter, metrics)
 	}()
 
 	err = <-errCh
@@ -121,10 +121,15 @@ type judgeRequestProcessor interface {
 	ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error
 }
 
-func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, requestQueue queue.TaskQueue, batchSize int, block time.Duration, slots *judgeAgentSlotLimiter) error {
+type judgeAgentSlotMetrics interface {
+	ObserveJudgeAgentSlots(scope, language string, used, capacity int)
+}
+
+func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, requestQueue queue.TaskQueue, batchSize int, block time.Duration, slots *judgeAgentSlotLimiter, metrics judgeAgentSlotMetrics) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	errCh := make(chan error, 1)
+	recordJudgeAgentSlotMetrics(metrics, slots)
 	for {
 		select {
 		case err := <-errCh:
@@ -158,10 +163,14 @@ func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, request
 			if err != nil {
 				return err
 			}
+			recordJudgeAgentSlotMetrics(metrics, slots)
 			wg.Add(1)
 			go func(message queue.Message) {
 				defer wg.Done()
-				defer release()
+				defer func() {
+					release()
+					recordJudgeAgentSlotMetrics(metrics, slots)
+				}()
 				if err := agent.ProcessRequestMessage(ctx, message, requestQueue); err != nil {
 					if deadErr := requestQueue.DeadLetter(ctx, message, err.Error()); deadErr != nil {
 						sendJudgeAgentLoopError(errCh, deadErr)
@@ -174,6 +183,15 @@ func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, request
 				}
 			}(message)
 		}
+	}
+}
+
+func recordJudgeAgentSlotMetrics(metrics judgeAgentSlotMetrics, slots *judgeAgentSlotLimiter) {
+	if metrics == nil || slots == nil {
+		return
+	}
+	for _, usage := range slots.Usages() {
+		metrics.ObserveJudgeAgentSlots(usage.Scope, usage.Language, usage.Used, usage.Capacity)
 	}
 }
 
@@ -198,7 +216,7 @@ func judgeAgentMessageLanguageKey(message queue.Message) string {
 	return ""
 }
 
-func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, publisher submission.ResultPublisher) (judgeRequestProcessor, error) {
+func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, observer sandbox.SandboxObserver, publisher submission.ResultPublisher) (judgeRequestProcessor, error) {
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	if backend == sandbox.BackendFake {
 		return submission.NewFakeAsyncAgent(submission.FakeAsyncAgentOptions{
@@ -207,7 +225,7 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 			ResultPublisher: publisher,
 		}), nil
 	}
-	sandboxBackend, err := newJudgeAgentSandbox(backend)
+	sandboxBackend, err := newJudgeAgentSandbox(backend, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -225,15 +243,16 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 	}), nil
 }
 
-func newJudgeAgentSandbox(backend string) (sandbox.Sandbox, error) {
+func newJudgeAgentSandbox(backend string, observer sandbox.SandboxObserver) (sandbox.Sandbox, error) {
 	switch backend {
 	case sandbox.BackendProcess:
 		return sandbox.NewProcessSandbox(), nil
 	case sandbox.BackendDocker:
 		return sandbox.NewDockerSandbox(sandbox.DockerSandboxOptions{
-			Runtime: envOr("SOJ_DOCKER_RUNNER_RUNTIME", ""),
-			TempDir: envOr("SOJ_DOCKER_RUNNER_WORKDIR", ""),
-			User:    envOr("SOJ_DOCKER_RUNNER_USER", ""),
+			Runtime:  envOr("SOJ_DOCKER_RUNNER_RUNTIME", ""),
+			TempDir:  envOr("SOJ_DOCKER_RUNNER_WORKDIR", ""),
+			User:     envOr("SOJ_DOCKER_RUNNER_USER", ""),
+			Observer: observer,
 			Images: map[string]string{
 				"go":    envOr("SOJ_DOCKER_RUNNER_IMAGE_GO", "soj-runner-go:local"),
 				"cpp17": envOr("SOJ_DOCKER_RUNNER_IMAGE_CPP17", "soj-runner-cpp17:local"),

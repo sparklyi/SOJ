@@ -114,6 +114,13 @@ To validate the same path through gVisor/runsc after installing runsc:
 make smoke-real-gvisor
 ```
 
+To run the local runner capacity smoke across `1/2/4/8/16` judge-agent slots:
+
+```bash
+make smoke-runner-capacity
+SOJ_DOCKER_RUNNER_RUNTIME=runsc make smoke-runner-capacity
+```
+
 The Docker runner path uses [deploy/docker-compose.docker-runner.yaml](deploy/docker-compose.docker-runner.yaml). Only `soj-judge-agent` receives the Docker socket; runner containers do not receive business service credentials or the Docker socket.
 
 ## Development
@@ -124,6 +131,7 @@ Run the main checks:
 make test
 make vet
 make compose-config
+make compose-config-docker-runner
 ```
 
 Or run Go commands directly:
@@ -167,6 +175,10 @@ Important variables:
 | `SOJ_JWT_SECRET` | JWT signing secret. Must be changed for real deployments. |
 | `SOJ_JUDGE_ENDPOINT` | Judge endpoint, such as `fake://accepted` or `agent://local`. |
 | `SOJ_JUDGE_TIMEOUT` | Judge timeout, defaults to `30s`. |
+| `SOJ_JUDGE_SANDBOX_BACKEND` | Judge-agent sandbox backend: `fake`, `process`, or `docker`. |
+| `SOJ_JUDGE_PARALLELISM` | Global judge-agent sandbox slots. |
+| `SOJ_JUDGE_LANGUAGE_SLOTS` | Per-language slot limits, such as `go=4,cpp17=4`. |
+| `SOJ_DOCKER_RUNNER_RUNTIME` | Docker runtime for runner containers; production should use `runsc`. |
 
 ## API Documentation
 
@@ -257,7 +269,7 @@ Before exposing SOJ outside local development:
 Known follow-up work:
 
 - Automated frozen/final scoreboard snapshot generation in the worker.
-- Production-grade judge runner images, Docker backend, and gVisor/runsc runtime validation.
+- Runner pool or warmed execution optimization based on Docker/gVisor capacity data.
 - Broader readiness probes for worker dependencies.
 - OpenTelemetry tracing with OTLP export disabled by default.
 

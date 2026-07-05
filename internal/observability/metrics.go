@@ -13,11 +13,16 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	httpRequests        *prometheus.CounterVec
-	httpRequestDuration *prometheus.HistogramVec
-	judgeDispatches     *prometheus.CounterVec
-	judgeTasks          *prometheus.CounterVec
-	judgeTaskDuration   *prometheus.HistogramVec
+	httpRequests         *prometheus.CounterVec
+	httpRequestDuration  *prometheus.HistogramVec
+	judgeDispatches      *prometheus.CounterVec
+	judgeTasks           *prometheus.CounterVec
+	judgeTaskDuration    *prometheus.HistogramVec
+	judgeAgentSlotsUsed  *prometheus.GaugeVec
+	judgeAgentSlotsCap   *prometheus.GaugeVec
+	sandboxPhaseDuration *prometheus.HistogramVec
+	sandboxBackendErrors *prometheus.CounterVec
+	sandboxCleanupFails  *prometheus.CounterVec
 }
 
 func NewMetrics(service string) *Metrics {
@@ -63,6 +68,42 @@ func NewMetrics(service string) *Metrics {
 			ConstLabels: labels,
 			Buckets:     []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
 		}, []string{"result"}),
+		judgeAgentSlotsUsed: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace:   "soj",
+			Subsystem:   "judge_agent",
+			Name:        "slots_used",
+			Help:        "Currently occupied judge-agent sandbox slots.",
+			ConstLabels: labels,
+		}, []string{"scope", "language"}),
+		judgeAgentSlotsCap: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace:   "soj",
+			Subsystem:   "judge_agent",
+			Name:        "slots_capacity",
+			Help:        "Configured judge-agent sandbox slot capacity.",
+			ConstLabels: labels,
+		}, []string{"scope", "language"}),
+		sandboxPhaseDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace:   "soj",
+			Subsystem:   "sandbox",
+			Name:        "phase_duration_seconds",
+			Help:        "Sandbox backend phase duration in seconds.",
+			ConstLabels: labels,
+			Buckets:     []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+		}, []string{"backend", "phase", "result"}),
+		sandboxBackendErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "sandbox",
+			Name:        "backend_errors_total",
+			Help:        "Sandbox backend errors by backend, phase, and class.",
+			ConstLabels: labels,
+		}, []string{"backend", "phase", "class"}),
+		sandboxCleanupFails: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "sandbox",
+			Name:        "cleanup_failures_total",
+			Help:        "Sandbox workspace or container cleanup failures.",
+			ConstLabels: labels,
+		}, []string{"backend"}),
 	}
 
 	registry.MustRegister(
@@ -73,6 +114,11 @@ func NewMetrics(service string) *Metrics {
 		metrics.judgeDispatches,
 		metrics.judgeTasks,
 		metrics.judgeTaskDuration,
+		metrics.judgeAgentSlotsUsed,
+		metrics.judgeAgentSlotsCap,
+		metrics.sandboxPhaseDuration,
+		metrics.sandboxBackendErrors,
+		metrics.sandboxCleanupFails,
 	)
 	return metrics
 }
@@ -94,4 +140,21 @@ func (m *Metrics) RecordJudgeTaskDispatch(result string) {
 func (m *Metrics) RecordJudgeTaskProcess(result string, duration time.Duration) {
 	m.judgeTasks.WithLabelValues(result).Inc()
 	m.judgeTaskDuration.WithLabelValues(result).Observe(duration.Seconds())
+}
+
+func (m *Metrics) ObserveJudgeAgentSlots(scope, language string, used, capacity int) {
+	m.judgeAgentSlotsUsed.WithLabelValues(scope, language).Set(float64(used))
+	m.judgeAgentSlotsCap.WithLabelValues(scope, language).Set(float64(capacity))
+}
+
+func (m *Metrics) ObserveSandboxPhase(backend, phase, result string, duration time.Duration) {
+	m.sandboxPhaseDuration.WithLabelValues(backend, phase, result).Observe(duration.Seconds())
+}
+
+func (m *Metrics) RecordSandboxBackendError(backend, phase, class string) {
+	m.sandboxBackendErrors.WithLabelValues(backend, phase, class).Inc()
+}
+
+func (m *Metrics) RecordSandboxCleanupFailure(backend string) {
+	m.sandboxCleanupFails.WithLabelValues(backend).Inc()
 }

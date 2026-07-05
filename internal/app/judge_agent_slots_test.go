@@ -72,10 +72,11 @@ func TestRunJudgeAgentLoopProcessesMessagesConcurrentlyWithinSlots(t *testing.T)
 	}
 	processor := &blockingJudgeProcessor{entered: make(chan string, 2), release: make(chan struct{})}
 	limiter := newJudgeAgentSlotLimiter(2, map[string]int{"go": 1, "cpp17": 1})
+	metrics := &recordingJudgeAgentSlotMetrics{}
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runJudgeAgentLoop(ctx, processor, queue, 2, time.Millisecond, limiter)
+		done <- runJudgeAgentLoop(ctx, processor, queue, 2, time.Millisecond, limiter, metrics)
 	}()
 
 	first := <-processor.entered
@@ -90,6 +91,9 @@ func TestRunJudgeAgentLoopProcessesMessagesConcurrentlyWithinSlots(t *testing.T)
 	}
 	if got := len(queue.acked); got != 2 {
 		t.Fatalf("acked = %d, want 2", got)
+	}
+	if !metrics.observed("global", "", 2, 2) {
+		t.Fatalf("slot metrics did not record occupied global slots: %+v", metrics.observations)
 	}
 }
 
@@ -156,4 +160,31 @@ func (p *blockingJudgeProcessor) ProcessRequestMessage(ctx context.Context, mess
 		return ctx.Err()
 	}
 	return requestQueue.Ack(ctx, message.ID)
+}
+
+type recordingJudgeAgentSlotMetrics struct {
+	mu           sync.Mutex
+	observations []judgeAgentSlotUsage
+}
+
+func (m *recordingJudgeAgentSlotMetrics) ObserveJudgeAgentSlots(scope, language string, used, capacity int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.observations = append(m.observations, judgeAgentSlotUsage{
+		Scope:    scope,
+		Language: language,
+		Used:     used,
+		Capacity: capacity,
+	})
+}
+
+func (m *recordingJudgeAgentSlotMetrics) observed(scope, language string, used, capacity int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, observation := range m.observations {
+		if observation.Scope == scope && observation.Language == language && observation.Used == used && observation.Capacity == capacity {
+			return true
+		}
+	}
+	return false
 }
