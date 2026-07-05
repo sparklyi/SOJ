@@ -21,6 +21,6 @@ COPY --from=builder /out/${COMMAND} /app/soj
 COPY internal/migrations /app/internal/migrations
 
 ENV SOJ_MIGRATIONS_DIR=/app/internal/migrations
-EXPOSE 8080 8081
+EXPOSE 8080 8081 8082
 
 ENTRYPOINT ["/app/soj"]
