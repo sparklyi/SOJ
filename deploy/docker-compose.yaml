@@ -91,6 +91,54 @@ services:
             default_time_limit_ms = EXCLUDED.default_time_limit_ms,
             default_memory_limit_kb = EXCLUDED.default_memory_limit_kb,
             updated_at = now();
+
+        INSERT INTO languages (
+          id,
+          engine,
+          engine_language_id,
+          name,
+          version,
+          compile_command,
+          run_command,
+          default_time_limit_ms,
+          default_memory_limit_kb,
+          enabled
+        ) VALUES
+          (
+            60,
+            'soj-agent',
+            'go',
+            'Go',
+            '1.24',
+            'go build -o {{binary}} {{source}}',
+            '{{binary}}',
+            1000,
+            262144,
+            true
+          ),
+          (
+            54,
+            'soj-agent',
+            'cpp17',
+            'C++17',
+            '17',
+            'g++ -std=c++17 -O2 -pipe -o {{binary}} {{source}}',
+            '{{binary}}',
+            1000,
+            262144,
+            true
+          )
+        ON CONFLICT (engine, engine_language_id) DO UPDATE
+        SET name = EXCLUDED.name,
+            version = EXCLUDED.version,
+            compile_command = EXCLUDED.compile_command,
+            run_command = EXCLUDED.run_command,
+            enabled = true,
+            default_time_limit_ms = EXCLUDED.default_time_limit_ms,
+            default_memory_limit_kb = EXCLUDED.default_memory_limit_kb,
+            updated_at = now();
+
+        SELECT setval(pg_get_serial_sequence('languages', 'id'), (SELECT max(id) FROM languages));
         SQL
 
   migrate:
@@ -114,7 +162,7 @@ services:
       args:
         COMMAND: soj-api
     environment:
-      SOJ_ENV: docker
+      SOJ_ENV: ${SOJ_ENV:-docker}
       SOJ_HTTP_ADDR: ":8080"
       SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
       SOJ_REDIS_ADDR: redis:6379
@@ -124,7 +172,7 @@ services:
       SOJ_STORAGE_SECRET_KEY: minioadmin
       SOJ_STORAGE_PATH_STYLE: "true"
       SOJ_JWT_SECRET: local-dev-secret-change-me
-      SOJ_JUDGE_ENDPOINT: fake://accepted
+      SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -149,7 +197,7 @@ services:
       args:
         COMMAND: soj-worker
     environment:
-      SOJ_ENV: docker
+      SOJ_ENV: ${SOJ_ENV:-docker}
       SOJ_WORKER_HEALTH_ADDR: ":8081"
       SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
       SOJ_REDIS_ADDR: redis:6379
@@ -163,7 +211,7 @@ services:
       SOJ_STORAGE_SECRET_KEY: minioadmin
       SOJ_STORAGE_PATH_STYLE: "true"
       SOJ_JWT_SECRET: local-dev-secret-change-me
-      SOJ_JUDGE_ENDPOINT: fake://accepted
+      SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
     depends_on:
       postgres:
         condition: service_healthy
@@ -192,7 +240,7 @@ services:
       args:
         COMMAND: soj-judge-agent
     environment:
-      SOJ_ENV: docker
+      SOJ_ENV: ${SOJ_ENV:-docker}
       SOJ_JUDGE_AGENT_HEALTH_ADDR: ":8082"
       SOJ_REDIS_ADDR: redis:6379
       SOJ_STORAGE_ENDPOINT: http://minio:9000
@@ -200,8 +248,8 @@ services:
       SOJ_STORAGE_ACCESS_KEY: minioadmin
       SOJ_STORAGE_SECRET_KEY: minioadmin
       SOJ_STORAGE_PATH_STYLE: "true"
-      SOJ_JUDGE_ENDPOINT: fake://accepted
-      SOJ_JUDGE_SANDBOX_BACKEND: fake
+      SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
+      SOJ_JUDGE_SANDBOX_BACKEND: ${SOJ_JUDGE_SANDBOX_BACKEND:-fake}
       SOJ_JUDGE_REQUEST_STREAM: soj:judge:tasks
       SOJ_JUDGE_AGENT_GROUP: judge-agents
       SOJ_JUDGE_RESULT_STREAM: soj:judge:results

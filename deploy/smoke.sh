@@ -4,6 +4,7 @@ set -euo pipefail
 COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.yaml}"
 API_URL="${API_URL:-http://localhost:8080}"
 RUN_ID="${RUN_ID:-$(date +%s)-$$}"
+SMOKE_REAL_JUDGE="${SMOKE_REAL_JUDGE:-0}"
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -60,10 +61,42 @@ wait_http "${JUDGE_AGENT_URL:-http://localhost:8082}/readyz"
 require_metric "$API_URL" "soj_http_requests_total"
 require_metric "${JUDGE_AGENT_URL:-http://localhost:8082}" "soj_http_requests_total"
 
-LANG_ID="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'fake' and engine_language_id = 'accepted' and enabled = true order by id limit 1;")"
-if [[ -z "$LANG_ID" ]]; then
-  echo "fake language seed was not found" >&2
-  exit 1
+if [[ "$SMOKE_REAL_JUDGE" == "1" ]]; then
+  LANG_ID="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'soj-agent' and engine_language_id = 'go' and enabled = true order by id limit 1;")"
+  if [[ -z "$LANG_ID" ]]; then
+    echo "go language seed was not found" >&2
+    exit 1
+  fi
+  SOURCE_CODE="$(cat <<'SRC'
+package main
+
+import "fmt"
+
+func main() {
+	var a, b int
+	fmt.Scan(&a, &b)
+	fmt.Println(a + b)
+}
+SRC
+)"
+  WRONG_SOURCE_CODE="$(cat <<'SRC'
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println(0)
+}
+SRC
+)"
+else
+  LANG_ID="$(docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'fake' and engine_language_id = 'accepted' and enabled = true order by id limit 1;")"
+  if [[ -z "$LANG_ID" ]]; then
+    echo "fake language seed was not found" >&2
+    exit 1
+  fi
+  SOURCE_CODE="print(2)"
+  WRONG_SOURCE_CODE="print(0)"
 fi
 
 REGISTER_RESPONSE="$(curl -fsS -X POST "$API_URL/api/v1/auth/register" \
@@ -95,7 +128,8 @@ curl -fsS -X POST "$API_URL/api/v1/problems/$PROBLEM_ID/testcase-sets" \
 
 api_json PATCH "/api/v1/problems/$PROBLEM_ID" '{"status":"published"}' >/dev/null
 
-SUBMISSION_RESPONSE="$(api_json POST /api/v1/submissions "{\"problem_id\":$PROBLEM_ID,\"language_id\":$LANG_ID,\"source_code\":\"print(2)\"}")"
+SUBMISSION_PAYLOAD="$(jq -cn --argjson problem_id "$PROBLEM_ID" --argjson language_id "$LANG_ID" --arg source "$SOURCE_CODE" '{problem_id:$problem_id,language_id:$language_id,source_code:$source}')"
+SUBMISSION_RESPONSE="$(api_json POST /api/v1/submissions "$SUBMISSION_PAYLOAD")"
 SUBMISSION_ID="$(jq -r '.data.id' <<<"$SUBMISSION_RESPONSE")"
 
 STATUS=""
@@ -109,12 +143,29 @@ if [[ "$STATUS" != "accepted" ]]; then
   exit 1
 fi
 
+if [[ "$SMOKE_REAL_JUDGE" == "1" ]]; then
+  WRONG_PAYLOAD="$(jq -cn --argjson problem_id "$PROBLEM_ID" --argjson language_id "$LANG_ID" --arg source "$WRONG_SOURCE_CODE" '{problem_id:$problem_id,language_id:$language_id,source_code:$source}')"
+  WRONG_RESPONSE="$(api_json POST /api/v1/submissions "$WRONG_PAYLOAD")"
+  WRONG_SUBMISSION_ID="$(jq -r '.data.id' <<<"$WRONG_RESPONSE")"
+  WRONG_STATUS=""
+  for _ in $(seq 1 30); do
+    WRONG_STATUS="$(api_json GET "/api/v1/submissions/$WRONG_SUBMISSION_ID" | jq -r '.data.status')"
+    [[ "$WRONG_STATUS" == "wrong_answer" ]] && break
+    sleep 1
+  done
+  if [[ "$WRONG_STATUS" != "wrong_answer" ]]; then
+    echo "wrong-answer submission $WRONG_SUBMISSION_ID ended with status $WRONG_STATUS" >&2
+    exit 1
+  fi
+fi
+
 CONTEST_RESPONSE="$(api_json POST /api/v1/contests "{\"title\":\"Smoke Contest $RUN_ID\",\"visibility\":\"public\",\"status\":\"published\",\"start_at\":\"2026-01-01T00:00:00Z\",\"end_at\":\"2030-01-01T00:00:00Z\",\"freeze_at\":\"2029-01-01T00:00:00Z\",\"problems\":[{\"problem_id\":$PROBLEM_ID,\"alias\":\"A\"}]}")"
 CONTEST_ID="$(jq -r '.data.id' <<<"$CONTEST_RESPONSE")"
 
 api_json POST "/api/v1/contests/$CONTEST_ID/registrations" "{\"display_name\":\"smoke-$RUN_ID\",\"email\":\"smoke-$RUN_ID@example.com\"}" >/dev/null
 
-CONTEST_SUBMISSION_RESPONSE="$(api_json POST /api/v1/submissions "{\"problem_id\":$PROBLEM_ID,\"contest_id\":$CONTEST_ID,\"language_id\":$LANG_ID,\"source_code\":\"print(2)\"}")"
+CONTEST_SUBMISSION_PAYLOAD="$(jq -cn --argjson problem_id "$PROBLEM_ID" --argjson contest_id "$CONTEST_ID" --argjson language_id "$LANG_ID" --arg source "$SOURCE_CODE" '{problem_id:$problem_id,contest_id:$contest_id,language_id:$language_id,source_code:$source}')"
+CONTEST_SUBMISSION_RESPONSE="$(api_json POST /api/v1/submissions "$CONTEST_SUBMISSION_PAYLOAD")"
 CONTEST_SUBMISSION_ID="$(jq -r '.data.id' <<<"$CONTEST_SUBMISSION_RESPONSE")"
 
 CONTEST_STATUS=""
