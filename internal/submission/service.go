@@ -349,7 +349,7 @@ func (s *Service) CompleteSubmission(ctx context.Context, submissionID int64, re
 	if result.Verdict == judge.VerdictAccepted {
 		score = 100
 	}
-	updated, err := s.repo.UpdateSubmissionStatus(ctx, submissionID, result, score)
+	updated, err := s.repo.CompleteSubmissionWithResult(ctx, submissionID, result, score)
 	if err != nil {
 		return SubmissionRecord{}, err
 	}

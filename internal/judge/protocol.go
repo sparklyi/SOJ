@@ -69,6 +69,16 @@ func NewAgentRequest(request Request) AgentRequest {
 }
 
 func (result AgentResult) ToResult() Result {
+	cases := make([]CaseResult, 0, len(result.Cases))
+	for _, item := range result.Cases {
+		cases = append(cases, CaseResult{
+			Index:          item.Index,
+			Verdict:        item.Verdict,
+			TimeMS:         item.TimeMS,
+			MemoryKB:       item.MemoryKB,
+			CheckerMessage: item.CheckerMessage,
+		})
+	}
 	return Result{
 		Verdict:       result.Verdict,
 		TimeMS:        result.TimeMS,
@@ -77,5 +87,13 @@ func (result AgentResult) ToResult() Result {
 		Stderr:        result.Stderr,
 		CompileOutput: result.CompileOutput,
 		ErrorMessage:  result.ErrorMessage,
+		Cases:         cases,
+		Manifest: Manifest{
+			JudgeCoreVersion: result.Manifest.JudgeCoreVersion,
+			LanguageRuntime:  result.Manifest.LanguageRuntime,
+			SandboxProfile:   result.Manifest.SandboxProfile,
+			TestcaseSetHash:  result.Manifest.TestcaseSetHash,
+			TraceID:          result.Manifest.TraceID,
+		},
 	}
 }

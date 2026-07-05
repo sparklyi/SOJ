@@ -2,6 +2,7 @@ package submission
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"time"
@@ -83,6 +84,81 @@ type LanguageRecord struct {
 	Enabled          bool
 }
 
+type JudgeAttemptRecord struct {
+	ID                   int64
+	SubmissionID         *int64
+	RunID                *int64
+	TaskID               *int64
+	RejudgeBatchID       *int64
+	AttemptNo            int32
+	ProtocolVersion      string
+	JudgeCoreVersion     string
+	JudgeEngine          string
+	JudgeAgentID         *string
+	LanguageID           int64
+	LanguageRuntime      *string
+	SandboxBackend       *string
+	SandboxProfile       *string
+	TestcaseSetID        *int64
+	TestcaseSetHash      *string
+	CheckerHash          *string
+	ValidatorHash        *string
+	Status               string
+	Verdict              *string
+	Score                int32
+	TimeMS               *int32
+	MemoryKB             *int32
+	FirstFailedCaseIndex *int32
+	FirstFailedGroup     *string
+	CompileOutputSummary *string
+	StderrSummary        *string
+	CheckerMessage       *string
+	ErrorClass           *string
+	ErrorMessage         *string
+	Manifest             []byte
+	Metrics              []byte
+	TraceID              *string
+	StartedAt            *time.Time
+	FinishedAt           *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+type JudgeCaseResultRecord struct {
+	ID                int64
+	AttemptID         int64
+	CaseIndex         int32
+	GroupName         *string
+	TestcaseKey       *string
+	Status            string
+	Score             int32
+	TimeMS            *int32
+	MemoryKB          *int32
+	ExitCode          *int32
+	Signal            *string
+	CheckerMessage    *string
+	OutputDiffSummary *string
+	StdoutArtifactID  *int64
+	StderrArtifactID  *int64
+	DiffArtifactID    *int64
+	CreatedAt         time.Time
+}
+
+type SubmissionResultRecord struct {
+	SubmissionID         int64
+	AttemptID            int64
+	Status               string
+	Score                int32
+	TimeMS               *int32
+	MemoryKB             *int32
+	FirstFailedCaseIndex *int32
+	FirstFailedGroup     *string
+	ErrorClass           *string
+	SafeSummary          []byte
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
 type ListSubmissionsInput struct {
 	UserID    *int64
 	ProblemID *int64
@@ -102,7 +178,10 @@ type Repository interface {
 	MarkSubmissionRunning(ctx context.Context, id int64) (SubmissionRecord, error)
 	MarkSubmissionQueued(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
 	MarkSubmissionSystemError(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
-	UpdateSubmissionStatus(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error)
+	CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error)
+	GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID int64) (JudgeAttemptRecord, error)
+	ListJudgeCaseResults(ctx context.Context, attemptID int64) ([]JudgeCaseResultRecord, error)
+	GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error)
 	CreateJudgeTask(ctx context.Context, submissionID int64, nextRunAt time.Time) (JudgeTaskRecord, error)
 	GetJudgeTask(ctx context.Context, id int64) (JudgeTaskRecord, error)
 	ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]JudgeTaskRecord, error)
@@ -257,7 +336,7 @@ func (r *SQLRepository) MarkSubmissionSystemError(ctx context.Context, id int64,
 	return submissionRecord(row), err
 }
 
-func (r *SQLRepository) UpdateSubmissionStatus(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
+func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
 	params := db.UpdateSubmissionStatusParams{
 		Status:       dbStatus(result.Verdict),
 		TimeMs:       int4(result.TimeMS),
@@ -275,7 +354,11 @@ func (r *SQLRepository) UpdateSubmissionStatus(ctx context.Context, id int64, re
 		if err != nil {
 			return record, err
 		}
-		return record, updateContestProblemResult(ctx, r.q, record)
+		attempt, err := persistJudgeResult(ctx, r.q, record, result, score)
+		if err != nil {
+			return record, err
+		}
+		return record, updateContestProblemResult(ctx, r.q, record, attempt.ID)
 	}
 
 	var record SubmissionRecord
@@ -291,12 +374,215 @@ func (r *SQLRepository) UpdateSubmissionStatus(ctx context.Context, id int64, re
 		if err != nil {
 			return err
 		}
-		return updateContestProblemResult(ctx, q, record)
+		attempt, err := persistJudgeResult(ctx, q, record, result, score)
+		if err != nil {
+			return err
+		}
+		return updateContestProblemResult(ctx, q, record, attempt.ID)
 	})
 	return record, err
 }
 
-func updateContestProblemResult(ctx context.Context, q *db.Queries, submission SubmissionRecord) error {
+func persistJudgeResult(ctx context.Context, q *db.Queries, submission SubmissionRecord, result judge.Result, score int32) (db.JudgeAttempt, error) {
+	summary := judgeSummary(result)
+	manifest, err := judgeManifestJSON(result.Manifest)
+	if err != nil {
+		return db.JudgeAttempt{}, err
+	}
+	safeSummary, err := json.Marshal(summary)
+	if err != nil {
+		return db.JudgeAttempt{}, err
+	}
+	metrics, err := json.Marshal(map[string]any{})
+	if err != nil {
+		return db.JudgeAttempt{}, err
+	}
+
+	finishedAt := result.JudgedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	latest, err := q.GetLatestJudgeAttemptBySubmissionID(ctx, pgtype.Int8{Int64: submission.ID, Valid: true})
+	attemptNo := int32(1)
+	if err == nil {
+		attemptNo = latest.AttemptNo + 1
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return db.JudgeAttempt{}, err
+	}
+
+	attempt, err := q.CreateJudgeAttempt(ctx, db.CreateJudgeAttemptParams{
+		SubmissionID:         pgtype.Int8{Int64: submission.ID, Valid: true},
+		AttemptNo:            attemptNo,
+		ProtocolVersion:      judge.ProtocolVersion,
+		JudgeCoreVersion:     defaultJudgeCoreVersion(result.Manifest),
+		JudgeEngine:          judge.EngineSOJAgent,
+		JudgeAgentID:         text(result.Manifest.JudgeAgentID),
+		LanguageID:           submission.LanguageID,
+		LanguageRuntime:      text(result.Manifest.LanguageRuntime),
+		SandboxBackend:       text(result.Manifest.SandboxBackend),
+		SandboxProfile:       text(result.Manifest.SandboxProfile),
+		TestcaseSetID:        pgtype.Int8{Int64: submission.TestcaseSetID, Valid: submission.TestcaseSetID > 0},
+		TestcaseSetHash:      text(result.Manifest.TestcaseSetHash),
+		CheckerHash:          text(result.Manifest.CheckerHash),
+		ValidatorHash:        text(result.Manifest.ValidatorHash),
+		Status:               "finished",
+		Verdict:              text(string(result.Verdict)),
+		Score:                score,
+		TimeMs:               int4(result.TimeMS),
+		MemoryKb:             int4(result.MemoryKB),
+		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
+		FirstFailedGroup:     text(summary.FirstFailedGroup),
+		CompileOutputSummary: text(summary.CompileOutputSummary),
+		StderrSummary:        text(summary.StderrSummary),
+		CheckerMessage:       text(summary.CheckerMessage),
+		ErrorClass:           text(summary.ErrorClass),
+		ErrorMessage:         text(result.ErrorMessage),
+		Manifest:             manifest,
+		Metrics:              metrics,
+		TraceID:              text(result.Manifest.TraceID),
+		StartedAt:            timestamptz(finishedAt),
+		FinishedAt:           timestamptz(finishedAt),
+	})
+	if err != nil {
+		return db.JudgeAttempt{}, err
+	}
+
+	for _, item := range result.Cases {
+		_, err := q.CreateJudgeCaseResult(ctx, db.CreateJudgeCaseResultParams{
+			AttemptID:         attempt.ID,
+			CaseIndex:         int32(item.Index),
+			GroupName:         text(item.GroupName),
+			TestcaseKey:       text(item.TestcaseKey),
+			Status:            dbStatus(item.Verdict),
+			Score:             item.Score,
+			TimeMs:            int4(item.TimeMS),
+			MemoryKb:          int4(item.MemoryKB),
+			ExitCode:          int32Pg(item.ExitCode),
+			Signal:            text(item.Signal),
+			CheckerMessage:    text(item.CheckerMessage),
+			OutputDiffSummary: text(item.OutputDiffSummary),
+		})
+		if err != nil {
+			return db.JudgeAttempt{}, err
+		}
+	}
+
+	_, err = q.UpsertSubmissionResult(ctx, db.UpsertSubmissionResultParams{
+		SubmissionID:         submission.ID,
+		AttemptID:            attempt.ID,
+		Status:               submission.Status,
+		Score:                score,
+		TimeMs:               int4(result.TimeMS),
+		MemoryKb:             int4(result.MemoryKB),
+		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
+		FirstFailedGroup:     text(summary.FirstFailedGroup),
+		ErrorClass:           text(summary.ErrorClass),
+		SafeSummary:          safeSummary,
+	})
+	if err != nil {
+		return db.JudgeAttempt{}, err
+	}
+	return attempt, nil
+}
+
+type safeJudgeSummary struct {
+	Verdict              string `json:"verdict"`
+	TimeMS               int    `json:"time_ms,omitempty"`
+	MemoryKB             int    `json:"memory_kb,omitempty"`
+	CompileOutputSummary string `json:"compile_output_summary,omitempty"`
+	StderrSummary        string `json:"stderr_summary,omitempty"`
+	FirstFailedCaseIndex *int32 `json:"first_failed_case_index,omitempty"`
+	FirstFailedGroup     string `json:"first_failed_group,omitempty"`
+	CheckerMessage       string `json:"checker_message,omitempty"`
+	ErrorClass           string `json:"error_class,omitempty"`
+	ErrorMessage         string `json:"error_message,omitempty"`
+}
+
+func (s safeJudgeSummary) firstFailedCaseIndex() pgtype.Int4 {
+	if s.FirstFailedCaseIndex == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: *s.FirstFailedCaseIndex, Valid: true}
+}
+
+func judgeSummary(result judge.Result) safeJudgeSummary {
+	summary := safeJudgeSummary{
+		Verdict:              string(result.Verdict),
+		TimeMS:               result.TimeMS,
+		MemoryKB:             result.MemoryKB,
+		CompileOutputSummary: truncateSummary(result.CompileOutput),
+		StderrSummary:        truncateSummary(result.Stderr),
+		ErrorMessage:         result.ErrorMessage,
+	}
+	if result.Verdict == judge.VerdictSystemError {
+		summary.ErrorClass = "system_error"
+	}
+	if result.Verdict == judge.VerdictCompileError {
+		summary.ErrorClass = "compile_error"
+	}
+	for _, item := range result.Cases {
+		if item.Verdict == judge.VerdictAccepted {
+			continue
+		}
+		index := int32(item.Index)
+		summary.FirstFailedCaseIndex = &index
+		summary.FirstFailedGroup = item.GroupName
+		summary.CheckerMessage = item.CheckerMessage
+		if summary.ErrorMessage == "" {
+			summary.ErrorMessage = item.OutputDiffSummary
+		}
+		break
+	}
+	if summary.CheckerMessage == "" {
+		for _, item := range result.Cases {
+			if item.CheckerMessage != "" {
+				summary.CheckerMessage = item.CheckerMessage
+				break
+			}
+		}
+	}
+	return summary
+}
+
+func judgeManifestJSON(manifest judge.Manifest) ([]byte, error) {
+	raw := make(map[string]any, len(manifest.Raw)+9)
+	for key, value := range manifest.Raw {
+		raw[key] = value
+	}
+	setIfNotEmpty(raw, "judge_core_version", defaultJudgeCoreVersion(manifest))
+	setIfNotEmpty(raw, "judge_agent_id", manifest.JudgeAgentID)
+	setIfNotEmpty(raw, "language_runtime", manifest.LanguageRuntime)
+	setIfNotEmpty(raw, "sandbox_backend", manifest.SandboxBackend)
+	setIfNotEmpty(raw, "sandbox_profile", manifest.SandboxProfile)
+	setIfNotEmpty(raw, "testcase_set_hash", manifest.TestcaseSetHash)
+	setIfNotEmpty(raw, "checker_hash", manifest.CheckerHash)
+	setIfNotEmpty(raw, "validator_hash", manifest.ValidatorHash)
+	setIfNotEmpty(raw, "trace_id", manifest.TraceID)
+	return json.Marshal(raw)
+}
+
+func setIfNotEmpty(values map[string]any, key string, value string) {
+	if value != "" {
+		values[key] = value
+	}
+}
+
+func defaultJudgeCoreVersion(manifest judge.Manifest) string {
+	if manifest.JudgeCoreVersion != "" {
+		return manifest.JudgeCoreVersion
+	}
+	return judge.ProtocolVersion
+}
+
+func truncateSummary(value string) string {
+	const limit = 4096
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit]
+}
+
+func updateContestProblemResult(ctx context.Context, q *db.Queries, submission SubmissionRecord, attemptID int64) error {
 	if submission.ContestID == nil {
 		return nil
 	}
@@ -352,6 +638,12 @@ func updateContestProblemResult(ctx context.Context, q *db.Queries, submission S
 		acceptedAt = timestamptz(accepted)
 		penaltyMinutes = int32(accepted.Sub(contest.StartAt.Time).Minutes()) + (attempts-1)*20
 	}
+	bestSubmissionID := current.BestSubmissionID
+	bestAttemptID := current.BestAttemptID
+	if submission.Status == StatusAccepted {
+		bestSubmissionID = pgtype.Int8{Int64: submission.ID, Valid: true}
+		bestAttemptID = pgtype.Int8{Int64: attemptID, Valid: true}
+	}
 	_, err = q.UpsertContestProblemResult(ctx, db.UpsertContestProblemResultParams{
 		ContestID:        *submission.ContestID,
 		UserID:           submission.UserID,
@@ -361,8 +653,33 @@ func updateContestProblemResult(ctx context.Context, q *db.Queries, submission S
 		AcceptedAt:       acceptedAt,
 		PenaltyMinutes:   penaltyMinutes,
 		LastSubmissionID: pgtype.Int8{Int64: submission.ID, Valid: true},
+		BestSubmissionID: bestSubmissionID,
+		BestAttemptID:    bestAttemptID,
+		LastAttemptID:    pgtype.Int8{Int64: attemptID, Valid: true},
 	})
 	return err
+}
+
+func (r *SQLRepository) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID int64) (JudgeAttemptRecord, error) {
+	row, err := r.q.GetLatestJudgeAttemptBySubmissionID(ctx, pgtype.Int8{Int64: submissionID, Valid: true})
+	return judgeAttemptRecord(row), mapNotFound(err, "judge_attempt.not_found", "judge attempt not found")
+}
+
+func (r *SQLRepository) ListJudgeCaseResults(ctx context.Context, attemptID int64) ([]JudgeCaseResultRecord, error) {
+	rows, err := r.q.ListJudgeCaseResultsByAttemptID(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]JudgeCaseResultRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, judgeCaseResultRecord(row))
+	}
+	return out, nil
+}
+
+func (r *SQLRepository) GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error) {
+	row, err := r.q.GetSubmissionResultBySubmissionID(ctx, submissionID)
+	return submissionResultRecord(row), mapNotFound(err, "submission_result.not_found", "submission result not found")
 }
 
 func (r *SQLRepository) CreateJudgeTask(ctx context.Context, submissionID int64, nextRunAt time.Time) (JudgeTaskRecord, error) {
@@ -547,6 +864,87 @@ func languageRecord(row db.Language) LanguageRecord {
 	return LanguageRecord{ID: row.ID, Engine: row.Engine, EngineLanguageID: row.EngineLanguageID, Name: row.Name, DefaultTimeLimit: time.Duration(row.DefaultTimeLimitMs) * time.Millisecond, DefaultMemoryKB: int64(row.DefaultMemoryLimitKb), Enabled: row.Enabled}
 }
 
+func judgeAttemptRecord(row db.JudgeAttempt) JudgeAttemptRecord {
+	return JudgeAttemptRecord{
+		ID:                   row.ID,
+		SubmissionID:         int8Value(row.SubmissionID),
+		RunID:                int8Value(row.RunID),
+		TaskID:               int8Value(row.TaskID),
+		RejudgeBatchID:       int8Value(row.RejudgeBatchID),
+		AttemptNo:            row.AttemptNo,
+		ProtocolVersion:      row.ProtocolVersion,
+		JudgeCoreVersion:     row.JudgeCoreVersion,
+		JudgeEngine:          row.JudgeEngine,
+		JudgeAgentID:         textValue(row.JudgeAgentID),
+		LanguageID:           row.LanguageID,
+		LanguageRuntime:      textValue(row.LanguageRuntime),
+		SandboxBackend:       textValue(row.SandboxBackend),
+		SandboxProfile:       textValue(row.SandboxProfile),
+		TestcaseSetID:        int8Value(row.TestcaseSetID),
+		TestcaseSetHash:      textValue(row.TestcaseSetHash),
+		CheckerHash:          textValue(row.CheckerHash),
+		ValidatorHash:        textValue(row.ValidatorHash),
+		Status:               row.Status,
+		Verdict:              textValue(row.Verdict),
+		Score:                row.Score,
+		TimeMS:               int4Value(row.TimeMs),
+		MemoryKB:             int4Value(row.MemoryKb),
+		FirstFailedCaseIndex: int4Value(row.FirstFailedCaseIndex),
+		FirstFailedGroup:     textValue(row.FirstFailedGroup),
+		CompileOutputSummary: textValue(row.CompileOutputSummary),
+		StderrSummary:        textValue(row.StderrSummary),
+		CheckerMessage:       textValue(row.CheckerMessage),
+		ErrorClass:           textValue(row.ErrorClass),
+		ErrorMessage:         textValue(row.ErrorMessage),
+		Manifest:             append([]byte(nil), row.Manifest...),
+		Metrics:              append([]byte(nil), row.Metrics...),
+		TraceID:              textValue(row.TraceID),
+		StartedAt:            timeValue(row.StartedAt),
+		FinishedAt:           timeValue(row.FinishedAt),
+		CreatedAt:            row.CreatedAt.Time,
+		UpdatedAt:            row.UpdatedAt.Time,
+	}
+}
+
+func judgeCaseResultRecord(row db.JudgeCaseResult) JudgeCaseResultRecord {
+	return JudgeCaseResultRecord{
+		ID:                row.ID,
+		AttemptID:         row.AttemptID,
+		CaseIndex:         row.CaseIndex,
+		GroupName:         textValue(row.GroupName),
+		TestcaseKey:       textValue(row.TestcaseKey),
+		Status:            row.Status,
+		Score:             row.Score,
+		TimeMS:            int4Value(row.TimeMs),
+		MemoryKB:          int4Value(row.MemoryKb),
+		ExitCode:          int4Value(row.ExitCode),
+		Signal:            textValue(row.Signal),
+		CheckerMessage:    textValue(row.CheckerMessage),
+		OutputDiffSummary: textValue(row.OutputDiffSummary),
+		StdoutArtifactID:  int8Value(row.StdoutArtifactID),
+		StderrArtifactID:  int8Value(row.StderrArtifactID),
+		DiffArtifactID:    int8Value(row.DiffArtifactID),
+		CreatedAt:         row.CreatedAt.Time,
+	}
+}
+
+func submissionResultRecord(row db.SubmissionResult) SubmissionResultRecord {
+	return SubmissionResultRecord{
+		SubmissionID:         row.SubmissionID,
+		AttemptID:            row.AttemptID,
+		Status:               row.Status,
+		Score:                row.Score,
+		TimeMS:               int4Value(row.TimeMs),
+		MemoryKB:             int4Value(row.MemoryKb),
+		FirstFailedCaseIndex: int4Value(row.FirstFailedCaseIndex),
+		FirstFailedGroup:     textValue(row.FirstFailedGroup),
+		ErrorClass:           textValue(row.ErrorClass),
+		SafeSummary:          append([]byte(nil), row.SafeSummary...),
+		CreatedAt:            row.CreatedAt.Time,
+		UpdatedAt:            row.UpdatedAt.Time,
+	}
+}
+
 func text(value string) pgtype.Text {
 	return pgtype.Text{String: value, Valid: value != ""}
 }
@@ -573,6 +971,13 @@ func int4(value int) pgtype.Int4 {
 }
 
 func int4Ptr(value *int32) pgtype.Int4 {
+	if value == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: *value, Valid: true}
+}
+
+func int32Pg(value *int32) pgtype.Int4 {
 	if value == nil {
 		return pgtype.Int4{}
 	}

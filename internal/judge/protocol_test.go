@@ -81,6 +81,20 @@ func TestAgentResultConvertsToJudgeResult(t *testing.T) {
 		Stderr:          "stderr\n",
 		CompileOutput:   "compile\n",
 		ErrorMessage:    "first case failed",
+		Cases: []AgentCaseResult{{
+			Index:          2,
+			Verdict:        VerdictWrongAnswer,
+			TimeMS:         12,
+			MemoryKB:       256,
+			CheckerMessage: "expected 42",
+		}},
+		Manifest: AgentManifest{
+			JudgeCoreVersion: "core-1",
+			LanguageRuntime:  "go1.24",
+			SandboxProfile:   "default",
+			TestcaseSetHash:  "cases-hash",
+			TraceID:          "trace-1",
+		},
 	}
 
 	got := result.ToResult()
@@ -89,5 +103,11 @@ func TestAgentResultConvertsToJudgeResult(t *testing.T) {
 	}
 	if got.Stdout != "actual\n" || got.Stderr != "stderr\n" || got.CompileOutput != "compile\n" || got.ErrorMessage != "first case failed" {
 		t.Fatalf("result output fields = %+v", got)
+	}
+	if len(got.Cases) != 1 || got.Cases[0].Index != 2 || got.Cases[0].CheckerMessage != "expected 42" {
+		t.Fatalf("result cases = %+v", got.Cases)
+	}
+	if got.Manifest.JudgeCoreVersion != "core-1" || got.Manifest.TraceID != "trace-1" {
+		t.Fatalf("manifest = %+v", got.Manifest)
 	}
 }
