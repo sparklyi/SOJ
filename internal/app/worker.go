@@ -22,6 +22,9 @@ import (
 	"SOJ/internal/submission"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -45,6 +48,11 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 
 	logger := observability.NewLogger(cfg.Log.Level, stdout)
+	tracing, err := setupProcessTracing(ctx, cfg, "soj-worker")
+	if err != nil {
+		return err
+	}
+	defer shutdownProcessTracing(ctx, cfg.Worker.ShutdownTimeout, logger, tracing)
 	metrics := observability.NewMetrics("soj-worker")
 	pool, err := postgres.OpenPool(ctx, postgres.PoolConfig{DSN: cfg.Database.DSN})
 	if err != nil {
@@ -98,7 +106,12 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	contestService := contest.NewService(contest.NewPostgresRepository(pool))
 
 	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)
-	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics, ReadyCheck: readiness.Check})
+	router := httpapi.NewRouter(httpapi.RouterOptions{
+		Metrics:        metrics,
+		ReadyCheck:     readiness.Check,
+		TracingEnabled: tracing.Enabled(),
+		TracingService: tracing.ServiceName(),
+	})
 	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"))
 
 	server := &http.Server{
@@ -114,7 +127,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, resultQueue, reconciler, contestService, cfg.Redis.BatchSize, cfg.Redis.Block)
+		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, contestService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block)
 	}()
 
 	err = <-errCh
@@ -138,13 +151,13 @@ type scoreSnapshotGenerator interface {
 	GenerateDueScoreSnapshots(context.Context, int32) (contest.ScoreSnapshotGenerationResult, error)
 }
 
-func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, resultQueue queue.TaskQueue, reconciler workerReconciler, snapshots scoreSnapshotGenerator, batchSize int, block time.Duration) error {
+func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration) error {
 	errCh := make(chan error, 3)
 	go func() {
-		errCh <- runDispatchLoop(ctx, worker, batchSize, dispatchInterval(block))
+		errCh <- runDispatchLoop(ctx, worker, requestQueue, batchSize, dispatchInterval(block), metrics)
 	}()
 	go func() {
-		errCh <- runResultConsumerLoop(ctx, resultConsumer, resultQueue, batchSize, block)
+		errCh <- runResultConsumerLoop(ctx, resultConsumer, resultQueue, batchSize, block, metrics)
 	}()
 	go func() {
 		errCh <- runReconcilerLoop(ctx, reconciler, snapshots)
@@ -156,7 +169,12 @@ func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsum
 	return err
 }
 
-func runDispatchLoop(ctx context.Context, worker *submission.Worker, batchSize int, interval time.Duration) error {
+type workerLoopMetrics interface {
+	ObserveQueueStats(queueName string, depth, pending int64, oldestPendingAge time.Duration)
+	RecordResultConsumerProcess(queueName, result string, duration time.Duration)
+}
+
+func runDispatchLoop(ctx context.Context, worker *submission.Worker, requestQueue queue.TaskQueue, batchSize int, interval time.Duration, metrics workerLoopMetrics) error {
 	if batchSize <= 0 {
 		batchSize = 16
 	}
@@ -169,9 +187,16 @@ func runDispatchLoop(ctx context.Context, worker *submission.Worker, batchSize i
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if _, err := worker.DispatchPending(ctx, int32(batchSize)); err != nil {
+		recordQueueStats(ctx, metrics, "request", requestQueue)
+		loopCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.dispatch", trace.WithAttributes(attribute.Int("soj.worker.batch_size", batchSize)))
+		dispatched, err := worker.DispatchPending(loopCtx, int32(batchSize))
+		span.SetAttributes(attribute.Int("soj.worker.dispatched", int(dispatched)))
+		if err != nil {
+			span.SetStatus(codes.Error, "dispatch_error")
+			span.End()
 			return err
 		}
+		span.End()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -180,7 +205,7 @@ func runDispatchLoop(ctx context.Context, worker *submission.Worker, batchSize i
 	}
 }
 
-func runResultConsumerLoop(ctx context.Context, consumer *submission.ResultConsumer, resultQueue queue.TaskQueue, batchSize int, block time.Duration) error {
+func runResultConsumerLoop(ctx context.Context, consumer *submission.ResultConsumer, resultQueue queue.TaskQueue, batchSize int, block time.Duration, metrics workerLoopMetrics) error {
 	if batchSize <= 0 {
 		batchSize = 16
 	}
@@ -188,16 +213,51 @@ func runResultConsumerLoop(ctx context.Context, consumer *submission.ResultConsu
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		messages, err := resultQueue.Consume(ctx, batchSize, block)
+		recordQueueStats(ctx, metrics, "result", resultQueue)
+		consumeCtx, consumeSpan := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.result.consume", trace.WithAttributes(attribute.Int("soj.worker.batch_size", batchSize)))
+		messages, err := resultQueue.Consume(consumeCtx, batchSize, block)
+		consumeSpan.SetAttributes(attribute.Int("soj.worker.messages", len(messages)))
 		if err != nil {
+			consumeSpan.SetStatus(codes.Error, "consume_error")
+			consumeSpan.End()
 			return err
 		}
+		consumeSpan.End()
 		for _, message := range messages {
-			if err := consumer.ProcessResultMessage(ctx, message, resultQueue); err != nil {
+			started := time.Now()
+			messageCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.result.process")
+			if err := consumer.ProcessResultMessage(messageCtx, message, resultQueue); err != nil {
+				span.SetStatus(codes.Error, "process_error")
+				span.End()
+				recordResultConsumerProcess(metrics, "error", time.Since(started))
 				return err
 			}
+			span.End()
+			recordResultConsumerProcess(metrics, "success", time.Since(started))
 		}
 	}
+}
+
+func recordQueueStats(ctx context.Context, metrics workerLoopMetrics, queueName string, taskQueue queue.TaskQueue) {
+	if metrics == nil {
+		return
+	}
+	statsProvider, ok := taskQueue.(queue.QueueStatsProvider)
+	if !ok {
+		return
+	}
+	stats, err := statsProvider.Stats(ctx)
+	if err != nil {
+		return
+	}
+	metrics.ObserveQueueStats(queueName, stats.Depth, stats.Pending, stats.OldestPendingAge)
+}
+
+func recordResultConsumerProcess(metrics workerLoopMetrics, result string, duration time.Duration) {
+	if metrics == nil {
+		return
+	}
+	metrics.RecordResultConsumerProcess("result", result, duration)
 }
 
 func dispatchInterval(block time.Duration) time.Duration {
@@ -211,20 +271,30 @@ func runReconcilerLoop(ctx context.Context, reconciler workerReconciler, snapsho
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
-		if _, err := reconciler.ClaimStaleTasks(ctx, 5*time.Minute, 16); err != nil {
+		loopCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.reconciler")
+		if _, err := reconciler.ClaimStaleTasks(loopCtx, 5*time.Minute, 16); err != nil {
+			span.SetStatus(codes.Error, "claim_stale_tasks_error")
+			span.End()
 			return err
 		}
-		if _, err := reconciler.ResetStaleTasks(ctx, 30*time.Minute); err != nil {
+		if _, err := reconciler.ResetStaleTasks(loopCtx, 30*time.Minute); err != nil {
+			span.SetStatus(codes.Error, "reset_stale_tasks_error")
+			span.End()
 			return err
 		}
-		if _, err := reconciler.MarkStaleRuns(ctx, 30*time.Minute); err != nil {
+		if _, err := reconciler.MarkStaleRuns(loopCtx, 30*time.Minute); err != nil {
+			span.SetStatus(codes.Error, "mark_stale_runs_error")
+			span.End()
 			return err
 		}
 		if snapshots != nil {
-			if _, err := snapshots.GenerateDueScoreSnapshots(ctx, 16); err != nil {
+			if _, err := snapshots.GenerateDueScoreSnapshots(loopCtx, 16); err != nil {
+				span.SetStatus(codes.Error, "score_snapshot_error")
+				span.End()
 				return err
 			}
 		}
+		span.End()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

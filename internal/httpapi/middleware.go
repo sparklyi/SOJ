@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -56,6 +59,29 @@ func RecordHTTPMetrics(metrics HTTPMetrics) gin.HandlerFunc {
 			route = "unmatched"
 		}
 		metrics.ObserveHTTPRequest(c.Request.Method, route, c.Writer.Status(), time.Since(started))
+	}
+}
+
+func RecordHTTPSpanAttributes() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+
+		span := trace.SpanFromContext(c.Request.Context())
+		if !span.SpanContext().IsValid() {
+			return
+		}
+		route := c.FullPath()
+		if route == "" {
+			route = "unmatched"
+		}
+		span.SetAttributes(
+			attribute.String("soj.request_id", c.GetString(ContextRequestID)),
+			attribute.String("soj.http.route", route),
+			attribute.Int("soj.http.status_code", c.Writer.Status()),
+		)
+		if c.Writer.Status() >= http.StatusInternalServerError {
+			span.SetStatus(codes.Error, "http_5xx")
+		}
 	}
 }
 

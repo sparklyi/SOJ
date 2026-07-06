@@ -22,6 +22,16 @@ type TaskQueue interface {
 	Close() error
 }
 
+type QueueStats struct {
+	Depth            int64
+	Pending          int64
+	OldestPendingAge time.Duration
+}
+
+type QueueStatsProvider interface {
+	Stats(ctx context.Context) (QueueStats, error)
+}
+
 type ReadinessChecker interface {
 	Ready(ctx context.Context) error
 }

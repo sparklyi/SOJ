@@ -276,7 +276,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=7d"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./:/etc/prometheus:ro
     depends_on:
       api:
         condition: service_healthy

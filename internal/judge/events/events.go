@@ -35,11 +35,21 @@ type TestcaseRef struct {
 	Score             int32  `json:"score,omitempty"`
 }
 
+type TraceContext struct {
+	Traceparent string `json:"traceparent,omitempty"`
+	Tracestate  string `json:"tracestate,omitempty"`
+}
+
+func (c TraceContext) Empty() bool {
+	return c.Traceparent == "" && c.Tracestate == ""
+}
+
 type RequestEvent struct {
 	ProtocolVersion string         `json:"protocol_version"`
 	EventID         string         `json:"event_id"`
 	AttemptID       string         `json:"attempt_id"`
 	TraceID         string         `json:"trace_id"`
+	TraceContext    TraceContext   `json:"trace_context,omitempty,omitzero"`
 	SubmissionID    int64          `json:"submission_id,omitempty"`
 	RunID           int64          `json:"run_id,omitempty"`
 	LanguageID      int64          `json:"language_id"`
@@ -91,13 +101,14 @@ func (e RequestEvent) Validate() error {
 }
 
 type ProgressEvent struct {
-	ProtocolVersion string    `json:"protocol_version"`
-	EventID         string    `json:"event_id"`
-	RequestEventID  string    `json:"request_event_id"`
-	AttemptID       string    `json:"attempt_id"`
-	TraceID         string    `json:"trace_id"`
-	Phase           string    `json:"phase"`
-	CreatedAt       time.Time `json:"created_at"`
+	ProtocolVersion string       `json:"protocol_version"`
+	EventID         string       `json:"event_id"`
+	RequestEventID  string       `json:"request_event_id"`
+	AttemptID       string       `json:"attempt_id"`
+	TraceID         string       `json:"trace_id"`
+	TraceContext    TraceContext `json:"trace_context,omitempty,omitzero"`
+	Phase           string       `json:"phase"`
+	CreatedAt       time.Time    `json:"created_at"`
 }
 
 func (e ProgressEvent) Validate() error {
@@ -113,6 +124,7 @@ type ResultEvent struct {
 	RequestEventID  string        `json:"request_event_id"`
 	AttemptID       string        `json:"attempt_id"`
 	TraceID         string        `json:"trace_id"`
+	TraceContext    TraceContext  `json:"trace_context,omitempty,omitzero"`
 	Status          judge.Verdict `json:"status"`
 	Result          judge.Result  `json:"result"`
 	ErrorClass      string        `json:"error_class,omitempty"`
@@ -136,15 +148,16 @@ func (e ResultEvent) Validate() error {
 }
 
 type DeadLetterEvent struct {
-	ProtocolVersion string    `json:"protocol_version"`
-	EventID         string    `json:"event_id"`
-	RequestEventID  string    `json:"request_event_id"`
-	AttemptID       string    `json:"attempt_id"`
-	TraceID         string    `json:"trace_id"`
-	ErrorClass      string    `json:"error_class"`
-	SafeMessage     string    `json:"safe_message"`
-	InternalMessage string    `json:"internal_message,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ProtocolVersion string       `json:"protocol_version"`
+	EventID         string       `json:"event_id"`
+	RequestEventID  string       `json:"request_event_id"`
+	AttemptID       string       `json:"attempt_id"`
+	TraceID         string       `json:"trace_id"`
+	TraceContext    TraceContext `json:"trace_context,omitempty,omitzero"`
+	ErrorClass      string       `json:"error_class"`
+	SafeMessage     string       `json:"safe_message"`
+	InternalMessage string       `json:"internal_message,omitempty"`
+	CreatedAt       time.Time    `json:"created_at"`
 }
 
 func (e DeadLetterEvent) Validate() error {

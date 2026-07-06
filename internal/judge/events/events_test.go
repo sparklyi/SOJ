@@ -1,12 +1,74 @@
 package events
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"SOJ/internal/judge"
 )
+
+func TestTraceContextSerializesSeparatelyFromTraceID(t *testing.T) {
+	event := RequestEvent{
+		EventID:        "evt-request-1",
+		AttemptID:      "attempt-1",
+		TraceID:        "operator-trace",
+		TraceContext:   TraceContext{Traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", Tracestate: "vendor=value"},
+		SubmissionID:   7,
+		LanguageID:     71,
+		SourceArtifact: ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:abc"},
+		TestcaseSet:    TestcaseSetRef{ID: 3, Hash: "cases-hash"},
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	if err := event.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		t.Fatalf("Unmarshal raw event: %v", err)
+	}
+	if raw["trace_id"] != "operator-trace" {
+		t.Fatalf("trace_id = %v, want operator trace", raw["trace_id"])
+	}
+	carrier, ok := raw["trace_context"].(map[string]any)
+	if !ok {
+		t.Fatalf("trace_context = %#v, want object", raw["trace_context"])
+	}
+	if carrier["traceparent"] != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" || carrier["tracestate"] != "vendor=value" {
+		t.Fatalf("trace_context = %#v", carrier)
+	}
+	if strings.Contains(raw["trace_id"].(string), "traceparent") || strings.Contains(raw["trace_id"].(string), "00-") {
+		t.Fatalf("trace_id contains serialized trace context: %q", raw["trace_id"])
+	}
+}
+
+func TestRequestEventValidateAllowsAbsentOrMalformedTraceContext(t *testing.T) {
+	event := RequestEvent{
+		EventID:        "evt-request-1",
+		AttemptID:      "attempt-1",
+		TraceID:        "trace-1",
+		TraceContext:   TraceContext{Traceparent: "not-a-w3c-traceparent"},
+		SubmissionID:   7,
+		LanguageID:     71,
+		SourceArtifact: ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:abc"},
+		TestcaseSet:    TestcaseSetRef{ID: 3, Hash: "cases-hash"},
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	if err := event.Validate(); err != nil {
+		t.Fatalf("Validate returned error for malformed optional trace context: %v", err)
+	}
+
+	event.TraceContext = TraceContext{}
+	if err := event.Validate(); err != nil {
+		t.Fatalf("Validate returned error for absent trace context: %v", err)
+	}
+}
 
 func TestRequestEventValidateRequiresProductionIdentityAndArtifactRef(t *testing.T) {
 	event := RequestEvent{
@@ -133,4 +195,3 @@ func TestNormalizeResultRewritesAggregateAndCaseVerdicts(t *testing.T) {
 		t.Fatalf("case verdicts = %+v", got.Cases)
 	}
 }
-

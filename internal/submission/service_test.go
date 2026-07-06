@@ -7,12 +7,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
 	"SOJ/internal/auth"
 	"SOJ/internal/httpapi"
 	"SOJ/internal/judge"
+	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/problem"
 	"SOJ/internal/queue"
 
@@ -636,6 +638,66 @@ func TestHandlerSubmissionDetailIncludesAdminDiagnosticsForAdmin(t *testing.T) {
 	}
 	if envelope.Data.AdminDiagnostics.TraceID == nil || *envelope.Data.AdminDiagnostics.TraceID != "trace-admin" {
 		t.Fatalf("admin diagnostics trace = %+v", envelope.Data.AdminDiagnostics)
+	}
+}
+
+func TestHandlerSubmissionDetailIncludesAsyncOTelTraceIDForAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newMemoryRepo()
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
+	attempt, err := repo.EnsureJudgeAttempt(context.Background(), EnsureJudgeAttemptInput{
+		SubmissionID:    1,
+		TaskID:          7,
+		LanguageID:      71,
+		ProtocolVersion: judgeevents.RequestEventType,
+		JudgeEngine:     judge.EngineSOJAgent,
+		TraceID:         "trace-submission-1-task-7",
+	})
+	if err != nil {
+		t.Fatalf("EnsureJudgeAttempt returned error: %v", err)
+	}
+	otelTraceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	payload, err := json.Marshal(judgeevents.ResultEvent{
+		EventID:        "evt-result-1",
+		RequestEventID: "evt-request-1",
+		AttemptID:      strconv.FormatInt(attempt.ID, 10),
+		TraceID:        otelTraceID,
+		Status:         judge.VerdictAccepted,
+		Result:         judge.Result{Verdict: judge.VerdictAccepted, JudgedAt: time.Unix(101, 0).UTC()},
+		JudgedAt:       time.Unix(101, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("marshal result event: %v", err)
+	}
+	consumer := NewResultConsumer(ResultConsumerOptions{Repository: repo})
+	if err := consumer.ProcessResultMessage(context.Background(), queue.Message{ID: "2-0", TaskID: 7, Payload: payload}, &memoryQueue{}); err != nil {
+		t.Fatalf("ProcessResultMessage returned error: %v", err)
+	}
+
+	handler := NewHandler(NewService(ServiceOptions{Repository: repo}))
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/1", nil)
+	req.Header.Set("X-User-ID", "99")
+	req.Header.Set("X-User-Role", "admin")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			AdminDiagnostics *struct {
+				TraceID *string `json:"trace_id"`
+			} `json:"admin_diagnostics"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Data.AdminDiagnostics == nil || envelope.Data.AdminDiagnostics.TraceID == nil || *envelope.Data.AdminDiagnostics.TraceID != otelTraceID {
+		t.Fatalf("admin diagnostics trace = %+v, want %s", envelope.Data.AdminDiagnostics, otelTraceID)
 	}
 }
 

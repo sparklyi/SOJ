@@ -2,6 +2,7 @@ package queue
 
 import (
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -37,5 +38,36 @@ func TestRedisStreamReadinessFindsConsumerGroup(t *testing.T) {
 	}
 	if redisStreamHasGroup(groups, "missing") {
 		t.Fatalf("redisStreamHasGroup returned true for missing group")
+	}
+}
+
+func TestRedisStreamQueueImplementsStatsProvider(t *testing.T) {
+	var _ QueueStatsProvider = (*RedisStreamQueue)(nil)
+}
+
+func TestRedisStreamStatsFromKnownRedisShape(t *testing.T) {
+	now := time.UnixMilli(1_700_000_010_000)
+	stats, err := redisQueueStatsFromRedis(
+		&redis.XInfoStream{Length: 7},
+		nil,
+		&redis.XPending{Count: 3, Lower: "1700000000000-0"},
+		nil,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("redisQueueStatsFromRedis returned error: %v", err)
+	}
+	if stats.Depth != 7 || stats.Pending != 3 || stats.OldestPendingAge != 10*time.Second {
+		t.Fatalf("stats = %+v", stats)
+	}
+}
+
+func TestRedisStreamStatsTreatMissingStreamOrGroupAsZero(t *testing.T) {
+	stats, err := redisQueueStatsFromRedis(nil, redis.Nil, nil, redis.Nil, time.Now())
+	if err != nil {
+		t.Fatalf("redisQueueStatsFromRedis returned error: %v", err)
+	}
+	if stats.Depth != 0 || stats.Pending != 0 || stats.OldestPendingAge != 0 {
+		t.Fatalf("stats = %+v, want zero values", stats)
 	}
 }
