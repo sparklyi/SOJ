@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"SOJ/internal/config"
+	"SOJ/internal/contest"
 	"SOJ/internal/httpapi"
 	"SOJ/internal/observability"
 	"SOJ/internal/postgres"
@@ -94,6 +95,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	})
 	resultConsumer := submission.NewResultConsumer(submission.ResultConsumerOptions{Repository: submissionRepo})
 	reconciler := submission.NewReconciler(submissionRepo, worker, nil, metrics)
+	contestService := contest.NewService(contest.NewPostgresRepository(pool))
 
 	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)
 	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics, ReadyCheck: readiness.Check})
@@ -112,7 +114,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, resultQueue, reconciler, cfg.Redis.BatchSize, cfg.Redis.Block)
+		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, resultQueue, reconciler, contestService, cfg.Redis.BatchSize, cfg.Redis.Block)
 	}()
 
 	err = <-errCh
@@ -126,7 +128,17 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	return err
 }
 
-func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, resultQueue queue.TaskQueue, reconciler *submission.Reconciler, batchSize int, block time.Duration) error {
+type workerReconciler interface {
+	ClaimStaleTasks(context.Context, time.Duration, int) (int, error)
+	ResetStaleTasks(context.Context, time.Duration) (int, error)
+	MarkStaleRuns(context.Context, time.Duration) (int, error)
+}
+
+type scoreSnapshotGenerator interface {
+	GenerateDueScoreSnapshots(context.Context, int32) (contest.ScoreSnapshotGenerationResult, error)
+}
+
+func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, resultQueue queue.TaskQueue, reconciler workerReconciler, snapshots scoreSnapshotGenerator, batchSize int, block time.Duration) error {
 	errCh := make(chan error, 3)
 	go func() {
 		errCh <- runDispatchLoop(ctx, worker, batchSize, dispatchInterval(block))
@@ -135,7 +147,7 @@ func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsum
 		errCh <- runResultConsumerLoop(ctx, resultConsumer, resultQueue, batchSize, block)
 	}()
 	go func() {
-		errCh <- runReconcilerLoop(ctx, reconciler)
+		errCh <- runReconcilerLoop(ctx, reconciler, snapshots)
 	}()
 	err := <-errCh
 	if err == context.Canceled || err == context.DeadlineExceeded {
@@ -195,7 +207,7 @@ func dispatchInterval(block time.Duration) time.Duration {
 	return time.Second
 }
 
-func runReconcilerLoop(ctx context.Context, reconciler *submission.Reconciler) error {
+func runReconcilerLoop(ctx context.Context, reconciler workerReconciler, snapshots scoreSnapshotGenerator) error {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -207,6 +219,11 @@ func runReconcilerLoop(ctx context.Context, reconciler *submission.Reconciler) e
 		}
 		if _, err := reconciler.MarkStaleRuns(ctx, 30*time.Minute); err != nil {
 			return err
+		}
+		if snapshots != nil {
+			if _, err := snapshots.GenerateDueScoreSnapshots(ctx, 16); err != nil {
+				return err
+			}
 		}
 		select {
 		case <-ctx.Done():

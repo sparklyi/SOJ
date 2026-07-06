@@ -102,6 +102,16 @@ type ScoreboardSnapshot struct {
 	GeneratedAt time.Time
 }
 
+type ScoreSnapshotCandidate struct {
+	Contest ContestRecord
+	View    ScoreboardView
+}
+
+type ScoreSnapshotGenerationResult struct {
+	Frozen int
+	Final  int
+}
+
 type ContestInput struct {
 	Title       string                `json:"title"`
 	Description *string               `json:"description"`
