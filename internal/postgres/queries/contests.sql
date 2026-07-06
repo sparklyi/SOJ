@@ -186,6 +186,72 @@ WHERE contest_id = $1::bigint
   AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
 ORDER BY judged_at, id;
 
+-- name: ListContestScoreSnapshotCandidates :many
+SELECT id,
+       owner_user_id,
+       title,
+       description,
+       visibility,
+       status,
+       start_at,
+       end_at,
+       freeze_at,
+       invite_code_hash,
+       created_at,
+       updated_at,
+       snapshot_kind
+FROM (
+    SELECT c.id,
+           c.owner_user_id,
+           c.title,
+           c.description,
+           c.visibility,
+           c.status,
+           c.start_at,
+           c.end_at,
+           c.freeze_at,
+           c.invite_code_hash,
+           c.created_at,
+           c.updated_at,
+           'frozen'::text AS snapshot_kind,
+           c.freeze_at AS due_at
+    FROM contests c
+    WHERE c.status IN ('published', 'running', 'ended')
+      AND c.freeze_at <= $1
+      AND NOT EXISTS (
+          SELECT 1
+          FROM contest_score_snapshots css
+          WHERE css.contest_id = c.id
+            AND css.kind = 'frozen'
+      )
+    UNION ALL
+    SELECT c.id,
+           c.owner_user_id,
+           c.title,
+           c.description,
+           c.visibility,
+           c.status,
+           c.start_at,
+           c.end_at,
+           c.freeze_at,
+           c.invite_code_hash,
+           c.created_at,
+           c.updated_at,
+           'final'::text AS snapshot_kind,
+           c.end_at AS due_at
+    FROM contests c
+    WHERE c.status IN ('published', 'running', 'ended')
+      AND c.end_at <= $1
+      AND NOT EXISTS (
+          SELECT 1
+          FROM contest_score_snapshots css
+          WHERE css.contest_id = c.id
+            AND css.kind = 'final'
+      )
+) due
+ORDER BY due_at, id, snapshot_kind
+LIMIT $2;
+
 -- name: CreateContestScoreSnapshot :one
 INSERT INTO contest_score_snapshots (
     contest_id,
