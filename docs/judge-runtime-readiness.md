@@ -87,11 +87,7 @@ go test ./...
 go vet ./...
 docker compose -f deploy/docker-compose.yaml config
 RUNNER_IMAGES_PREPARE=pull make smoke-real-docker
-SOJ_DOCKER_RUNNER_RUNTIME=runsc RUNNER_IMAGES_PREPARE=skip make smoke-runner-capacity
-RUNNER_IMAGES_PREPARE=skip SOJ_CAPACITY_SKIP_BUILD=1 make smoke-runner-capacity
 ```
-
-Results are recorded in [runner-capacity-report-2026-07-06.md](runner-capacity-report-2026-07-06.md).
 
 ## Troubleshooting
 
@@ -99,4 +95,3 @@ Results are recorded in [runner-capacity-report-2026-07-06.md](runner-capacity-r
 - `/readyz` fails for judge-agent: check Redis streams, object storage credentials, sandbox backend probe, runner images, and Docker/runtime registration.
 - Queue grows but no results arrive: check judge-agent readiness, `soj_judge_agent_slots_used`, Redis request/result streams, and sandbox backend errors.
 - Dead tasks accumulate: inspect `judge_tasks.last_error`, Redis `soj:judge:tasks:dead`, and `soj_worker_reconciliation_total`; recover individual tasks only after fixing the underlying dependency.
-- Capacity does not scale with more slots: compare `container_startup_p95_ms`, attempt latency, agent memory peak, queue oldest pending age, and sandbox error deltas.

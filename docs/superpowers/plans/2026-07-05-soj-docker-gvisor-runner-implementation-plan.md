@@ -80,14 +80,12 @@
 
 目标：
 
-- 增加 slots benchmark/smoke。
-- 输出 submissions/minute、P95/P99 attempt latency、container startup overhead、memory curve、queue oldest pending age。
+- 增加 Docker/gVisor smoke 和运行时观测。
+- 输出 P95/P99 attempt latency、container startup overhead、memory curve、queue oldest pending age。
 - 强化 Prometheus 指标：slot usage、Docker phase duration、backend errors、cleanup failures。
 
 验收：
 
-- 跑 `1/2/4/8/16` slot benchmark。
-- 记录是否达到数百提交/分钟级别；未达到时给出瓶颈和下一步优化。
 - CI 保留轻量验证，本地或手动 workflow 跑完整 Docker/gVisor 验证。
 
 ## Commit Strategy
@@ -97,4 +95,3 @@
 - Phase 2: `feat(judgecore): add docker runner backend`
 - Phase 3: `feat(deploy): add runner images and local gvisor tooling`
 - Phase 4: `docs(deploy): document docker gvisor production path`
-- Phase 5: `test(judge): add runner capacity smoke`

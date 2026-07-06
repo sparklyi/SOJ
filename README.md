@@ -122,14 +122,7 @@ To validate the same path through gVisor/runsc after installing runsc:
 make smoke-real-gvisor
 ```
 
-To run the local runner capacity smoke across `1/2/4/8/16` judge-agent slots:
-
-```bash
-make smoke-runner-capacity
-SOJ_DOCKER_RUNNER_RUNTIME=runsc make smoke-runner-capacity
-```
-
-Judge runtime readiness, recovery operations, and the latest local validation evidence are documented in [docs/judge-runtime-readiness.md](docs/judge-runtime-readiness.md). The current runner capacity report is [docs/runner-capacity-report-2026-07-06.md](docs/runner-capacity-report-2026-07-06.md).
+Judge runtime readiness, recovery operations, and local validation evidence are documented in [docs/judge-runtime-readiness.md](docs/judge-runtime-readiness.md).
 
 The Docker runner path uses [deploy/docker-compose.docker-runner.yaml](deploy/docker-compose.docker-runner.yaml). Only `soj-judge-agent` receives the Docker socket; runner containers do not receive business service credentials or the Docker socket.
 
@@ -282,8 +275,6 @@ Before exposing SOJ outside local development:
 
 Known follow-up work:
 
-- Automated frozen/final scoreboard snapshot generation in the worker.
-- Runner pool or warmed execution optimization based on Docker/gVisor capacity data.
 - Broader readiness probes for worker dependencies.
 - OpenTelemetry tracing with OTLP export disabled by default.
 
