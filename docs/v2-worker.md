@@ -49,4 +49,4 @@ The worker exposes Prometheus metrics on its health server at `GET /metrics`.
 
 ## Scoreboard Snapshots
 
-Contest scoreboards read the latest frozen/final snapshot when one exists and fall back to synchronous aggregation when missing. Automated frozen/final snapshot generation is intentionally left as a follow-up worker responsibility.
+Contest scoreboards read the latest frozen/final snapshot when one exists and fall back to synchronous aggregation when missing. The worker reconciliation loop generates missing frozen snapshots after `freeze_at` and missing final snapshots after `end_at`.

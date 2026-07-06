@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"SOJ/internal/contest"
 	"SOJ/internal/queue"
 	"SOJ/internal/storage"
 )
@@ -53,6 +54,59 @@ func TestRunWorkerRecoverDeadTaskRequiresTaskID(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "task-id is required") {
 		t.Fatalf("RunWorker error = %v, want task-id requirement", err)
 	}
+}
+
+func TestRunReconcilerLoopGeneratesDueScoreSnapshots(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reconciler := &recordingWorkerReconciler{}
+	snapshots := &recordingScoreSnapshotGenerator{afterCall: cancel}
+
+	err := runReconcilerLoop(ctx, reconciler, snapshots)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runReconcilerLoop error = %v, want context canceled", err)
+	}
+	if !reconciler.claimed || !reconciler.reset || !reconciler.markedRuns {
+		t.Fatalf("reconciler calls = %+v, want all reconciliation actions", reconciler)
+	}
+	if snapshots.calls != 1 || snapshots.limit != 16 {
+		t.Fatalf("snapshot generator calls=%d limit=%d, want one call with limit 16", snapshots.calls, snapshots.limit)
+	}
+}
+
+type recordingWorkerReconciler struct {
+	claimed    bool
+	reset      bool
+	markedRuns bool
+}
+
+func (r *recordingWorkerReconciler) ClaimStaleTasks(context.Context, time.Duration, int) (int, error) {
+	r.claimed = true
+	return 0, nil
+}
+
+func (r *recordingWorkerReconciler) ResetStaleTasks(context.Context, time.Duration) (int, error) {
+	r.reset = true
+	return 0, nil
+}
+
+func (r *recordingWorkerReconciler) MarkStaleRuns(context.Context, time.Duration) (int, error) {
+	r.markedRuns = true
+	return 0, nil
+}
+
+type recordingScoreSnapshotGenerator struct {
+	calls     int
+	limit     int32
+	afterCall func()
+}
+
+func (g *recordingScoreSnapshotGenerator) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (contest.ScoreSnapshotGenerationResult, error) {
+	g.calls++
+	g.limit = limit
+	if g.afterCall != nil {
+		g.afterCall()
+	}
+	return contest.ScoreSnapshotGenerationResult{}, nil
 }
 
 type readyQueue struct {
