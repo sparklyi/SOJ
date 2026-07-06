@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"strings"
@@ -131,6 +132,17 @@ func (s *S3Storage) Get(ctx context.Context, key string) (io.ReadCloser, ObjectI
 
 func (s *S3Storage) Delete(ctx context.Context, key string) error {
 	return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
+}
+
+func (s *S3Storage) Ready(ctx context.Context) error {
+	exists, err := s.client.BucketExists(ctx, s.bucket)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("s3 bucket %s does not exist", s.bucket)
+	}
+	return err
 }
 
 func (s *S3Storage) Stat(ctx context.Context, key string) (ObjectInfo, error) {

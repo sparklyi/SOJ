@@ -237,6 +237,38 @@ func TestResultConsumerIsIdempotentAndAcksAfterPersist(t *testing.T) {
 	}
 }
 
+func TestRecoverDeadJudgeTaskResetsRetryBudgetAndQueuesSubmission(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	repo.tasks[7] = JudgeTaskRecord{
+		ID:           7,
+		SubmissionID: 9,
+		Status:       "dead",
+		Attempts:     5,
+		LastError:    "runner image missing",
+	}
+	repo.submissions[9] = SubmissionRecord{ID: 9, Status: StatusSystemErr, ErrorMessage: stringPtr("runner image missing")}
+	nextRunAt := time.Unix(200, 0).UTC()
+
+	task, err := repo.RecoverDeadJudgeTask(ctx, 7, nextRunAt, "manual recovery after runner fix")
+	if err != nil {
+		t.Fatalf("RecoverDeadJudgeTask returned error: %v", err)
+	}
+	if task.Status != "pending" || task.Attempts != 0 || !task.NextRunAt.Equal(nextRunAt) {
+		t.Fatalf("task after recovery = %+v", task)
+	}
+	if task.LastError != "manual recovery after runner fix" {
+		t.Fatalf("last error = %q", task.LastError)
+	}
+	submission := repo.submissions[9]
+	if submission.Status != StatusQueued {
+		t.Fatalf("submission status = %q, want queued", submission.Status)
+	}
+	if submission.ErrorMessage == nil || *submission.ErrorMessage != "manual recovery after runner fix" {
+		t.Fatalf("submission error = %v", submission.ErrorMessage)
+	}
+}
+
 type recordingResultPublisher struct {
 	eventsPayloads [][]byte
 	events         *[]string

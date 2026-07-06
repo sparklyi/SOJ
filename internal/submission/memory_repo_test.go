@@ -389,6 +389,26 @@ func (r *memoryRepo) MarkJudgeTaskDead(ctx context.Context, id int64, reason str
 	r.events = append(r.events, "db_dead")
 	return row, nil
 }
+func (r *memoryRepo) RecoverDeadJudgeTask(ctx context.Context, id int64, nextRunAt time.Time, reason string) (JudgeTaskRecord, error) {
+	row := r.tasks[id]
+	if row.Status != "dead" {
+		return JudgeTaskRecord{}, fmt.Errorf("judge task %d is not dead", id)
+	}
+	submission := r.submissions[row.SubmissionID]
+	if submission.Status != StatusSystemErr {
+		return JudgeTaskRecord{}, fmt.Errorf("submission %d is not system_error", row.SubmissionID)
+	}
+	row.Status = "pending"
+	row.Attempts = 0
+	row.NextRunAt = nextRunAt
+	row.LastError = reason
+	r.tasks[id] = row
+	submission.Status = StatusQueued
+	submission.ErrorMessage = stringPtr(reason)
+	submission.JudgedAt = nil
+	r.submissions[row.SubmissionID] = submission
+	return row, nil
+}
 func (r *memoryRepo) CreateRun(ctx context.Context, arg RunRecord) (RunRecord, error) {
 	arg.ID = r.id()
 	r.runs[arg.ID] = arg

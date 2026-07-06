@@ -307,7 +307,8 @@ func TestReconcilerResetsStaleJudgeTasks(t *testing.T) {
 	repo.tasks[1] = JudgeTaskRecord{ID: 1, SubmissionID: 11, Status: "dispatching"}
 	repo.tasks[2] = JudgeTaskRecord{ID: 2, SubmissionID: 12, Status: "running"}
 	repo.submissions[12] = SubmissionRecord{ID: 12, Status: StatusRunning}
-	reconciler := NewReconciler(repo, &Worker{queue: &memoryQueue{}}, func() time.Time { return now })
+	metrics := &recordingReconcilerMetrics{}
+	reconciler := NewReconciler(repo, &Worker{queue: &memoryQueue{}}, func() time.Time { return now }, metrics)
 
 	count, err := reconciler.ResetStaleTasks(context.Background(), time.Minute)
 	if err != nil {
@@ -315,6 +316,9 @@ func TestReconcilerResetsStaleJudgeTasks(t *testing.T) {
 	}
 	if count != 2 || repo.tasks[1].Status != "pending" || repo.tasks[2].Status != "pending" || repo.submissions[12].Status != StatusQueued {
 		t.Fatalf("count=%d task1=%+v task2=%+v submission=%+v", count, repo.tasks[1], repo.tasks[2], repo.submissions[12])
+	}
+	if !metrics.saw("reset_stale_tasks", "success", 2) {
+		t.Fatalf("reconciler metrics = %+v", metrics.records)
 	}
 }
 
@@ -827,4 +831,27 @@ func (m *recordingWorkerMetrics) RecordJudgeTaskDispatch(result string) {
 
 func (m *recordingWorkerMetrics) RecordJudgeTaskProcess(result string, duration time.Duration) {
 	m.processed = append(m.processed, recordedWorkerProcess{result: result, duration: duration})
+}
+
+type recordedReconcilerAction struct {
+	action string
+	result string
+	count  int
+}
+
+type recordingReconcilerMetrics struct {
+	records []recordedReconcilerAction
+}
+
+func (m *recordingReconcilerMetrics) RecordReconcilerAction(action, result string, count int) {
+	m.records = append(m.records, recordedReconcilerAction{action: action, result: result, count: count})
+}
+
+func (m *recordingReconcilerMetrics) saw(action, result string, count int) bool {
+	for _, record := range m.records {
+		if record.action == action && record.result == result && record.count == count {
+			return true
+		}
+	}
+	return false
 }

@@ -61,8 +61,12 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		Stream:   envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
 		Group:    envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
 		Consumer: judgeAgentConsumerName(),
+		StartID:  "0",
 	})
 	if err := requestQueue.Ensure(ctx); err != nil {
+		return err
+	}
+	if err := resultQueue.Ensure(ctx); err != nil {
 		return err
 	}
 
@@ -80,14 +84,13 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	slotLimiter := newJudgeAgentSlotLimiter(parallelism, languageSlots)
 
-	agent, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, metrics, queueResultPublisher{queue: resultQueue})
+	agent, sandboxReady, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, metrics, queueResultPublisher{queue: resultQueue})
 	if err != nil {
 		return err
 	}
 
-	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics, ReadyCheck: func(ctx context.Context) error {
-		return redisClient.Ping(ctx).Err()
-	}})
+	readiness := newJudgeAgentReadiness(requestQueue, resultQueue, objectStore, sandboxReady, metrics)
+	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics, ReadyCheck: readiness.Check})
 	server := &http.Server{
 		Addr:         *healthAddr,
 		Handler:      router,
@@ -216,31 +219,38 @@ func judgeAgentMessageLanguageKey(message queue.Message) string {
 	return ""
 }
 
-func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, observer sandbox.SandboxObserver, publisher submission.ResultPublisher) (judgeRequestProcessor, error) {
+func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, observer sandbox.SandboxObserver, publisher submission.ResultPublisher) (judgeRequestProcessor, observability.CheckFunc, error) {
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	if backend == sandbox.BackendFake {
 		return submission.NewFakeAsyncAgent(submission.FakeAsyncAgentOptions{
 			Judge:           newJudgeEngine(cfg.Judge),
 			SourceStore:     sourceStore,
 			ResultPublisher: publisher,
-		}), nil
+		}), nil, nil
 	}
-	sandboxBackend, err := newJudgeAgentSandbox(backend, observer)
+	runtimeSandbox, err := newJudgeAgentSandbox(backend, observer)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	capabilities, err := sandboxBackend.Probe(ctx)
+	capabilities, err := runtimeSandbox.Probe(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := sandbox.ValidateProductionCapabilities(cfg.Env, capabilities); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	sandboxReady := func(ctx context.Context) error {
+		capabilities, err := runtimeSandbox.Probe(ctx)
+		if err != nil {
+			return err
+		}
+		return sandbox.ValidateProductionCapabilities(cfg.Env, capabilities)
 	}
 	return submission.NewCoreAsyncAgent(submission.CoreAsyncAgentOptions{
-		Core:            judgecore.New(judgecore.Options{Sandbox: sandboxBackend}),
+		Core:            judgecore.New(judgecore.Options{Sandbox: runtimeSandbox}),
 		SourceStore:     sourceStore,
 		ResultPublisher: publisher,
-	}), nil
+	}), sandboxReady, nil
 }
 
 func newJudgeAgentSandbox(backend string, observer sandbox.SandboxObserver) (sandbox.Sandbox, error) {
