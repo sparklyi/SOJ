@@ -29,3 +29,13 @@ func TestRedisMessageMappingPreservesPayloadAndAttempts(t *testing.T) {
 		t.Fatalf("message = %+v", msg)
 	}
 }
+
+func TestRedisStreamReadinessFindsConsumerGroup(t *testing.T) {
+	groups := []redis.XInfoGroup{{Name: "judge-workers"}, {Name: "other"}}
+	if !redisStreamHasGroup(groups, "judge-workers") {
+		t.Fatalf("redisStreamHasGroup returned false for existing group")
+	}
+	if redisStreamHasGroup(groups, "missing") {
+		t.Fatalf("redisStreamHasGroup returned true for missing group")
+	}
+}

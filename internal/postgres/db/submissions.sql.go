@@ -1604,6 +1604,60 @@ func (q *Queries) MarkJudgeTaskDead(ctx context.Context, arg MarkJudgeTaskDeadPa
 	return i, err
 }
 
+const recoverDeadJudgeTask = `-- name: RecoverDeadJudgeTask :one
+WITH recovered AS (
+    UPDATE judge_tasks
+    SET status = 'pending',
+        attempts = 0,
+        next_run_at = $1,
+        last_error = $2,
+        updated_at = now()
+    WHERE id = $3
+      AND status = 'dead'
+      AND EXISTS (
+          SELECT 1
+          FROM submissions
+          WHERE submissions.id = judge_tasks.submission_id
+            AND submissions.status = 'system_error'
+      )
+    RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+), recovered_submissions AS (
+    UPDATE submissions
+    SET status = 'queued',
+        error_message = $2,
+        judged_at = NULL,
+        updated_at = now()
+    FROM recovered
+    WHERE submissions.id = recovered.submission_id
+    RETURNING submissions.id
+)
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+FROM recovered
+`
+
+type RecoverDeadJudgeTaskParams struct {
+	NextRunAt pgtype.Timestamptz `db:"next_run_at" json:"next_run_at"`
+	LastError pgtype.Text        `db:"last_error" json:"last_error"`
+	ID        int64              `db:"id" json:"id"`
+}
+
+func (q *Queries) RecoverDeadJudgeTask(ctx context.Context, arg RecoverDeadJudgeTaskParams) (JudgeTask, error) {
+	row := q.db.QueryRow(ctx, recoverDeadJudgeTask, arg.NextRunAt, arg.LastError, arg.ID)
+	var i JudgeTask
+	err := row.Scan(
+		&i.ID,
+		&i.SubmissionID,
+		&i.StreamID,
+		&i.Status,
+		&i.Attempts,
+		&i.NextRunAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markJudgeTaskDispatched = `-- name: MarkJudgeTaskDispatched :one
 UPDATE judge_tasks
 SET status = CASE
