@@ -188,6 +188,46 @@ func (r *memoryRepository) UpsertProblemResult(ctx context.Context, result Conte
 	return result, nil
 }
 
+func (r *memoryRepository) ListScoreSnapshotCandidates(ctx context.Context, now time.Time, limit int32) ([]ScoreSnapshotCandidate, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var rows []ScoreSnapshotCandidate
+	for _, contest := range r.contests {
+		if contest.Status != StatusPublished && contest.Status != StatusRunning && contest.Status != StatusEnded {
+			continue
+		}
+		if !now.Before(contest.FreezeAt) && !r.hasSnapshot(contest.ID, ScoreboardViewFrozen) {
+			rows = append(rows, ScoreSnapshotCandidate{Contest: contest, View: ScoreboardViewFrozen})
+		}
+		if int32(len(rows)) >= limit {
+			break
+		}
+		if !now.Before(contest.EndAt) && !r.hasSnapshot(contest.ID, ScoreboardViewFinal) {
+			rows = append(rows, ScoreSnapshotCandidate{Contest: contest, View: ScoreboardViewFinal})
+		}
+		if int32(len(rows)) >= limit {
+			break
+		}
+	}
+	return rows, nil
+}
+
+func (r *memoryRepository) CreateScoreSnapshot(ctx context.Context, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error) {
+	snapshot.ID = r.id()
+	if snapshot.ContestID == 0 {
+		snapshot.ContestID = snapshot.Board.ContestID
+	}
+	if snapshot.View == "" {
+		snapshot.View = snapshot.Board.View
+	}
+	if snapshot.GeneratedAt.IsZero() {
+		snapshot.GeneratedAt = snapshot.Board.GeneratedAt
+	}
+	r.snapshots[snapshot.ContestID] = append(r.snapshots[snapshot.ContestID], snapshot)
+	return snapshot, nil
+}
+
 func (r *memoryRepository) LatestScoreSnapshot(ctx context.Context, contestID int64, view ScoreboardView) (ScoreboardSnapshot, error) {
 	rows := r.snapshots[contestID]
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -196,4 +236,9 @@ func (r *memoryRepository) LatestScoreSnapshot(ctx context.Context, contestID in
 		}
 	}
 	return ScoreboardSnapshot{}, apperror.NotFound("contest.score_snapshot_not_found", "contest score snapshot not found")
+}
+
+func (r *memoryRepository) hasSnapshot(contestID int64, view ScoreboardView) bool {
+	_, err := r.LatestScoreSnapshot(context.Background(), contestID, view)
+	return err == nil
 }

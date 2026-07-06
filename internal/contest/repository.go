@@ -31,6 +31,8 @@ type Repository interface {
 	ListProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error)
 	ListTerminalSubmissions(ctx context.Context, contestID int64) ([]ContestSubmissionResult, error)
 	UpsertProblemResult(ctx context.Context, result ContestProblemResult) (ContestProblemResult, error)
+	ListScoreSnapshotCandidates(ctx context.Context, now time.Time, limit int32) ([]ScoreSnapshotCandidate, error)
+	CreateScoreSnapshot(ctx context.Context, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error)
 	LatestScoreSnapshot(ctx context.Context, contestID int64, view ScoreboardView) (ScoreboardSnapshot, error)
 }
 
@@ -104,6 +106,14 @@ func (r *PostgresRepository) UpsertProblemResult(ctx context.Context, result Con
 	return upsertProblemResult(ctx, r.queries, result)
 }
 
+func (r *PostgresRepository) ListScoreSnapshotCandidates(ctx context.Context, now time.Time, limit int32) ([]ScoreSnapshotCandidate, error) {
+	return listScoreSnapshotCandidates(ctx, r.queries, now, limit)
+}
+
+func (r *PostgresRepository) CreateScoreSnapshot(ctx context.Context, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error) {
+	return createScoreSnapshot(ctx, r.queries, snapshot)
+}
+
 func (r *PostgresRepository) LatestScoreSnapshot(ctx context.Context, contestID int64, view ScoreboardView) (ScoreboardSnapshot, error) {
 	return latestScoreSnapshot(ctx, r.queries, contestID, view)
 }
@@ -169,6 +179,14 @@ func (r *txRepository) ListTerminalSubmissions(ctx context.Context, contestID in
 
 func (r *txRepository) UpsertProblemResult(ctx context.Context, result ContestProblemResult) (ContestProblemResult, error) {
 	return upsertProblemResult(ctx, r.queries, result)
+}
+
+func (r *txRepository) ListScoreSnapshotCandidates(ctx context.Context, now time.Time, limit int32) ([]ScoreSnapshotCandidate, error) {
+	return listScoreSnapshotCandidates(ctx, r.queries, now, limit)
+}
+
+func (r *txRepository) CreateScoreSnapshot(ctx context.Context, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error) {
+	return createScoreSnapshot(ctx, r.queries, snapshot)
 }
 
 func (r *txRepository) LatestScoreSnapshot(ctx context.Context, contestID int64, view ScoreboardView) (ScoreboardSnapshot, error) {
@@ -337,6 +355,47 @@ func upsertProblemResult(ctx context.Context, q *db.Queries, result ContestProbl
 	return resultFromDB(row), mapDBErr(err)
 }
 
+func listScoreSnapshotCandidates(ctx context.Context, q *db.Queries, now time.Time, limit int32) ([]ScoreSnapshotCandidate, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := q.ListContestScoreSnapshotCandidates(ctx, db.ListContestScoreSnapshotCandidatesParams{
+		Now:   timestamptz(now),
+		Limit: limit,
+	})
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	out := make([]ScoreSnapshotCandidate, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ScoreSnapshotCandidate{
+			Contest: contestFromSnapshotCandidateDB(row),
+			View:    ScoreboardView(row.SnapshotKind),
+		})
+	}
+	return out, nil
+}
+
+func createScoreSnapshot(ctx context.Context, q *db.Queries, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error) {
+	payload, err := json.Marshal(snapshot.Board)
+	if err != nil {
+		return ScoreboardSnapshot{}, err
+	}
+	row, err := q.CreateContestScoreSnapshot(ctx, db.CreateContestScoreSnapshotParams{
+		ContestID: snapshot.ContestID,
+		Kind:      string(snapshot.View),
+		Payload:   payload,
+	})
+	if err != nil {
+		return ScoreboardSnapshot{}, mapDBErr(err)
+	}
+	snapshot.ID = row.ID
+	snapshot.ContestID = row.ContestID
+	snapshot.View = ScoreboardView(row.Kind)
+	snapshot.GeneratedAt = row.GeneratedAt.Time
+	return snapshot, nil
+}
+
 func latestScoreSnapshot(ctx context.Context, q *db.Queries, contestID int64, view ScoreboardView) (ScoreboardSnapshot, error) {
 	row, err := q.GetLatestContestScoreSnapshot(ctx, db.GetLatestContestScoreSnapshotParams{ContestID: contestID, Kind: string(view)})
 	if err != nil {
@@ -347,6 +406,23 @@ func latestScoreSnapshot(ctx context.Context, q *db.Queries, contestID int64, vi
 		return ScoreboardSnapshot{}, err
 	}
 	return ScoreboardSnapshot{ID: row.ID, ContestID: row.ContestID, View: ScoreboardView(row.Kind), Board: board, GeneratedAt: row.GeneratedAt.Time}, nil
+}
+
+func contestFromSnapshotCandidateDB(row db.ListContestScoreSnapshotCandidatesRow) ContestRecord {
+	return ContestRecord{
+		ID:             row.ID,
+		OwnerUserID:    row.OwnerUserID,
+		Title:          row.Title,
+		Description:    textFromDB(row.Description),
+		Visibility:     row.Visibility,
+		Status:         row.Status,
+		StartAt:        row.StartAt.Time,
+		EndAt:          row.EndAt.Time,
+		FreezeAt:       row.FreezeAt.Time,
+		InviteCodeHash: row.InviteCodeHash.String,
+		CreatedAt:      row.CreatedAt.Time,
+		UpdatedAt:      row.UpdatedAt.Time,
+	}
 }
 
 func contestFromDB(row db.Contest) ContestRecord {
