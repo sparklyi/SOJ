@@ -46,3 +46,32 @@ jobs:
 
       - name: Build migrate image
         run: docker build -f Dockerfile.v2 --build-arg COMMAND=soj-migrate -t soj-migrate:ci .
+
+  smoke:
+    name: Docker Smoke
+    runs-on: ubuntu-latest
+    needs: backend
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: soj-ci-smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start smoke stack
+        run: |
+          docker compose -f deploy/docker-compose.yaml down -v --remove-orphans
+          docker compose -f deploy/docker-compose.yaml up --build -d
+
+      - name: Run smoke test
+        run: ./deploy/smoke.sh
+
+      - name: Dump smoke logs on failure
+        if: failure()
+        run: |
+          docker compose -f deploy/docker-compose.yaml ps || true
+          docker compose -f deploy/docker-compose.yaml logs --no-color api worker judge-agent migrate seed postgres redis minio prometheus || true
+
+      - name: Stop smoke stack
+        if: always()
+        run: docker compose -f deploy/docker-compose.yaml down -v --remove-orphans || true
