@@ -11,6 +11,9 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 	metrics := NewMetrics("test")
 	metrics.ObserveJudgeAgentSlots("global", "", 1, 2)
 	metrics.ObserveJudgeAgentSlots("language", "go", 1, 1)
+	metrics.ObserveQueueStats("request", 7, 3, 45*time.Second)
+	metrics.RecordResultConsumerProcess("result", "success", 25*time.Millisecond)
+	metrics.RecordResultConsumerProcess("result", "error", 10*time.Millisecond)
 	metrics.ObserveSandboxPhase("docker", "run", "accepted", 120*time.Millisecond)
 	metrics.RecordSandboxBackendError("docker", "probe", "runtime_unavailable")
 	metrics.RecordSandboxCleanupFailure("docker")
@@ -24,6 +27,12 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 	for _, want := range []string{
 		"soj_judge_agent_slots_used",
 		"soj_judge_agent_slots_capacity",
+		`soj_queue_depth{queue="request",service="test"} 7`,
+		`soj_queue_pending_messages{queue="request",service="test"} 3`,
+		`soj_queue_oldest_pending_age_seconds{queue="request",service="test"} 45`,
+		`soj_worker_result_consumer_messages_total{queue="result",result="success",service="test"} 1`,
+		`soj_worker_result_consumer_messages_total{queue="result",result="error",service="test"} 1`,
+		"soj_worker_result_consumer_duration_seconds",
 		"soj_sandbox_phase_duration_seconds",
 		"soj_sandbox_backend_errors_total",
 		"soj_sandbox_cleanup_failures_total",

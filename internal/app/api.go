@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"SOJ/internal/auth"
 	"SOJ/internal/config"
@@ -39,6 +41,11 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 
 	logger := observability.NewLogger(cfg.Log.Level, stdout)
+	tracing, err := setupProcessTracing(ctx, cfg, "soj-api")
+	if err != nil {
+		return err
+	}
+	defer shutdownProcessTracing(ctx, cfg.Worker.ShutdownTimeout, logger, tracing)
 	metrics := observability.NewMetrics("soj-api")
 
 	pool, err := postgres.OpenPool(ctx, postgres.PoolConfig{DSN: cfg.Database.DSN})
@@ -82,9 +89,11 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	middleware := httpapi.DefaultMiddlewareSet()
 	middleware.Auth = actorMiddleware(jwtManager)
 	router := httpapi.NewRouter(httpapi.RouterOptions{
-		Middleware: middleware,
-		ReadyCheck: pool.Ping,
-		Metrics:    metrics,
+		Middleware:     middleware,
+		ReadyCheck:     pool.Ping,
+		Metrics:        metrics,
+		TracingEnabled: tracing.Enabled(),
+		TracingService: tracing.ServiceName(),
 		Modules: []httpapi.Module{
 			user.NewModule(userService),
 			problem.NewModule(problemService),
@@ -128,4 +137,25 @@ func bearerToken(header string) (string, bool) {
 	}
 	token := strings.TrimSpace(header[len(prefix):])
 	return token, token != ""
+}
+
+func setupProcessTracing(ctx context.Context, cfg config.Config, defaultServiceName string) (observability.Tracing, error) {
+	serviceName := strings.TrimSpace(cfg.Tracing.ServiceName)
+	if serviceName == "" {
+		serviceName = defaultServiceName
+	}
+	return observability.SetupTracing(ctx, observability.TracingOptions{
+		Enabled:            cfg.Tracing.Enabled,
+		ServiceName:        serviceName,
+		ResourceAttributes: cfg.Tracing.ResourceAttributes,
+		ExporterEndpoint:   cfg.Tracing.ExporterEndpoint,
+	})
+}
+
+func shutdownProcessTracing(ctx context.Context, timeout time.Duration, logger *slog.Logger, tracing observability.Tracing) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := tracing.Shutdown(shutdownCtx); err != nil && logger != nil {
+		logger.WarnContext(ctx, "failed to shut down tracing", "error", err)
+	}
 }

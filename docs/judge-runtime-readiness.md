@@ -57,6 +57,11 @@ Runtime readiness and recovery metrics:
 Existing judge runtime metrics to keep on dashboards:
 
 - `soj_worker_judge_task_dispatch_total{result}`
+- `soj_worker_result_consumer_messages_total{queue,result}`
+- `soj_worker_result_consumer_duration_seconds{queue,result}`
+- `soj_queue_depth{queue}`
+- `soj_queue_pending_messages{queue}`
+- `soj_queue_oldest_pending_age_seconds{queue}`
 - `soj_worker_judge_tasks_total{result}`
 - `soj_worker_judge_task_duration_seconds{result}`
 - `soj_judge_agent_slots_used{scope,language}`
@@ -66,6 +71,10 @@ Existing judge runtime metrics to keep on dashboards:
 - `soj_sandbox_cleanup_failures_total{backend}`
 
 Local Prometheus is available at `http://localhost:9090` when the Compose stack is running.
+
+Local Prometheus loads alert rules from `deploy/prometheus-rules/soj-alerts.yml`. The rules cover readiness dependency failures, HTTP 5xx/latency, judge dispatch failures, result-consumer failures, dead task activity, recovery activity, reconciliation failures, queue backlog, oldest pending message age, slot saturation, sandbox backend errors, and cleanup failures.
+
+See `docs/observability-trial-loop.md` for dashboard queries, alert interpretation, and trace pivot workflow. Tracing is optional; set `SOJ_TRACING_ENABLED=true` plus standard `OTEL_*` exporter variables only in environments that provide an OTLP collector or tracing backend. The default local stack does not require one.
 
 ## Local Validation Environment
 
@@ -93,5 +102,8 @@ RUNNER_IMAGES_PREPARE=pull make smoke-real-docker
 
 - `/readyz` fails for worker: check PostgreSQL connectivity, Redis stream/group creation, object storage bucket existence, and `soj_readiness_checks_total`.
 - `/readyz` fails for judge-agent: check Redis streams, object storage credentials, sandbox backend probe, runner images, and Docker/runtime registration.
-- Queue grows but no results arrive: check judge-agent readiness, `soj_judge_agent_slots_used`, Redis request/result streams, and sandbox backend errors.
+- Queue grows but no results arrive: check `soj_queue_depth`, `soj_queue_oldest_pending_age_seconds`, judge-agent readiness, `soj_judge_agent_slots_used`, Redis request/result streams, and sandbox backend errors.
+- Result queue grows but submissions do not finish: check `soj_worker_result_consumer_messages_total{result="error"}`, PostgreSQL readiness, and result-consumer logs.
 - Dead tasks accumulate: inspect `judge_tasks.last_error`, Redis `soj:judge:tasks:dead`, and `soj_worker_reconciliation_total`; recover individual tasks only after fixing the underlying dependency.
+- A specific submission is slow or stuck: use the admin diagnostics `trace_id`; when tracing is enabled, search the tracing backend for that ID, otherwise pivot through judge attempts, Redis stream state, and the queue metrics above.
+- Tracing is enabled but no spans appear: confirm `SOJ_TRACING_ENABLED=true`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT`, collector reachability from each process, and the service name used in the tracing backend.

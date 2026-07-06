@@ -22,6 +22,9 @@ import (
 	"SOJ/internal/submission"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -41,6 +44,11 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 	logger := observability.NewLogger(cfg.Log.Level, stdout)
+	tracing, err := setupProcessTracing(ctx, cfg, "soj-judge-agent")
+	if err != nil {
+		return err
+	}
+	defer shutdownProcessTracing(ctx, cfg.Worker.ShutdownTimeout, logger, tracing)
 	metrics := observability.NewMetrics("soj-judge-agent")
 
 	objectStore, err := newJudgeAgentObjectStorage(cfg.Storage)
@@ -90,7 +98,12 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 
 	readiness := newJudgeAgentReadiness(requestQueue, resultQueue, objectStore, sandboxReady, metrics)
-	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics, ReadyCheck: readiness.Check})
+	router := httpapi.NewRouter(httpapi.RouterOptions{
+		Metrics:        metrics,
+		ReadyCheck:     readiness.Check,
+		TracingEnabled: tracing.Enabled(),
+		TracingService: tracing.ServiceName(),
+	})
 	server := &http.Server{
 		Addr:         *healthAddr,
 		Handler:      router,
@@ -157,15 +170,25 @@ func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, request
 		if limit <= 0 || limit > available {
 			limit = available
 		}
-		messages, err := requestQueue.Consume(ctx, limit, block)
+		consumeCtx, consumeSpan := observability.Tracer("SOJ/internal/app").Start(ctx, "judge_agent.request.consume", trace.WithAttributes(attribute.Int("soj.judge_agent.limit", limit)))
+		messages, err := requestQueue.Consume(consumeCtx, limit, block)
+		consumeSpan.SetAttributes(attribute.Int("soj.judge_agent.messages", len(messages)))
 		if err != nil {
+			consumeSpan.SetStatus(codes.Error, "consume_error")
+			consumeSpan.End()
 			return err
 		}
+		consumeSpan.End()
 		for _, message := range messages {
-			release, err := slots.Acquire(ctx, judgeAgentMessageLanguageKey(message))
+			language := judgeAgentMessageLanguageKey(message)
+			acquireCtx, acquireSpan := observability.Tracer("SOJ/internal/app").Start(ctx, "judge_agent.slot.acquire", trace.WithAttributes(attribute.String("soj.language", language)))
+			release, err := slots.Acquire(acquireCtx, language)
 			if err != nil {
+				acquireSpan.SetStatus(codes.Error, "slot_acquire_error")
+				acquireSpan.End()
 				return err
 			}
+			acquireSpan.End()
 			recordJudgeAgentSlotMetrics(metrics, slots)
 			wg.Add(1)
 			go func(message queue.Message) {
@@ -174,7 +197,10 @@ func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, request
 					release()
 					recordJudgeAgentSlotMetrics(metrics, slots)
 				}()
-				if err := agent.ProcessRequestMessage(ctx, message, requestQueue); err != nil {
+				processCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "judge_agent.request.process")
+				if err := agent.ProcessRequestMessage(processCtx, message, requestQueue); err != nil {
+					span.SetStatus(codes.Error, "process_error")
+					span.End()
 					if deadErr := requestQueue.DeadLetter(ctx, message, err.Error()); deadErr != nil {
 						sendJudgeAgentLoopError(errCh, deadErr)
 						return
@@ -183,7 +209,9 @@ func runJudgeAgentLoop(ctx context.Context, agent judgeRequestProcessor, request
 						sendJudgeAgentLoopError(errCh, ackErr)
 						return
 					}
+					return
 				}
+				span.End()
 			}(message)
 		}
 	}

@@ -8,15 +8,18 @@ import (
 	"SOJ/internal/apperror"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 type ReadyCheck func(context.Context) error
 
 type RouterOptions struct {
-	Middleware MiddlewareSet
-	ReadyCheck ReadyCheck
-	Modules    []Module
-	Metrics    HTTPMetrics
+	Middleware     MiddlewareSet
+	ReadyCheck     ReadyCheck
+	Modules        []Module
+	Metrics        HTTPMetrics
+	TracingEnabled bool
+	TracingService string
 }
 
 type HTTPMetrics interface {
@@ -32,6 +35,14 @@ func NewRouter(opts RouterOptions) *gin.Engine {
 		middleware = DefaultMiddlewareSet()
 	}
 	router.Use(middleware.RequestID)
+	if opts.TracingEnabled {
+		service := opts.TracingService
+		if service == "" {
+			service = "soj"
+		}
+		router.Use(otelgin.Middleware(service))
+		router.Use(RecordHTTPSpanAttributes())
+	}
 	if middleware.CORS != nil {
 		router.Use(middleware.CORS)
 	}
