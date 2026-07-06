@@ -129,6 +129,8 @@ make smoke-runner-capacity
 SOJ_DOCKER_RUNNER_RUNTIME=runsc make smoke-runner-capacity
 ```
 
+Judge runtime readiness, recovery operations, and the latest local validation evidence are documented in [docs/judge-runtime-readiness.md](docs/judge-runtime-readiness.md). The current runner capacity report is [docs/runner-capacity-report-2026-07-06.md](docs/runner-capacity-report-2026-07-06.md).
+
 The Docker runner path uses [deploy/docker-compose.docker-runner.yaml](deploy/docker-compose.docker-runner.yaml). Only `soj-judge-agent` receives the Docker socket; runner containers do not receive business service credentials or the Docker socket.
 
 ## Development

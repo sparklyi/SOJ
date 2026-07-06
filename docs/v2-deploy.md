@@ -63,7 +63,13 @@ Do not commit production DSNs, JWT secrets, or object storage credentials.
 - Judge agent liveness: `GET /healthz`
 - Judge agent readiness: `GET /readyz`
 
-Current API readiness checks PostgreSQL. Worker readiness is process-level only; Redis/object storage/judge readiness is exercised by `deploy/smoke.sh` and worker logs. Add broader dependency probes before using these health checks as production traffic gates.
+Current readiness checks:
+
+- API readiness checks PostgreSQL.
+- Worker readiness checks PostgreSQL, Redis request stream, Redis result stream, and object storage.
+- Judge-agent readiness checks Redis request stream, Redis result stream, object storage, and the configured sandbox backend probe.
+
+See `docs/judge-runtime-readiness.md` for the operational checklist, recovery command, metrics, and local validation environment.
 
 ## Metrics
 
@@ -112,6 +118,8 @@ SOJ_DOCKER_RUNNER_RUNTIME=runsc make smoke-runner-capacity
 ```
 
 The capacity smoke recreates the local Docker runner stack and runs `1/2/4/8/16` judge-agent slot profiles by default. It prints submissions per minute, P95/P99 submission latency, P95/P99 judge attempt duration, no-op container startup overhead, maximum attempt memory, judge-agent memory curve, queue oldest pending age, backend error deltas, and cleanup failure deltas. Override the profile with `SOJ_CAPACITY_SLOTS`, `SOJ_CAPACITY_SUBMISSIONS_PER_SLOT`, `SOJ_CAPACITY_SUBMISSIONS_MAX`, `SOJ_CAPACITY_TIME_LIMIT_MS`, and `SOJ_CAPACITY_SKIP_BUILD=1` for heavier or repeated manual tests.
+
+The latest local capacity evidence is recorded in `docs/runner-capacity-report-2026-07-06.md`.
 
 Backend safety matrix:
 
