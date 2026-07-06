@@ -34,6 +34,24 @@ func TestResetStaleJudgeTasksSQLResetsTasksAndSubmissions(t *testing.T) {
 	}
 }
 
+func TestRecoverDeadJudgeTaskSQLQueuesOnlyDeadSystemErrorTasks(t *testing.T) {
+	for _, want := range []string{
+		"UPDATE judge_tasks",
+		"status = 'pending'",
+		"attempts = 0",
+		"WHERE id = $3",
+		"status = 'dead'",
+		"submissions.status = 'system_error'",
+		"UPDATE submissions",
+		"status = 'queued'",
+		"judged_at = NULL",
+	} {
+		if !strings.Contains(recoverDeadJudgeTask, want) {
+			t.Fatalf("RecoverDeadJudgeTask missing %q:\n%s", want, recoverDeadJudgeTask)
+		}
+	}
+}
+
 func TestJudgeTaskDispatchSQLHasStrictClaimAndMarkBoundaries(t *testing.T) {
 	for name, query := range map[string]string{
 		"ClaimPendingJudgeTasks":     claimPendingJudgeTasks,

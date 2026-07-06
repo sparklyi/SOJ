@@ -106,6 +106,7 @@ type Querier interface {
 	MarkSubmissionSystemError(ctx context.Context, arg MarkSubmissionSystemErrorParams) (Submission, error)
 	NextProblemStatementVersion(ctx context.Context, problemID int64) (int32, error)
 	NextTestcaseSetVersion(ctx context.Context, problemID int64) (int32, error)
+	RecoverDeadJudgeTask(ctx context.Context, arg RecoverDeadJudgeTaskParams) (JudgeTask, error)
 	ResetStaleJudgeTasks(ctx context.Context, arg ResetStaleJudgeTasksParams) ([]ResetStaleJudgeTasksRow, error)
 	RetryJudgeTask(ctx context.Context, arg RetryJudgeTaskParams) (JudgeTask, error)
 	RevokeRefreshToken(ctx context.Context, tokenHash string) error

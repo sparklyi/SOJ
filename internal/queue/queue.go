@@ -21,3 +21,14 @@ type TaskQueue interface {
 	DeadLetter(ctx context.Context, message Message, reason string) error
 	Close() error
 }
+
+type ReadinessChecker interface {
+	Ready(ctx context.Context) error
+}
+
+func CheckReady(ctx context.Context, queue TaskQueue) error {
+	if checker, ok := queue.(ReadinessChecker); ok {
+		return checker.Ready(ctx)
+	}
+	return nil
+}

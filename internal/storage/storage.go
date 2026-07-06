@@ -28,3 +28,14 @@ type ObjectStorage interface {
 	Delete(ctx context.Context, key string) error
 	Stat(ctx context.Context, key string) (ObjectInfo, error)
 }
+
+type ReadinessChecker interface {
+	Ready(ctx context.Context) error
+}
+
+func CheckReady(ctx context.Context, store ObjectStorage) error {
+	if checker, ok := store.(ReadinessChecker); ok {
+		return checker.Ready(ctx)
+	}
+	return nil
+}

@@ -23,6 +23,10 @@ type Metrics struct {
 	sandboxPhaseDuration *prometheus.HistogramVec
 	sandboxBackendErrors *prometheus.CounterVec
 	sandboxCleanupFails  *prometheus.CounterVec
+	readinessChecks      *prometheus.CounterVec
+	readinessDuration    *prometheus.HistogramVec
+	taskRecovery         *prometheus.CounterVec
+	reconcilerActions    *prometheus.CounterVec
 }
 
 func NewMetrics(service string) *Metrics {
@@ -104,6 +108,33 @@ func NewMetrics(service string) *Metrics {
 			Help:        "Sandbox workspace or container cleanup failures.",
 			ConstLabels: labels,
 		}, []string{"backend"}),
+		readinessChecks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Name:        "readiness_checks_total",
+			Help:        "Total number of readiness dependency checks.",
+			ConstLabels: labels,
+		}, []string{"dependency", "result"}),
+		readinessDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace:   "soj",
+			Name:        "readiness_check_duration_seconds",
+			Help:        "Readiness dependency check duration in seconds.",
+			ConstLabels: labels,
+			Buckets:     []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5},
+		}, []string{"dependency", "result"}),
+		taskRecovery: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "worker",
+			Name:        "judge_task_recovery_total",
+			Help:        "Judge task recovery operations by action and result.",
+			ConstLabels: labels,
+		}, []string{"action", "result"}),
+		reconcilerActions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "worker",
+			Name:        "reconciliation_total",
+			Help:        "Worker reconciliation actions by action and result.",
+			ConstLabels: labels,
+		}, []string{"action", "result"}),
 	}
 
 	registry.MustRegister(
@@ -119,6 +150,10 @@ func NewMetrics(service string) *Metrics {
 		metrics.sandboxPhaseDuration,
 		metrics.sandboxBackendErrors,
 		metrics.sandboxCleanupFails,
+		metrics.readinessChecks,
+		metrics.readinessDuration,
+		metrics.taskRecovery,
+		metrics.reconcilerActions,
 	)
 	return metrics
 }
@@ -157,4 +192,20 @@ func (m *Metrics) RecordSandboxBackendError(backend, phase, class string) {
 
 func (m *Metrics) RecordSandboxCleanupFailure(backend string) {
 	m.sandboxCleanupFails.WithLabelValues(backend).Inc()
+}
+
+func (m *Metrics) RecordReadinessCheck(dependency, result string, duration time.Duration) {
+	m.readinessChecks.WithLabelValues(dependency, result).Inc()
+	m.readinessDuration.WithLabelValues(dependency, result).Observe(duration.Seconds())
+}
+
+func (m *Metrics) RecordJudgeTaskRecovery(action, result string) {
+	m.taskRecovery.WithLabelValues(action, result).Inc()
+}
+
+func (m *Metrics) RecordReconcilerAction(action, result string, count int) {
+	if count <= 0 {
+		count = 1
+	}
+	m.reconcilerActions.WithLabelValues(action, result).Add(float64(count))
 }

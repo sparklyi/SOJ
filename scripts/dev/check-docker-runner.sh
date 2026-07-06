@@ -12,13 +12,11 @@ need() {
   fi
 }
 
-runtime_args=()
 if [[ -n "$RUNTIME" ]]; then
   if ! docker info --format '{{json .Runtimes}}' | grep -q "\"$RUNTIME\""; then
     echo "docker runtime $RUNTIME is not registered" >&2
     exit 1
   fi
-  runtime_args=(--runtime "$RUNTIME")
 fi
 
 check_image() {
@@ -32,7 +30,11 @@ check_image() {
 
 check_noop() {
   local image="$1"
-  docker run --rm "${runtime_args[@]}" \
+  local docker_args=(run --rm)
+  if [[ -n "$RUNTIME" ]]; then
+    docker_args+=(--runtime "$RUNTIME")
+  fi
+  docker "${docker_args[@]}" \
     --network none \
     --read-only \
     --cap-drop ALL \
