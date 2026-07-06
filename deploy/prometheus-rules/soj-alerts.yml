@@ -1,0 +1,119 @@
+groups:
+  - name: soj-trial-alerts
+    rules:
+      - alert: SOJReadinessDependencyFailure
+        expr: sum by (job, dependency) (increase(soj_readiness_checks_total{result="error"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ readiness dependency is failing"
+          description: "Readiness checks for {{ $labels.job }} dependency {{ $labels.dependency }} reported errors during the last 5 minutes."
+
+      - alert: SOJHTTP5xxResponses
+        expr: sum by (job, route) (rate(soj_http_requests_total{status=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ HTTP 5xx responses are elevated"
+          description: "{{ $labels.job }} route {{ $labels.route }} is returning 5xx responses above the trial threshold."
+
+      - alert: SOJHTTPLatencyHigh
+        expr: histogram_quantile(0.95, sum by (job, route, le) (rate(soj_http_request_duration_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ HTTP latency is high"
+          description: "{{ $labels.job }} route {{ $labels.route }} p95 latency is above 1 second."
+
+      - alert: SOJJudgeDispatchFailures
+        expr: sum by (job) (increase(soj_worker_judge_task_dispatch_total{result="error"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ judge dispatch failures detected"
+          description: "{{ $labels.job }} failed to dispatch judge tasks during the last 5 minutes."
+
+      - alert: SOJResultConsumerFailures
+        expr: sum by (job, queue) (increase(soj_worker_result_consumer_messages_total{result="error"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ result-consumer failures detected"
+          description: "{{ $labels.job }} failed to consume messages from logical queue {{ $labels.queue }}."
+
+      - alert: SOJJudgeTasksDead
+        expr: sum by (job) (increase(soj_worker_judge_tasks_total{result="dead"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "SOJ judge tasks reached dead state"
+          description: "{{ $labels.job }} marked judge tasks dead during the last 10 minutes."
+
+      - alert: SOJJudgeTaskRecoveryActivity
+        expr: sum by (job, action, result) (increase(soj_worker_judge_task_recovery_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ judge task recovery activity observed"
+          description: "{{ $labels.job }} recorded recovery action {{ $labels.action }} with result {{ $labels.result }}."
+
+      - alert: SOJWorkerReconciliationFailures
+        expr: sum by (job, action) (increase(soj_worker_reconciliation_total{result="error"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ worker reconciliation failures detected"
+          description: "{{ $labels.job }} reconciliation action {{ $labels.action }} is failing."
+
+      - alert: SOJJudgeAgentSlotSaturation
+        expr: soj_judge_agent_slots_capacity > 0 and (soj_judge_agent_slots_used / soj_judge_agent_slots_capacity) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ judge-agent slots are saturated"
+          description: "{{ $labels.job }} slot scope {{ $labels.scope }} language {{ $labels.language }} is above 90% utilization."
+
+      - alert: SOJSandboxBackendErrors
+        expr: sum by (job, backend, phase, class) (increase(soj_sandbox_backend_errors_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ sandbox backend errors detected"
+          description: "{{ $labels.job }} sandbox backend {{ $labels.backend }} phase {{ $labels.phase }} reported {{ $labels.class }} errors."
+
+      - alert: SOJSandboxCleanupFailures
+        expr: sum by (job, backend) (increase(soj_sandbox_cleanup_failures_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ sandbox cleanup failures detected"
+          description: "{{ $labels.job }} sandbox backend {{ $labels.backend }} failed cleanup."
+
+      - alert: SOJQueueBacklogHigh
+        expr: soj_queue_depth{queue=~"request|result"} > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ queue backlog is high"
+          description: "Logical queue {{ $labels.queue }} depth is above the trial threshold."
+
+      - alert: SOJQueueOldestPendingAgeHigh
+        expr: soj_queue_oldest_pending_age_seconds{queue=~"request|result"} > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ queue has old pending messages"
+          description: "Logical queue {{ $labels.queue }} has a pending message older than 5 minutes."
