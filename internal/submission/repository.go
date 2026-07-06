@@ -194,6 +194,7 @@ type Repository interface {
 	MarkJudgeTaskDone(ctx context.Context, id int64) (JudgeTaskRecord, error)
 	RetryJudgeTask(ctx context.Context, id int64, nextRunAt time.Time, reason string) (JudgeTaskRecord, error)
 	MarkJudgeTaskDead(ctx context.Context, id int64, reason string) (JudgeTaskRecord, error)
+	RecoverDeadJudgeTask(ctx context.Context, id int64, nextRunAt time.Time, reason string) (JudgeTaskRecord, error)
 	CreateRun(ctx context.Context, arg RunRecord) (RunRecord, error)
 	GetRun(ctx context.Context, id int64) (RunRecord, error)
 	UpdateRunStatus(ctx context.Context, id int64, result judge.Result) (RunRecord, error)
@@ -923,6 +924,11 @@ func (r *SQLRepository) RetryJudgeTask(ctx context.Context, id int64, nextRunAt 
 
 func (r *SQLRepository) MarkJudgeTaskDead(ctx context.Context, id int64, reason string) (JudgeTaskRecord, error) {
 	row, err := r.q.MarkJudgeTaskDead(ctx, db.MarkJudgeTaskDeadParams{ID: id, LastError: text(reason)})
+	return judgeTaskRecord(row), err
+}
+
+func (r *SQLRepository) RecoverDeadJudgeTask(ctx context.Context, id int64, nextRunAt time.Time, reason string) (JudgeTaskRecord, error) {
+	row, err := r.q.RecoverDeadJudgeTask(ctx, db.RecoverDeadJudgeTaskParams{NextRunAt: timestamptz(nextRunAt), LastError: text(reason), ID: id})
 	return judgeTaskRecord(row), err
 }
 

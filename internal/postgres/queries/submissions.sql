@@ -490,6 +490,36 @@ WHERE id = $1
   AND status IN ('dispatching', 'dispatched', 'running')
 RETURNING *;
 
+-- name: RecoverDeadJudgeTask :one
+WITH recovered AS (
+    UPDATE judge_tasks
+    SET status = 'pending',
+        attempts = 0,
+        next_run_at = sqlc.arg('next_run_at'),
+        last_error = sqlc.arg('last_error'),
+        updated_at = now()
+    WHERE id = sqlc.arg('id')
+      AND status = 'dead'
+      AND EXISTS (
+          SELECT 1
+          FROM submissions
+          WHERE submissions.id = judge_tasks.submission_id
+            AND submissions.status = 'system_error'
+      )
+    RETURNING *
+), recovered_submissions AS (
+    UPDATE submissions
+    SET status = 'queued',
+        error_message = sqlc.arg('last_error'),
+        judged_at = NULL,
+        updated_at = now()
+    FROM recovered
+    WHERE submissions.id = recovered.submission_id
+    RETURNING submissions.id
+)
+SELECT *
+FROM recovered;
+
 -- name: RetryJudgeTask :one
 UPDATE judge_tasks
 SET status = 'pending',

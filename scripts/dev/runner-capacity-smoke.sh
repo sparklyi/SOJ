@@ -75,7 +75,11 @@ api_json() {
 }
 
 now_ms() {
-  date +%s%3N
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import time; print(int(time.time() * 1000))'
+  else
+    printf '%s000\n' "$(date +%s)"
+  fi
 }
 
 percentile_file() {
@@ -293,15 +297,15 @@ where id in ($ids_csv);
 
 measure_container_startup() {
   local out_file="$1"
-  local runtime_args=()
+  local docker_args=(run --rm)
   local start end
   : > "$out_file"
   if [[ -n "$SOJ_DOCKER_RUNNER_RUNTIME" ]]; then
-    runtime_args=(--runtime "$SOJ_DOCKER_RUNNER_RUNTIME")
+    docker_args+=(--runtime "$SOJ_DOCKER_RUNNER_RUNTIME")
   fi
   for _ in $(seq 1 "$STARTUP_SAMPLES"); do
     start="$(now_ms)"
-    docker run --rm "${runtime_args[@]}" \
+    docker "${docker_args[@]}" \
       --network none \
       --read-only \
       --cap-drop ALL \
@@ -346,7 +350,10 @@ run_slot_benchmark() {
   done
   wait
 
-  mapfile -t ids < "$ids_file"
+  ids=()
+  while IFS= read -r id; do
+    ids+=("$id")
+  done < "$ids_file"
   if (( ${#ids[@]} != total )); then
     echo "created ${#ids[@]} submissions, want $total" >&2
     exit 1

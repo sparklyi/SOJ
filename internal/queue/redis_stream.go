@@ -47,6 +47,17 @@ func (q *RedisStreamQueue) Ensure(ctx context.Context) error {
 	return err
 }
 
+func (q *RedisStreamQueue) Ready(ctx context.Context) error {
+	groups, err := q.client.XInfoGroups(ctx, q.cfg.Stream).Result()
+	if err != nil {
+		return err
+	}
+	if !redisStreamHasGroup(groups, q.cfg.Group) {
+		return fmt.Errorf("redis stream %s missing consumer group %s", q.cfg.Stream, q.cfg.Group)
+	}
+	return nil
+}
+
 func (q *RedisStreamQueue) Publish(ctx context.Context, taskID int64, payload []byte) (string, error) {
 	id, err := q.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: q.cfg.Stream,
@@ -163,4 +174,13 @@ func xMessage(item redis.XMessage) (Message, error) {
 		Payload:  []byte(fmt.Sprint(item.Values["payload"])),
 		Attempts: attempts,
 	}, nil
+}
+
+func redisStreamHasGroup(groups []redis.XInfoGroup, name string) bool {
+	for _, group := range groups {
+		if group.Name == name {
+			return true
+		}
+	}
+	return false
 }
