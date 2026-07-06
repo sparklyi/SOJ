@@ -61,28 +61,78 @@ func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID in
 			return ScoreboardResponse{}, err
 		}
 	}
-	problems, err := s.repo.ListContestProblems(ctx, contestID)
+	return s.buildScoreboard(ctx, contest, view, s.now())
+}
+
+func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (ScoreSnapshotGenerationResult, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	candidates, err := s.repo.ListScoreSnapshotCandidates(ctx, s.now(), limit)
+	if err != nil {
+		return ScoreSnapshotGenerationResult{}, err
+	}
+	var result ScoreSnapshotGenerationResult
+	for _, candidate := range candidates {
+		if candidate.View != ScoreboardViewFrozen && candidate.View != ScoreboardViewFinal {
+			continue
+		}
+		if _, err := s.repo.LatestScoreSnapshot(ctx, candidate.Contest.ID, candidate.View); err == nil {
+			continue
+		} else if !scoreSnapshotMissing(err) {
+			return result, err
+		}
+		generatedAt := s.now()
+		board, err := s.buildScoreboard(ctx, candidate.Contest, candidate.View, generatedAt)
+		if err != nil {
+			return result, err
+		}
+		if _, err := s.repo.CreateScoreSnapshot(ctx, ScoreboardSnapshot{
+			ContestID:   candidate.Contest.ID,
+			View:        candidate.View,
+			Board:       board,
+			GeneratedAt: generatedAt,
+		}); err != nil {
+			return result, err
+		}
+		switch candidate.View {
+		case ScoreboardViewFrozen:
+			result.Frozen++
+		case ScoreboardViewFinal:
+			result.Final++
+		}
+	}
+	return result, nil
+}
+
+func scoreSnapshotMissing(err error) bool {
+	var appErr *apperror.Error
+	return errors.As(err, &appErr) && appErr.HTTPStatus == 404
+}
+
+func (s *Service) buildScoreboard(ctx context.Context, contest ContestRecord, view ScoreboardView, generatedAt time.Time) (ScoreboardResponse, error) {
+	problems, err := s.repo.ListContestProblems(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
-	registrations, err := s.repo.ListRegistrations(ctx, contestID)
+	registrations, err := s.repo.ListRegistrations(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
 	if view == ScoreboardViewFrozen {
-		submissions, err := s.repo.ListTerminalSubmissions(ctx, contestID)
+		submissions, err := s.repo.ListTerminalSubmissions(ctx, contest.ID)
 		if err != nil {
 			return ScoreboardResponse{}, err
 		}
 		if len(submissions) > 0 {
-			return buildBoardFromSubmissions(contest, view, problems, registrations, submissions, s.now()), nil
+			return buildBoardFromSubmissions(contest, view, problems, registrations, submissions, generatedAt), nil
 		}
 	}
-	results, err := s.repo.ListProblemResults(ctx, contestID)
+	results, err := s.repo.ListProblemResults(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
-	return buildBoardFromResults(contest, view, problems, registrations, results, s.now()), nil
+	return buildBoardFromResults(contest, view, problems, registrations, results, generatedAt), nil
 }
 
 func (s *Service) defaultScoreboardView(contest ContestRecord, requested ScoreboardView) ScoreboardView {

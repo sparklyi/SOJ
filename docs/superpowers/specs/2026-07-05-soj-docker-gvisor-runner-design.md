@@ -8,7 +8,7 @@ SOJ production sandbox 主线调整为 **Docker runner + gVisor/runsc**。
 
 Docker 负责 runner 容器编排、镜像分发、资源参数和本地运维体验；gVisor `runsc` 负责生产隔离边界。SOJ 不把普通 Docker 容器视为生产安全沙箱，也不在这一阶段自研 Linux namespace/cgroup/seccomp 底层 runner。
 
-现有 JudgeCore、judge-agent、Redis Stream、attempt evidence 和 result consumer 边界保持不变。新增工作集中在 `internal/judgecore/sandbox` 的可替换 backend 抽象、judge-agent 并发槽位、Docker runner backend、gVisor 生产校验、runner images 和容量验证。
+现有 JudgeCore、judge-agent、Redis Stream、attempt evidence 和 result consumer 边界保持不变。新增工作集中在 `internal/judgecore/sandbox` 的可替换 backend 抽象、judge-agent 并发槽位、Docker runner backend、gVisor 生产校验、runner images 和本地真实评测验证。
 
 ## Goals
 
@@ -178,7 +178,7 @@ submissions per minute ~= agent_count * sandbox_slots_per_agent * 60 / avg_attem
 - 3 个 agent、类似 workload：理论约 700 submissions/minute。
 - CE-heavy、TLE-heavy、many-case、slow-language workload 必须按压测结果折减。
 
-Docker/gVisor runner 的生产实现必须避免把每个 testcase 都变成不可控冷启动成本。第一版可以一 case 一 run container，但 capacity smoke 必须记录 container startup overhead。后续可优化为 per-attempt case runner pool 或 language-specific warmed worker，前提是不破坏 sandbox contract。
+Docker/gVisor runner 的生产实现必须避免把每个 testcase 都变成不可控冷启动成本。第一版可以一 case 一 run container，并通过 sandbox phase metrics 观察 container startup overhead。
 
 ## Observability
 
@@ -210,17 +210,11 @@ Functional acceptance:
 - hidden expected output 不进入用户程序容器。
 - duplicate Redis messages 不重复写 terminal projection。
 
-Capacity acceptance:
-
-- 跑 `1/2/4/8/16` slots benchmark。
-- 输出 submissions/minute、P95/P99 attempt latency、container startup overhead、Docker daemon error rate、memory curve、queue oldest pending age。
-- 验证至少一种基准 workload 达到数百提交/分钟级别，或记录未达到原因和下一步优化。
-
 ## Risks
 
 - **Docker daemon 是高权限边界。** Mitigation: judge-agent 独占专用 judge 节点，runner 容器不接触 Docker socket。
 - **gVisor 兼容性可能影响语言 runtime。** Mitigation: 首批只支持 Go/C++17，runner images 和 smoke 覆盖常见系统调用。
-- **容器冷启动影响峰值吞吐。** Mitigation: slots、testcase cache、startup overhead 指标和后续 runner pool 优化。
+- **容器冷启动影响峰值吞吐。** Mitigation: slots、testcase cache 和 startup overhead 指标。
 - **本地环境差异大。** Mitigation: local check script 明确报告 Docker/runsc/cgroup/WSL2 限制。
 - **抽象过早绑定 Docker。** Mitigation: JudgeCore 只依赖 backend-neutral contract，Docker API 封装在 docker backend 内部。
 

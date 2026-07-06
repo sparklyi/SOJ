@@ -227,6 +227,66 @@ func TestFinalScoreboardFallsBackToProblemResultsWhenSnapshotMissing(t *testing.
 	}
 }
 
+func TestGenerateDueScoreSnapshotsCreatesFrozenAndFinalOnce(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	freeze := start.Add(time.Hour)
+	end := start.Add(2 * time.Hour)
+	now := end.Add(10 * time.Minute)
+	repo := newMemoryRepository()
+	repo.contests[1] = ContestRecord{
+		ID:          1,
+		OwnerUserID: 10,
+		Title:       "Snapshots",
+		Visibility:  VisibilityPublic,
+		Status:      StatusEnded,
+		StartAt:     start,
+		EndAt:       end,
+		FreezeAt:    freeze,
+	}
+	repo.problems[1] = []ContestProblem{{ContestID: 1, ProblemID: 101, Alias: "A", SortOrder: 1}}
+	repo.registrations[1] = []ContestRegistration{{ID: 1, ContestID: 1, UserID: 20, DisplayName: "alice", Email: "alice@example.com", Status: RegistrationActive}}
+	repo.submissions[1] = []ContestSubmissionResult{
+		{ID: 1, ContestID: 1, UserID: 20, ProblemID: 101, Status: CellAccepted, SubmittedAt: freeze.Add(10 * time.Minute), JudgedAt: freeze.Add(11 * time.Minute)},
+	}
+	repo.results[1] = []ContestProblemResult{
+		{ContestID: 1, UserID: 20, ProblemID: 101, Status: CellAccepted, Attempts: 1, AcceptedAt: testTimePtr(freeze.Add(10 * time.Minute)), PenaltyMinutes: 70},
+	}
+	service := NewService(repo, WithNow(func() time.Time { return now }))
+
+	created, err := service.GenerateDueScoreSnapshots(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("GenerateDueScoreSnapshots returned error: %v", err)
+	}
+	if created.Frozen != 1 || created.Final != 1 {
+		t.Fatalf("created = %+v, want one frozen and one final", created)
+	}
+	if len(repo.snapshots[1]) != 2 {
+		t.Fatalf("snapshot count = %d, want 2", len(repo.snapshots[1]))
+	}
+	frozen, err := repo.LatestScoreSnapshot(context.Background(), 1, ScoreboardViewFrozen)
+	if err != nil {
+		t.Fatalf("missing frozen snapshot: %v", err)
+	}
+	if frozen.Board.Rows[0].Cells[0].Status != CellFrozen || frozen.Board.Rows[0].Cells[0].FrozenAttempts != 1 {
+		t.Fatalf("frozen cell = %+v, want hidden attempt", frozen.Board.Rows[0].Cells[0])
+	}
+	final, err := repo.LatestScoreSnapshot(context.Background(), 1, ScoreboardViewFinal)
+	if err != nil {
+		t.Fatalf("missing final snapshot: %v", err)
+	}
+	if final.Board.Rows[0].AcceptedCount != 1 || final.Board.Rows[0].PenaltyMinutes != 70 {
+		t.Fatalf("final row = %+v, want accepted result", final.Board.Rows[0])
+	}
+
+	created, err = service.GenerateDueScoreSnapshots(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("second GenerateDueScoreSnapshots returned error: %v", err)
+	}
+	if created.Frozen != 0 || created.Final != 0 || len(repo.snapshots[1]) != 2 {
+		t.Fatalf("second run created = %+v snapshots=%d, want no duplicates", created, len(repo.snapshots[1]))
+	}
+}
+
 func TestLiveScoreboardAfterFreezeRequiresOwnerOrAdmin(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	repo := newMemoryRepository()

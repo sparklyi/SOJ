@@ -81,6 +81,7 @@ type Querier interface {
 	ListContestProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error)
 	ListContestProblems(ctx context.Context, contestID int64) ([]ContestProblem, error)
 	ListContestRegistrations(ctx context.Context, arg ListContestRegistrationsParams) ([]ContestRegistration, error)
+	ListContestScoreSnapshotCandidates(ctx context.Context, arg ListContestScoreSnapshotCandidatesParams) ([]ListContestScoreSnapshotCandidatesRow, error)
 	ListContestTerminalSubmissions(ctx context.Context, dollar_1 int64) ([]ListContestTerminalSubmissionsRow, error)
 	ListContests(ctx context.Context, arg ListContestsParams) ([]Contest, error)
 	ListJudgeAttemptsByRejudgeBatch(ctx context.Context, rejudgeBatchID pgtype.Int8) ([]JudgeAttempt, error)

@@ -122,14 +122,7 @@ Runner images 由 [publish-runner-images.yml](.github/workflows/publish-runner-i
 make smoke-real-gvisor
 ```
 
-如需按 `1/2/4/8/16` 个 judge-agent slot 跑本地 runner 容量 smoke：
-
-```bash
-make smoke-runner-capacity
-SOJ_DOCKER_RUNNER_RUNTIME=runsc make smoke-runner-capacity
-```
-
-Judge runtime readiness、恢复操作和最新本地验证证据记录在 [docs/judge-runtime-readiness.md](docs/judge-runtime-readiness.md)。当前 runner 容量报告是 [docs/runner-capacity-report-2026-07-06.md](docs/runner-capacity-report-2026-07-06.md)。
+Judge runtime readiness、恢复操作和本地验证证据记录在 [docs/judge-runtime-readiness.md](docs/judge-runtime-readiness.md)。
 
 Docker runner 路径使用 [deploy/docker-compose.docker-runner.yaml](deploy/docker-compose.docker-runner.yaml)。只有 `soj-judge-agent` 持有 Docker socket；runner 容器不会拿到业务服务凭据或 Docker socket。
 
@@ -282,8 +275,6 @@ internal/observability  日志、健康检查和 Prometheus 指标
 
 已知后续工作：
 
-- 在 worker 中自动生成 frozen/final 记分板快照。
-- 基于 Docker/gVisor 容量数据继续优化 runner pool 或 warmed execution。
 - 为 worker 依赖增加更完整的 readiness probe。
 - 引入 OpenTelemetry tracing，默认关闭 OTLP export。
 
