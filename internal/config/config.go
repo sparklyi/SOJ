@@ -18,6 +18,7 @@ type Config struct {
 	Auth       AuthConfig
 	Log        LogConfig
 	Migrations MigrationsConfig
+	Tracing    TracingConfig
 }
 
 type HTTPConfig struct {
@@ -71,6 +72,13 @@ type MigrationsConfig struct {
 	Dir string
 }
 
+type TracingConfig struct {
+	Enabled            bool
+	ServiceName        string
+	ResourceAttributes string
+	ExporterEndpoint   string
+}
+
 func Load() (Config, error) {
 	cfg := Config{
 		Env: env("SOJ_ENV", "dev"),
@@ -115,6 +123,11 @@ func Load() (Config, error) {
 		Migrations: MigrationsConfig{
 			Dir: env("SOJ_MIGRATIONS_DIR", "internal/migrations"),
 		},
+		Tracing: TracingConfig{
+			ServiceName:        env("OTEL_SERVICE_NAME", ""),
+			ResourceAttributes: env("OTEL_RESOURCE_ATTRIBUTES", ""),
+			ExporterEndpoint:   tracingExporterEndpoint(),
+		},
 	}
 
 	var err error
@@ -145,8 +158,18 @@ func Load() (Config, error) {
 	if cfg.Auth.RefreshTokenTTL, err = envDuration("SOJ_REFRESH_TOKEN_TTL", cfg.Auth.RefreshTokenTTL); err != nil {
 		return Config{}, err
 	}
+	if cfg.Tracing.Enabled, err = envBool("SOJ_TRACING_ENABLED", false); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
+}
+
+func tracingExporterEndpoint() string {
+	if value := env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", ""); value != "" {
+		return value
+	}
+	return env("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 }
 
 func env(key, fallback string) string {

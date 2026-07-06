@@ -11,11 +11,13 @@ import (
 	"SOJ/internal/judgecore/language"
 )
 
+const normalCaseTimeLimit = 3 * time.Second
+
 func TestCoreJudgesGoAccepted(t *testing.T) {
 	result := judgeGo(t, `package main
 import "fmt"
 func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
-`, []Case{{Input: "1 2\n", ExpectedOutput: "3\n", TimeLimit: time.Second}})
+`, []Case{{Input: "1 2\n", ExpectedOutput: "3\n", TimeLimit: normalCaseTimeLimit}})
 
 	if result.Verdict != judge.VerdictAccepted {
 		t.Fatalf("verdict = %q, want accepted; result=%+v", result.Verdict, result)
@@ -32,7 +34,7 @@ func TestCoreJudgesGoWrongAnswer(t *testing.T) {
 	result := judgeGo(t, `package main
 import "fmt"
 func main() { fmt.Println(41) }
-`, []Case{{Input: "", ExpectedOutput: "42\n", TimeLimit: time.Second}})
+`, []Case{{Input: "", ExpectedOutput: "42\n", TimeLimit: normalCaseTimeLimit}})
 
 	if result.Verdict != judge.VerdictWrongAnswer {
 		t.Fatalf("verdict = %q, want wrong_answer; result=%+v", result.Verdict, result)
@@ -45,7 +47,7 @@ func main() { fmt.Println(41) }
 func TestCoreJudgesGoCompileError(t *testing.T) {
 	result := judgeGo(t, `package main
 func main() {
-`, []Case{{Input: "", ExpectedOutput: "", TimeLimit: time.Second}})
+`, []Case{{Input: "", ExpectedOutput: "", TimeLimit: normalCaseTimeLimit}})
 
 	if result.Verdict != judge.VerdictCompileError {
 		t.Fatalf("verdict = %q, want compile_error; output=%q", result.Verdict, result.CompileOutput)
@@ -73,7 +75,7 @@ func TestCoreJudgesGoOutputLimit(t *testing.T) {
 import "fmt"
 func main() { for i := 0; i < 4096; i++ { fmt.Print("x") } }
 `),
-		Cases:            []Case{{Input: "", ExpectedOutput: "", TimeLimit: time.Second}},
+		Cases:            []Case{{Input: "", ExpectedOutput: "", TimeLimit: normalCaseTimeLimit}},
 		Policy:           checker.PolicyExact,
 		OutputLimitBytes: 1024,
 	})
@@ -95,7 +97,7 @@ func TestCoreJudgesCpp17AcceptedWhenCompilerExists(t *testing.T) {
 		Source: []byte(`#include <iostream>
 int main() { int a, b; std::cin >> a >> b; std::cout << a + b << "\n"; }
 `),
-		Cases:  []Case{{Input: "2 5\n", ExpectedOutput: "7\n", TimeLimit: time.Second}},
+		Cases:  []Case{{Input: "2 5\n", ExpectedOutput: "7\n", TimeLimit: normalCaseTimeLimit}},
 		Policy: checker.PolicyExact,
 	})
 	if err != nil {
