@@ -10,6 +10,9 @@ import (
 	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/judgecore"
 	"SOJ/internal/queue"
+
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type ResultPublisher interface {
@@ -72,6 +75,7 @@ func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 	if err := request.Validate(); err != nil {
 		return err
 	}
+	ctx = contextWithTraceContext(ctx, request.TraceContext)
 	source, err := a.sourceStore.Get(ctx, request.SourceArtifact.StorageKey)
 	if err != nil {
 		return err
@@ -99,6 +103,7 @@ func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 		RequestEventID:  request.EventID,
 		AttemptID:       request.AttemptID,
 		TraceID:         request.TraceID,
+		TraceContext:    request.TraceContext,
 		Status:          result.Verdict,
 		Result:          result,
 		JudgedAt:        judgedAt,
@@ -116,6 +121,7 @@ func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 	if err := request.Validate(); err != nil {
 		return err
 	}
+	ctx = contextWithTraceContext(ctx, request.TraceContext)
 	source, err := a.sourceStore.Get(ctx, request.SourceArtifact.StorageKey)
 	if err != nil {
 		return err
@@ -179,6 +185,7 @@ func publishAsyncResult(ctx context.Context, publisher ResultPublisher, request 
 		RequestEventID:  request.EventID,
 		AttemptID:       request.AttemptID,
 		TraceID:         request.TraceID,
+		TraceContext:    request.TraceContext,
 		Status:          result.Verdict,
 		Result:          result,
 		JudgedAt:        judgedAt,
@@ -232,6 +239,7 @@ func (c *ResultConsumer) ProcessResultMessage(ctx context.Context, message queue
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	ctx = contextWithTraceContext(ctx, event.TraceContext)
 	result, err := judgeevents.NormalizeResult(event.Result)
 	if err != nil {
 		return err
@@ -257,4 +265,22 @@ func (c *ResultConsumer) ProcessResultMessage(ctx context.Context, message queue
 		return err
 	}
 	return resultQueue.Ack(ctx, message.ID)
+}
+
+func contextWithTraceContext(ctx context.Context, traceContext judgeevents.TraceContext) context.Context {
+	if traceContext.Empty() {
+		return ctx
+	}
+	carrier := propagation.MapCarrier{}
+	if traceContext.Traceparent != "" {
+		carrier.Set("traceparent", traceContext.Traceparent)
+	}
+	if traceContext.Tracestate != "" {
+		carrier.Set("tracestate", traceContext.Tracestate)
+	}
+	extracted := propagation.TraceContext{}.Extract(ctx, carrier)
+	if !trace.SpanFromContext(extracted).SpanContext().IsValid() {
+		return ctx
+	}
+	return extracted
 }

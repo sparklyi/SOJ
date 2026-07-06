@@ -1,6 +1,6 @@
 # SOJ v2 Docker Deployment
 
-The first supported deployment target is Docker Compose. The v2 runtime is built and verified with Go 1.24.
+The first supported deployment target is Docker Compose. The v2 runtime is built and verified with Go 1.25.
 
 ```bash
 docker compose -f deploy/docker-compose.yaml up --build -d
@@ -78,16 +78,22 @@ See `docs/judge-runtime-readiness.md` for the operational checklist, recovery co
 - Judge agent metrics: `GET http://localhost:8082/metrics`
 - Prometheus UI: `http://localhost:9090`
 
-The local Prometheus service scrapes `api:8080`, `worker:8081`, and `judge-agent:8082`. Current application metrics include HTTP request counts and latency, judge task dispatch counts, judge-agent slot usage, sandbox phase duration, sandbox backend errors, and sandbox cleanup failures. Keep `/metrics` on a private network in production or protect it at the ingress layer.
+The local Prometheus service scrapes `api:8080`, `worker:8081`, and `judge-agent:8082`. Current application metrics include HTTP request counts and latency, judge task dispatch counts, result-consumer outcomes, logical Redis queue depth and pending age, judge-agent slot usage, sandbox phase duration, sandbox backend errors, and sandbox cleanup failures. Keep `/metrics` on a private network in production or protect it at the ingress layer.
+
+Prometheus loads trial alert rules from `deploy/prometheus-rules/soj-alerts.yml`. The rules cover readiness failures, elevated HTTP 5xx/latency, dispatch and result-consumer failures, dead/recovered task activity, queue backlog, judge-agent slot saturation, sandbox backend errors, and cleanup failures. They do not require Alertmanager or any CI workflow.
 
 Judge-agent runner metrics to watch during Docker/gVisor rollout:
 
 - `soj_judge_agent_slots_used` and `soj_judge_agent_slots_capacity`
+- `soj_queue_depth`, `soj_queue_pending_messages`, and `soj_queue_oldest_pending_age_seconds`
+- `soj_worker_result_consumer_messages_total` and `soj_worker_result_consumer_duration_seconds`
 - `soj_sandbox_phase_duration_seconds`
 - `soj_sandbox_backend_errors_total`
 - `soj_sandbox_cleanup_failures_total`
 
-Distributed tracing is not enabled yet. The intended next step is OpenTelemetry with OTLP export, disabled by default and switchable by environment.
+Dashboard queries and alert interpretation are documented in `docs/observability-trial-loop.md`.
+
+Distributed tracing is optional and disabled by default. Generic `OTEL_*` variables alone do not enable tracing; set `SOJ_TRACING_ENABLED=true` for each process that should export spans. The OTLP/HTTP exporter follows standard OpenTelemetry variables such as `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES`. The default Compose stack does not include or require a collector, Jaeger, Tempo, Grafana, or Alertmanager service.
 
 ## Judge Sandbox
 
@@ -141,9 +147,12 @@ The process backend exists only for development tests and local real-code smoke.
 ## Troubleshooting
 
 - Queue backlog: check Redis stream length for `SOJ_REDIS_STREAM`, worker logs, and `soj_worker_judge_task_dispatch_total`.
+- Queue backlog in Prometheus: check `soj_queue_depth`, `soj_queue_pending_messages`, and `soj_queue_oldest_pending_age_seconds` by logical queue (`request` or `result`).
 - No result events: check judge-agent readiness, `SOJ_JUDGE_REQUEST_STREAM`, `SOJ_JUDGE_RESULT_STREAM`, and object storage credentials.
+- Result events not persisted: check `soj_worker_result_consumer_messages_total{result="error"}`, PostgreSQL readiness, and worker logs.
 - Agent startup failure: verify `SOJ_REDIS_ADDR`, object storage credentials, Docker socket access, runner images, `SOJ_JUDGE_SANDBOX_BACKEND`, and `SOJ_DOCKER_RUNNER_RUNTIME` safety rules.
 - Sandbox verdict anomalies: compare the attempt manifest fields for judge core version, sandbox backend/profile, language runtime, testcase set hash, and trace id.
+- Traced submission diagnosis: when tracing is enabled, pivot from an alert time window to `request_id`, persisted `trace_id`, and the corresponding API/worker/judge-agent spans.
 - Local Docker runner smoke fails with wrong answers on input-reading programs: confirm Docker run uses the current code and `--interactive` is present in the runner args.
 - Local real smoke fails with compile errors: confirm runner images exist with `make runner-images-pull`, or use `RUNNER_IMAGES_PREPARE=build` while developing Dockerfiles locally.
 - Capacity smoke below target: compare `container_startup_p95_ms`, `p95_attempt_ms`, queue oldest pending age, and `soj_sandbox_backend_errors_total` before raising slots or adding judge-agent nodes.

@@ -1,6 +1,6 @@
 # SOJ
 
-[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
@@ -31,7 +31,7 @@ The historical v1 implementation is preserved on the `archive/v1` branch. New de
 - Formal submissions, self-runs, judge tasks, async judge request/result streams, retries, dead-letter handling, and reconciliation loops.
 - ACM contests, registration, contest submission policy, and live/frozen/final scoreboard responses.
 - PostgreSQL migrations, `sqlc`/`pgx` data access, and an OpenAPI contract for frontend integration.
-- Prometheus metrics for API, worker, and judge-agent processes.
+- Prometheus metrics, trial alert rules, and optional OpenTelemetry tracing for API, worker, and judge-agent processes.
 - Local Docker Compose stack with PostgreSQL, Redis, MinIO, API, worker, judge-agent, migration, seed, Prometheus, and smoke testing.
 
 ## Architecture
@@ -52,6 +52,7 @@ Runtime dependencies:
 - MinIO/S3: source code, testcase archives, and future large artifacts.
 - JudgeCore: compile/run/check pipeline with language profiles, checker logic, and sandbox adapters.
 - Prometheus: local metrics scraping for API, worker, and judge-agent processes.
+- OpenTelemetry: optional OTLP trace export, disabled by default.
 
 For more detail, read [docs/v2-architecture.md](docs/v2-architecture.md).
 
@@ -60,7 +61,7 @@ For more detail, read [docs/v2-architecture.md](docs/v2-architecture.md).
 ### Requirements
 
 - Docker with Compose v2
-- Go 1.24 for local development
+- Go 1.25 for local development
 - `curl`, `jq`, `zip`, and `shasum` for the smoke test
 - Optional: GitHub CLI `gh` for issue, pull request, and repository operations
 
@@ -124,6 +125,8 @@ make smoke-real-gvisor
 
 Judge runtime readiness, recovery operations, and local validation evidence are documented in [docs/judge-runtime-readiness.md](docs/judge-runtime-readiness.md).
 
+Trial dashboard queries, alert interpretation, and metric-to-trace diagnosis are documented in [docs/observability-trial-loop.md](docs/observability-trial-loop.md). The default stack does not require Grafana, Alertmanager, Jaeger, Tempo, or an OpenTelemetry collector.
+
 The Docker runner path uses [deploy/docker-compose.docker-runner.yaml](deploy/docker-compose.docker-runner.yaml). Only `soj-judge-agent` receives the Docker socket; runner containers do not receive business service credentials or the Docker socket.
 
 ## Development
@@ -184,6 +187,11 @@ Important variables:
 | `SOJ_DOCKER_RUNNER_RUNTIME` | Docker runtime for runner containers; production should use `runsc`. |
 | `SOJ_DOCKER_RUNNER_IMAGE_GO` | Go runner image, defaults to `ghcr.io/sparklyi/soj-runner-go:main` for local smoke. |
 | `SOJ_DOCKER_RUNNER_IMAGE_CPP17` | C++17 runner image, defaults to `ghcr.io/sparklyi/soj-runner-cpp17:main` for local smoke. |
+| `SOJ_TRACING_ENABLED` | Enables OpenTelemetry tracing when set to `true`; defaults to disabled. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | OTLP/HTTP trace endpoint, such as `http://collector:4318/v1/traces`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Generic OTLP endpoint fallback when the traces endpoint is not set. |
+| `OTEL_SERVICE_NAME` | Optional OpenTelemetry service name override. |
+| `OTEL_RESOURCE_ATTRIBUTES` | Optional OpenTelemetry resource attributes, such as deployment environment. |
 
 ## API Documentation
 
@@ -191,6 +199,7 @@ Important variables:
 - API guide: [docs/v2-api-guide.md](docs/v2-api-guide.md)
 - Docker deployment: [docs/v2-deploy.md](docs/v2-deploy.md)
 - Worker operations: [docs/v2-worker.md](docs/v2-worker.md)
+- Observability trial loop: [docs/observability-trial-loop.md](docs/observability-trial-loop.md)
 
 Endpoint groups:
 
@@ -251,7 +260,7 @@ internal/contest        ACM contests, registrations, scoreboards
 internal/postgres       SQL queries and generated sqlc code
 internal/queue          Redis Stream task queue
 internal/storage        S3-compatible object storage
-internal/observability  Logging, health checks, and Prometheus metrics
+internal/observability  Logging, health checks, Prometheus metrics, and tracing setup
 ```
 
 ## Deployment Notes
@@ -263,6 +272,7 @@ Before exposing SOJ outside local development:
 - Replace all local credentials and use a strong `SOJ_JWT_SECRET`.
 - Use production PostgreSQL, Redis, and S3-compatible object storage credentials.
 - Keep `/metrics` on a private network or protect it at the ingress layer.
+- Keep tracing backends and collectors private; tracing is off by default and must be enabled with `SOJ_TRACING_ENABLED=true`.
 - Run `soj-judge-agent` without business database credentials.
 - Treat `SOJ_JUDGE_SANDBOX_BACKEND=docker` with Docker runtime `runsc`/gVisor as the production sandbox target.
 - Set `SOJ_ENV=prod` and `SOJ_DOCKER_RUNNER_RUNTIME=runsc` on production judge nodes; startup fails if runsc or the no-op runner probe is unavailable.
@@ -275,8 +285,8 @@ Before exposing SOJ outside local development:
 
 Known follow-up work:
 
-- Broader readiness probes for worker dependencies.
-- OpenTelemetry tracing with OTLP export disabled by default.
+- Production-specific dashboard and alert threshold tuning after trial traffic baselines are known.
+- Reusable Grafana JSON after the dashboard query set stabilizes.
 
 ## License
 
