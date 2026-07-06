@@ -58,6 +58,12 @@ func (q *RedisStreamQueue) Ready(ctx context.Context) error {
 	return nil
 }
 
+func (q *RedisStreamQueue) Stats(ctx context.Context) (QueueStats, error) {
+	info, infoErr := q.client.XInfoStream(ctx, q.cfg.Stream).Result()
+	pending, pendingErr := q.client.XPending(ctx, q.cfg.Stream, q.cfg.Group).Result()
+	return redisQueueStatsFromRedis(info, infoErr, pending, pendingErr, time.Now())
+}
+
 func (q *RedisStreamQueue) Publish(ctx context.Context, taskID int64, payload []byte) (string, error) {
 	id, err := q.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: q.cfg.Stream,
@@ -183,4 +189,45 @@ func redisStreamHasGroup(groups []redis.XInfoGroup, name string) bool {
 		}
 	}
 	return false
+}
+
+func redisQueueStatsFromRedis(info *redis.XInfoStream, infoErr error, pending *redis.XPending, pendingErr error, now time.Time) (QueueStats, error) {
+	var stats QueueStats
+	if infoErr != nil && !redisQueueStatsMissing(infoErr) {
+		return QueueStats{}, infoErr
+	}
+	if infoErr == nil && info != nil {
+		stats.Depth = info.Length
+	}
+	if pendingErr != nil && !redisQueueStatsMissing(pendingErr) {
+		return QueueStats{}, pendingErr
+	}
+	if pendingErr == nil && pending != nil {
+		stats.Pending = pending.Count
+		stats.OldestPendingAge = redisStreamIDAge(pending.Lower, now)
+	}
+	return stats, nil
+}
+
+func redisQueueStatsMissing(err error) bool {
+	return errors.Is(err, redis.Nil) || strings.Contains(strings.ToUpper(err.Error()), "NOGROUP")
+}
+
+func redisStreamIDAge(id string, now time.Time) time.Duration {
+	if id == "" {
+		return 0
+	}
+	milliseconds, _, ok := strings.Cut(id, "-")
+	if !ok {
+		return 0
+	}
+	value, err := strconv.ParseInt(milliseconds, 10, 64)
+	if err != nil {
+		return 0
+	}
+	age := now.Sub(time.UnixMilli(value))
+	if age < 0 {
+		return 0
+	}
+	return age
 }

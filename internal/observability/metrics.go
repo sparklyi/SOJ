@@ -18,6 +18,11 @@ type Metrics struct {
 	judgeDispatches      *prometheus.CounterVec
 	judgeTasks           *prometheus.CounterVec
 	judgeTaskDuration    *prometheus.HistogramVec
+	resultConsumer       *prometheus.CounterVec
+	resultConsumerTime   *prometheus.HistogramVec
+	queueDepth           *prometheus.GaugeVec
+	queuePending         *prometheus.GaugeVec
+	queueOldestPending   *prometheus.GaugeVec
 	judgeAgentSlotsUsed  *prometheus.GaugeVec
 	judgeAgentSlotsCap   *prometheus.GaugeVec
 	sandboxPhaseDuration *prometheus.HistogramVec
@@ -72,6 +77,39 @@ func NewMetrics(service string) *Metrics {
 			ConstLabels: labels,
 			Buckets:     []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
 		}, []string{"result"}),
+		resultConsumer: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "worker",
+			Name:        "result_consumer_messages_total",
+			Help:        "Total number of result-consumer messages processed by outcome.",
+			ConstLabels: labels,
+		}, []string{"queue", "result"}),
+		resultConsumerTime: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace:   "soj",
+			Subsystem:   "worker",
+			Name:        "result_consumer_duration_seconds",
+			Help:        "Result-consumer message processing duration in seconds.",
+			ConstLabels: labels,
+			Buckets:     []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		}, []string{"queue", "result"}),
+		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace:   "soj",
+			Name:        "queue_depth",
+			Help:        "Current Redis-backed logical queue stream length.",
+			ConstLabels: labels,
+		}, []string{"queue"}),
+		queuePending: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace:   "soj",
+			Name:        "queue_pending_messages",
+			Help:        "Current Redis-backed logical queue pending message count.",
+			ConstLabels: labels,
+		}, []string{"queue"}),
+		queueOldestPending: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace:   "soj",
+			Name:        "queue_oldest_pending_age_seconds",
+			Help:        "Age of the oldest pending message in a Redis-backed logical queue.",
+			ConstLabels: labels,
+		}, []string{"queue"}),
 		judgeAgentSlotsUsed: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace:   "soj",
 			Subsystem:   "judge_agent",
@@ -145,6 +183,11 @@ func NewMetrics(service string) *Metrics {
 		metrics.judgeDispatches,
 		metrics.judgeTasks,
 		metrics.judgeTaskDuration,
+		metrics.resultConsumer,
+		metrics.resultConsumerTime,
+		metrics.queueDepth,
+		metrics.queuePending,
+		metrics.queueOldestPending,
 		metrics.judgeAgentSlotsUsed,
 		metrics.judgeAgentSlotsCap,
 		metrics.sandboxPhaseDuration,
@@ -175,6 +218,20 @@ func (m *Metrics) RecordJudgeTaskDispatch(result string) {
 func (m *Metrics) RecordJudgeTaskProcess(result string, duration time.Duration) {
 	m.judgeTasks.WithLabelValues(result).Inc()
 	m.judgeTaskDuration.WithLabelValues(result).Observe(duration.Seconds())
+}
+
+func (m *Metrics) RecordResultConsumerProcess(queueName, result string, duration time.Duration) {
+	queueName = logicalQueueLabel(queueName)
+	result = boundedResultLabel(result)
+	m.resultConsumer.WithLabelValues(queueName, result).Inc()
+	m.resultConsumerTime.WithLabelValues(queueName, result).Observe(duration.Seconds())
+}
+
+func (m *Metrics) ObserveQueueStats(queueName string, depth, pending int64, oldestPendingAge time.Duration) {
+	queueName = logicalQueueLabel(queueName)
+	m.queueDepth.WithLabelValues(queueName).Set(float64(depth))
+	m.queuePending.WithLabelValues(queueName).Set(float64(pending))
+	m.queueOldestPending.WithLabelValues(queueName).Set(oldestPendingAge.Seconds())
 }
 
 func (m *Metrics) ObserveJudgeAgentSlots(scope, language string, used, capacity int) {
@@ -208,4 +265,22 @@ func (m *Metrics) RecordReconcilerAction(action, result string, count int) {
 		count = 1
 	}
 	m.reconcilerActions.WithLabelValues(action, result).Add(float64(count))
+}
+
+func logicalQueueLabel(queueName string) string {
+	switch queueName {
+	case "request", "result":
+		return queueName
+	default:
+		return "unknown"
+	}
+}
+
+func boundedResultLabel(result string) string {
+	switch result {
+	case "success", "error":
+		return result
+	default:
+		return "error"
+	}
 }

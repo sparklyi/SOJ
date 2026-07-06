@@ -11,6 +11,9 @@ import (
 	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/problem"
 	"SOJ/internal/queue"
+
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Worker struct {
@@ -127,6 +130,8 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 			return judgeevents.RequestEvent{}, err
 		}
 	}
+	fallbackTraceID := fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID)
+	traceID, traceContext := traceIdentityFromContext(ctx, fallbackTraceID)
 	attempt, err := w.repo.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
 		SubmissionID:    submission.ID,
 		TaskID:          task.ID,
@@ -135,7 +140,7 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 		TestcaseSetHash: fmt.Sprintf("testcase-set-%d", testcaseSet.ID),
 		ProtocolVersion: judgeevents.RequestEventType,
 		JudgeEngine:     judge.EngineSOJAgent,
-		TraceID:         fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID),
+		TraceID:         traceID,
 		StartedAt:       now,
 	})
 	if err != nil {
@@ -146,7 +151,8 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 		ProtocolVersion: judgeevents.RequestEventType,
 		EventID:         fmt.Sprintf("judge-request-%s", attemptID),
 		AttemptID:       attemptID,
-		TraceID:         valueOr(attempt.TraceID, fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID)),
+		TraceID:         valueOr(attempt.TraceID, traceID),
+		TraceContext:    traceContext,
 		SubmissionID:    submission.ID,
 		LanguageID:      language.ID,
 		LanguageSlug:    language.EngineLanguageID,
@@ -169,6 +175,23 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 		return judgeevents.RequestEvent{}, err
 	}
 	return event, nil
+}
+
+func traceIdentityFromContext(ctx context.Context, fallback string) (string, judgeevents.TraceContext) {
+	spanContext := trace.SpanFromContext(ctx).SpanContext()
+	if !spanContext.IsValid() || !spanContext.TraceID().IsValid() {
+		return fallback, judgeevents.TraceContext{}
+	}
+	carrier := propagation.MapCarrier{}
+	propagation.TraceContext{}.Inject(ctx, carrier)
+	return spanContext.TraceID().String(), traceContextFromCarrier(carrier)
+}
+
+func traceContextFromCarrier(carrier propagation.MapCarrier) judgeevents.TraceContext {
+	return judgeevents.TraceContext{
+		Traceparent: carrier.Get("traceparent"),
+		Tracestate:  carrier.Get("tracestate"),
+	}
 }
 
 func valueOr(value *string, fallback string) string {
