@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -22,6 +24,10 @@ import (
 )
 
 func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "recover-dead-task" {
+		return runWorkerRecoverDeadTask(ctx, args[1:], stdout)
+	}
+
 	fs := flag.NewFlagSet("soj-worker", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	healthAddr := fs.String("health-addr", "", "worker health HTTP listen address")
@@ -87,9 +93,10 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		Metrics:          metrics,
 	})
 	resultConsumer := submission.NewResultConsumer(submission.ResultConsumerOptions{Repository: submissionRepo})
-	reconciler := submission.NewReconciler(submissionRepo, worker, nil)
+	reconciler := submission.NewReconciler(submissionRepo, worker, nil, metrics)
 
-	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics})
+	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)
+	router := httpapi.NewRouter(httpapi.RouterOptions{Metrics: metrics, ReadyCheck: readiness.Check})
 	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"))
 
 	server := &http.Server{
@@ -225,4 +232,37 @@ func workerConsumerName() string {
 		return hostname
 	}
 	return "worker"
+}
+
+func runWorkerRecoverDeadTask(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("soj-worker recover-dead-task", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	taskID := fs.Int64("task-id", 0, "dead judge task id to recover")
+	reason := fs.String("reason", "manual dead task recovery", "operator-visible recovery reason")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *taskID <= 0 {
+		return errors.New("task-id is required")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	pool, err := postgres.OpenPool(ctx, postgres.PoolConfig{DSN: cfg.Database.DSN})
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	repo := submission.NewSQLRepository(db.New(pool))
+	task, err := repo.RecoverDeadJudgeTask(ctx, *taskID, time.Now().UTC(), *reason)
+	if err != nil {
+		return err
+	}
+	if stdout != nil {
+		_, _ = fmt.Fprintf(stdout, "recovered judge task %d for submission %d as %s\n", task.ID, task.SubmissionID, task.Status)
+	}
+	return nil
 }
