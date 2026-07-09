@@ -282,7 +282,7 @@ func listContestProblems(ctx context.Context, q *db.Queries, contestID int64) ([
 	}
 	out := make([]ContestProblem, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, ContestProblem{ContestID: row.ContestID, ProblemID: row.ProblemID, Alias: row.Alias, SortOrder: row.SortOrder})
+		out = append(out, ContestProblem{ContestID: row.ContestID, ProblemID: row.ProblemID, Alias: row.Alias, SortOrder: row.SortOrder, Title: row.Title})
 	}
 	return out, nil
 }

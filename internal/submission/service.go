@@ -506,6 +506,15 @@ func (s *Service) ListLanguages(ctx context.Context, actor auth.Actor, input Lis
 	return s.repo.ListLanguages(ctx, input)
 }
 
+func (s *Service) ListPublicLanguages(ctx context.Context, actor auth.Actor, input ListLanguagesInput) ([]LanguageRecord, int64, error) {
+	enabled := true
+	input.Enabled = &enabled
+	if input.Limit <= 0 || input.Limit > 100 {
+		input.Limit = 50
+	}
+	return s.repo.ListLanguages(ctx, input)
+}
+
 func (s *Service) SyncLanguages(ctx context.Context, actor auth.Actor) ([]LanguageRecord, error) {
 	if !actor.Root() {
 		return nil, apperror.Forbidden("root_required", "root role required")

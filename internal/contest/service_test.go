@@ -349,6 +349,38 @@ func TestListContestsAppliesVisibilityRules(t *testing.T) {
 	}
 }
 
+func TestContestResponsesIncludeFrontendContractFields(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	repo := newMemoryRepository()
+	repo.contests[1] = ContestRecord{ID: 1, OwnerUserID: 10, Title: "Public", Visibility: VisibilityPublic, Status: StatusPublished, StartAt: start, EndAt: start.Add(time.Hour), FreezeAt: start.Add(30 * time.Minute)}
+	repo.problems[1] = []ContestProblem{{ContestID: 1, ProblemID: 101, Alias: "A", SortOrder: 1, Title: "Two Sum"}}
+	repo.registrations[1] = []ContestRegistration{{ID: 1, ContestID: 1, UserID: 20, Status: RegistrationActive}}
+	service := NewService(repo)
+	actor := auth.Actor{UserID: 20, Role: auth.RoleUser}
+
+	list, err := service.ListContests(context.Background(), actor, ListContestFilter{})
+	if err != nil {
+		t.Fatalf("ListContests returned error: %v", err)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("list = %+v, want one contest", list)
+	}
+	if !list.Items[0].Registered || list.Items[0].ScoringMode != ScoringModeACM {
+		t.Fatalf("list contest = %+v, want registered ACM contest", list.Items[0])
+	}
+	if len(list.Items[0].Problems) != 1 || list.Items[0].Problems[0].Title != "Two Sum" {
+		t.Fatalf("list problems = %+v, want enriched problem title", list.Items[0].Problems)
+	}
+
+	detail, err := service.GetContest(context.Background(), actor, 1)
+	if err != nil {
+		t.Fatalf("GetContest returned error: %v", err)
+	}
+	if !detail.Registered || detail.ScoringMode != ScoringModeACM {
+		t.Fatalf("detail = %+v, want registered ACM contest", detail)
+	}
+}
+
 func TestContestCRUDRegistrationAndPermissions(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	repo := newMemoryRepository()

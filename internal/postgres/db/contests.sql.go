@@ -386,26 +386,41 @@ func (q *Queries) ListContestProblemResults(ctx context.Context, contestID int64
 }
 
 const listContestProblems = `-- name: ListContestProblems :many
-SELECT cp.contest_id, cp.problem_id, cp.alias, cp.sort_order
+SELECT
+    cp.contest_id,
+    cp.problem_id,
+    cp.alias,
+    cp.sort_order,
+    p.title
 FROM contest_problems cp
+JOIN problems p ON p.id = cp.problem_id
 WHERE cp.contest_id = $1
 ORDER BY cp.sort_order
 `
 
-func (q *Queries) ListContestProblems(ctx context.Context, contestID int64) ([]ContestProblem, error) {
+type ListContestProblemsRow struct {
+	ContestID int64  `db:"contest_id" json:"contest_id"`
+	ProblemID int64  `db:"problem_id" json:"problem_id"`
+	Alias     string `db:"alias" json:"alias"`
+	SortOrder int32  `db:"sort_order" json:"sort_order"`
+	Title     string `db:"title" json:"title"`
+}
+
+func (q *Queries) ListContestProblems(ctx context.Context, contestID int64) ([]ListContestProblemsRow, error) {
 	rows, err := q.db.Query(ctx, listContestProblems, contestID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ContestProblem
+	var items []ListContestProblemsRow
 	for rows.Next() {
-		var i ContestProblem
+		var i ListContestProblemsRow
 		if err := rows.Scan(
 			&i.ContestID,
 			&i.ProblemID,
 			&i.Alias,
 			&i.SortOrder,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}

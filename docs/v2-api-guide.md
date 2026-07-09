@@ -85,6 +85,10 @@ Submissions and runs:
 - `POST /api/v1/runs`
 - `GET /api/v1/runs/{id}`
 
+Languages:
+
+- `GET /api/v1/languages`
+
 Submission result visibility:
 
 - `result` is the current safe projection from `submission_results`; complete evidence stays in `judge_attempts` and `judge_case_results`.
@@ -106,6 +110,7 @@ Contests:
 Contest create/update notes:
 
 - `problems` is an ordered array of `{ "problem_id": 1, "alias": "A" }`; `sort_order` is generated from array order and returned in responses.
+- Contest responses include `scoring_mode`, currently `acm`, `registered` for the current authenticated user, and enriched `problems[].title` values when the linked problem is available.
 - `invite_code` is required when creating a private contest or switching a contest to private without an existing invite code.
 - Private contest list/detail access is limited to owner, admin/root, or active registrants.
 
