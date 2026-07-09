@@ -23,6 +23,9 @@ tags:
   - name: Runs
     description: Custom stdin self-runs that do not affect official judging.
     x-owner: WP4 Submission/Run
+  - name: Languages
+    description: Public enabled judge language catalog.
+    x-owner: WP4 Submission/Language
   - name: Contests
     description: ACM contests, registrations, and scoreboards.
     x-owner: WP5 Contest
@@ -482,6 +485,30 @@ paths:
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/languages:
+    get:
+      tags: [Languages]
+      operationId: listPublicLanguages
+      summary: List enabled judge languages
+      description: Public catalog of enabled languages that regular users may select for submissions and self-runs.
+      x-owner: WP4 Submission/Language
+      x-auth: public
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: engine
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Enabled language page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LanguagePageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/contests:
     get:
       tags: [Contests]
@@ -936,6 +963,10 @@ components:
     ContestStatus:
       type: string
       enum: [draft, published, running, ended, archived]
+    ContestScoringMode:
+      type: string
+      description: Contest scoring mode. Current backend support is ACM.
+      enum: [acm]
     ScoreboardView:
       type: string
       enum: [live, frozen, final]
@@ -1211,6 +1242,9 @@ components:
         problem_id: { type: integer, format: int64 }
         alias: { type: string }
         sort_order: { type: integer }
+        title:
+          type: string
+          description: Problem title enriched from the linked problem when available.
     ContestCreateRequest:
       type: object
       required: [title, visibility, start_at, end_at, freeze_at, problems]
@@ -1241,7 +1275,7 @@ components:
         status: { $ref: "#/components/schemas/ContestStatus" }
     ContestResponse:
       type: object
-      required: [id, owner_user_id, title, visibility, status, start_at, end_at, freeze_at, problems, created_at, updated_at]
+      required: [id, owner_user_id, title, visibility, status, scoring_mode, registered, start_at, end_at, freeze_at, problems, created_at, updated_at]
       properties:
         id: { type: integer, format: int64 }
         owner_user_id: { type: integer, format: int64 }
@@ -1249,6 +1283,10 @@ components:
         description: { type: string, nullable: true }
         visibility: { $ref: "#/components/schemas/ContestVisibility" }
         status: { $ref: "#/components/schemas/ContestStatus" }
+        scoring_mode: { $ref: "#/components/schemas/ContestScoringMode" }
+        registered:
+          type: boolean
+          description: Whether the current authenticated user has an active registration for this contest. Anonymous users receive false.
         start_at: { type: string, format: date-time }
         end_at: { type: string, format: date-time }
         freeze_at: { type: string, format: date-time }
