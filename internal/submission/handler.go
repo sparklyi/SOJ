@@ -157,6 +157,23 @@ func (h *Handler) ListLanguages(c *gin.Context) {
 	httpapi.OK(c, gin.H{"items": languageResponses(items), "total": total, "page": page, "page_size": pageSize})
 }
 
+func (h *Handler) ListPublicLanguages(c *gin.Context) {
+	page, pageSize, ok := pageQuery(c)
+	if !ok {
+		return
+	}
+	var engine *string
+	if raw := c.Query("engine"); raw != "" {
+		engine = &raw
+	}
+	items, total, err := h.service.ListPublicLanguages(c.Request.Context(), actorFromContext(c), ListLanguagesInput{Engine: engine, Limit: pageSize, Offset: (page - 1) * pageSize})
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, gin.H{"items": languageResponses(items), "total": total, "page": page, "page_size": pageSize})
+}
+
 func (h *Handler) SyncLanguages(c *gin.Context) {
 	_, err := h.service.SyncLanguages(c.Request.Context(), actorFromContext(c))
 	if err != nil {

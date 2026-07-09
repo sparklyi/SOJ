@@ -145,7 +145,78 @@ The strongest current signals:
 | 14 | Refactor module layout | No evidence the current layout is blocking progress. |
 | 15 | Add external issue mining | The prompt did not request issue-tracker analysis, and repo signals were sufficient for this pass. |
 
+## MVP Recovery Pass: 2026-07-09
+
+### Updated Grounding
+
+Latest `main` is at `64eafad` after PR #24. Since the original pass, the top observability and release-gate items have mostly landed:
+
+- Optional OpenTelemetry tracing and the trial diagnostic loop are implemented and documented.
+- Prometheus alert rules are checked in under `deploy/prometheus-rules/soj-alerts.yml`.
+- CI now includes a Docker smoke gate.
+- Scoreboard snapshots and judge runtime readiness operations are on main.
+
+The stronger MVP question is no longer "what infrastructure should be next?" It is "what is the smallest set of product and operator workflows needed to make the v2 backend usable by the separate `soj-web` frontend after the v1 archive split?"
+
+Comparing current v2 to `origin/archive/v1` shows these removed or unexposed user-facing areas:
+
+- Email verification/login and captcha.
+- User profile update, avatar upload, password update/reset, and user detail pages.
+- User-owned problem listing.
+- Per-problem submission ranking.
+- Contest registration/application management beyond self-registration.
+- Testcase-level management endpoints; v2 currently prefers versioned testcase archive uploads.
+
+Current v2 also has tables and sqlc queries for `problem_check_runs`, `problem_check_findings`, and `rejudge_batches`, but the service and route layers do not expose them yet.
+
+### Recommended MVP Order
+
+#### P0. Align the backend contract with `soj-web`
+
+The first-party frontend lives in the separate remote `soj-web` project, not this repository. For MVP, inspect `soj-web` and align the backend contract around the screens it needs: login/register, problem list/detail, submit, submission detail, run/self-test, contest list/detail, registration, scoreboard, and an admin/author surface for creating problems, uploading statements/testcase archives, publishing, syncing languages, and checking smoke health.
+
+This should come before restoring most legacy extras because the frontend will reveal the real API gaps and make the backend demonstrable.
+
+After cloning `git@github.com:sparklyi/soj-web.git`, the frontend's own `docs/development/openapi-inventory.md` and `docs/development/api-integration-smoke.md` show the current aligned surface more precisely:
+
+- HTTP mode already adapts auth, problems, submissions, self-runs, contests, contest registration, and ACM scoreboard.
+- The most urgent backend contract gap is a public enabled-language catalog. `soj-web` currently calls `/api/v1/admin/languages`, which blocks regular users from completing submissions in HTTP mode.
+- Contest list/detail should expose current-user registration state, contest scoring mode, and enriched contest problem titles.
+- OI/IOI scoreboard fields and Arena event feed fields remain mock-only unless those product scopes stay in the MVP.
+
+#### P0. Expose problem data validation
+
+Implement a problem check service/API over the existing `problem_check_runs` and `problem_check_findings` schema. Minimum scope: validate testcase archive structure, input/output pairing, case count, sample consistency where available, storage readability, and publish-blocking error findings.
+
+This is the highest backend-only feature because bad test data makes an OJ unusable even if judging technically works.
+
+#### P1. Implement rejudge batch operations
+
+Expose admin/owner rejudge APIs over the existing `rejudge_batches` schema and wire worker support to create new attempts for affected submissions. Minimum scope: create/list/detail/cancel batches by problem or contest, progress counters, and idempotent task creation.
+
+This restores a core OJ operation for changed testcases, checker fixes, language/runtime changes, and incident recovery.
+
+#### P1. Restore user self-service profile basics
+
+Add current-user update endpoints for username, bio, avatar URL/upload path, and password change. Avoid email-login and reset-password until an email verification channel is intentionally brought back.
+
+This recovers low-cost v1 functionality because v2 already stores `avatar_url` and `bio`.
+
+#### P1. Add problem owner and per-problem ranking views
+
+Expose "my problems" and a per-problem accepted ranking/time-memory leaderboard. These were present in v1 and matter for author workflows and user motivation, but they can follow the frontend and validation path.
+
+#### P2. Add OpenAPI/client contract gates
+
+Once the frontend exists, add route/schema conformance checks and generate a typed client from `api/openapi.yaml`. This prevents drift between the MVP app and backend.
+
+#### P2. Defer legacy email/captcha/application extras
+
+Email login, captcha, password reset, notification preferences, and a richer contest application review workflow should stay out of the first MVP recovery slice unless a public deployment requires abuse prevention immediately.
+
 ## Session Log
 
 - 2026-07-06: Initial ideation -- 22 candidates considered, 7 survived. Latest `main` was already up to date and quick local verification passed.
 - 2026-07-06: User selected ideas 1 and 3 for the next scope; CI smoke/release-gate work from idea 2 was explicitly deferred.
+- 2026-07-09: Synced to `origin/main` at `64eafad`, compared active v2 against `origin/archive/v1`, and reframed the next work around MVP recovery rather than more infrastructure.
+- 2026-07-09: User clarified that the frontend is the separate remote `soj-web` project; updated P0 from building a new frontend to aligning backend APIs with that frontend.

@@ -16,6 +16,7 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	group.GET("/submissions/:id", m.handler.GetSubmission)
 	group.POST("/runs", m.handler.CreateRun)
 	group.GET("/runs/:id", m.handler.GetRun)
+	group.GET("/languages", m.handler.ListPublicLanguages)
 	admin := group.Group("/admin")
 	admin.GET("/languages", m.handler.ListLanguages)
 	admin.POST("/languages/sync", m.handler.SyncLanguages)

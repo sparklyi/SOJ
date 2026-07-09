@@ -79,7 +79,7 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	LinkProblemTag(ctx context.Context, arg LinkProblemTagParams) error
 	ListContestProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error)
-	ListContestProblems(ctx context.Context, contestID int64) ([]ContestProblem, error)
+	ListContestProblems(ctx context.Context, contestID int64) ([]ListContestProblemsRow, error)
 	ListContestRegistrations(ctx context.Context, arg ListContestRegistrationsParams) ([]ContestRegistration, error)
 	ListContestScoreSnapshotCandidates(ctx context.Context, arg ListContestScoreSnapshotCandidatesParams) ([]ListContestScoreSnapshotCandidatesRow, error)
 	ListContestTerminalSubmissions(ctx context.Context, dollar_1 int64) ([]ListContestTerminalSubmissionsRow, error)

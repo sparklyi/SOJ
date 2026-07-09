@@ -25,6 +25,8 @@ const (
 	RegistrationActive   = "active"
 	RegistrationCanceled = "canceled"
 
+	ScoringModeACM = "acm"
+
 	CellNone      = "none"
 	CellAttempted = "attempted"
 	CellAccepted  = "accepted"
@@ -50,6 +52,8 @@ type ContestRecord struct {
 	EndAt          time.Time        `json:"end_at"`
 	FreezeAt       time.Time        `json:"freeze_at"`
 	InviteCodeHash string           `json:"-"`
+	ScoringMode    string           `json:"scoring_mode"`
+	Registered     bool             `json:"registered"`
 	Problems       []ContestProblem `json:"problems,omitempty"`
 	CreatedAt      time.Time        `json:"created_at,omitempty"`
 	UpdatedAt      time.Time        `json:"updated_at,omitempty"`
@@ -60,6 +64,7 @@ type ContestProblem struct {
 	ProblemID int64  `json:"problem_id"`
 	Alias     string `json:"alias"`
 	SortOrder int32  `json:"sort_order"`
+	Title     string `json:"title,omitempty"`
 }
 
 type ContestRegistration struct {
@@ -231,6 +236,7 @@ func (s *Service) CreateContest(ctx context.Context, actor auth.Actor, input Con
 		created.Problems = problems
 		return nil
 	})
+	created.ScoringMode = ScoringModeACM
 	return created, err
 }
 
@@ -242,7 +248,7 @@ func (s *Service) GetContest(ctx context.Context, actor auth.Actor, id int64) (C
 	if err := s.canReadContest(ctx, actor, record); err != nil {
 		return ContestRecord{}, err
 	}
-	return s.withProblems(ctx, record)
+	return s.withFrontendContract(ctx, actor, record)
 }
 
 func (s *Service) ListContests(ctx context.Context, actor auth.Actor, filter ListContestFilter) (ContestList, error) {
@@ -264,7 +270,7 @@ func (s *Service) ListContests(ctx context.Context, actor auth.Actor, filter Lis
 		return ContestList{}, err
 	}
 	for i := range items {
-		withProblems, err := s.withProblems(ctx, items[i])
+		withProblems, err := s.withFrontendContract(ctx, actor, items[i])
 		if err != nil {
 			return ContestList{}, err
 		}
@@ -300,9 +306,11 @@ func (s *Service) UpdateContest(ctx context.Context, actor auth.Actor, id int64,
 				return err
 			}
 			updated.Problems = problems
+			updated.ScoringMode = ScoringModeACM
+			updated.Registered = s.actorRegisteredForContest(ctx, actor, updated.ID)
 			return nil
 		}
-		updated, err = s.withProblems(ctx, updated)
+		updated, err = s.withFrontendContract(ctx, actor, updated)
 		return err
 	})
 	return updated, err
@@ -417,13 +425,23 @@ func (s *Service) AfterSubmissionTerminal(ctx context.Context, terminal submissi
 	return s.recordTerminalSubmission(ctx, terminal)
 }
 
-func (s *Service) withProblems(ctx context.Context, record ContestRecord) (ContestRecord, error) {
+func (s *Service) withFrontendContract(ctx context.Context, actor auth.Actor, record ContestRecord) (ContestRecord, error) {
 	problems, err := s.repo.ListContestProblems(ctx, record.ID)
 	if err != nil {
 		return ContestRecord{}, err
 	}
 	record.Problems = problems
+	record.ScoringMode = ScoringModeACM
+	record.Registered = s.actorRegisteredForContest(ctx, actor, record.ID)
 	return record, nil
+}
+
+func (s *Service) actorRegisteredForContest(ctx context.Context, actor auth.Actor, contestID int64) bool {
+	if !actor.Authenticated() {
+		return false
+	}
+	registration, err := s.repo.GetRegistration(ctx, contestID, actor.UserID)
+	return err == nil && registration.Status == RegistrationActive
 }
 
 func (s *Service) canReadContest(ctx context.Context, actor auth.Actor, contest ContestRecord) error {

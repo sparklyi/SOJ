@@ -469,6 +469,12 @@ func (r *memoryRepo) GetEnabledLanguage(ctx context.Context, id int64) (Language
 func (r *memoryRepo) ListLanguages(ctx context.Context, arg ListLanguagesInput) ([]LanguageRecord, int64, error) {
 	var rows []LanguageRecord
 	for _, row := range r.languages {
+		if arg.Enabled != nil && row.Enabled != *arg.Enabled {
+			continue
+		}
+		if arg.Engine != nil && row.Engine != *arg.Engine {
+			continue
+		}
 		rows = append(rows, row)
 	}
 	return rows, int64(len(rows)), nil

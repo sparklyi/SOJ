@@ -274,6 +274,26 @@ func TestCreateRunJudgesCustomStdinImmediately(t *testing.T) {
 	}
 }
 
+func TestListPublicLanguagesReturnsEnabledCatalogForRegularUsers(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.languages[1] = LanguageRecord{ID: 1, Engine: "soj-agent", EngineLanguageID: "go", Name: "Go", Enabled: true}
+	repo.languages[2] = LanguageRecord{ID: 2, Engine: "soj-agent", EngineLanguageID: "cpp17", Name: "C++17", Enabled: false}
+	repo.languages[3] = LanguageRecord{ID: 3, Engine: "legacy", EngineLanguageID: "py", Name: "Python", Enabled: true}
+	service := NewService(ServiceOptions{Repository: repo})
+
+	engine := "soj-agent"
+	items, total, err := service.ListPublicLanguages(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, ListLanguagesInput{Engine: &engine})
+	if err != nil {
+		t.Fatalf("ListPublicLanguages returned error: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("languages total=%d items=%+v, want one enabled soj-agent language", total, items)
+	}
+	if items[0].ID != 1 || !items[0].Enabled {
+		t.Fatalf("language = %+v", items[0])
+	}
+}
+
 func TestCreateRunReturnsRunningWhenShortWaitExpiresAndCompletesAsync(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}

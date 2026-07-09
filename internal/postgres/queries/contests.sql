@@ -114,8 +114,14 @@ DELETE FROM contest_problems
 WHERE contest_id = $1;
 
 -- name: ListContestProblems :many
-SELECT cp.*
+SELECT
+    cp.contest_id,
+    cp.problem_id,
+    cp.alias,
+    cp.sort_order,
+    p.title
 FROM contest_problems cp
+JOIN problems p ON p.id = cp.problem_id
 WHERE cp.contest_id = $1
 ORDER BY cp.sort_order;
 
