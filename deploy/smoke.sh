@@ -38,7 +38,8 @@ wait_http() {
 require_metric() {
   local url="$1"
   local metric="$2"
-  if ! curl -fsS "$url/metrics" | grep -q "$metric"; then
+  local body
+  if ! body="$(curl -fsS "$url/metrics")" || ! grep -q "$metric" <<<"$body"; then
     echo "metric $metric was not found at $url/metrics" >&2
     exit 1
   fi
