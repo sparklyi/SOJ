@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"sort"
@@ -219,6 +220,200 @@ func TestConcurrentUploadSerializesVersionAllocation(t *testing.T) {
 	}
 }
 
+func TestRunProblemCheckRequiresOwnerOrAdmin(t *testing.T) {
+	repo := newFakeRepository()
+	store := &fakeStorage{}
+	seedProblemCheckData(t, repo, store, `[]`, zipArchive(t, map[string]string{
+		"input1.txt":  "1\n",
+		"output1.txt": "1\n",
+	}), 1)
+	service := NewService(repo, store)
+
+	_, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1)
+	assertAppCode(t, err, "problem.forbidden")
+
+	if _, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1); err != nil {
+		t.Fatalf("owner check failed: %v", err)
+	}
+	if _, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1); err != nil {
+		t.Fatalf("admin check failed: %v", err)
+	}
+}
+
+func TestRunProblemCheckPersistsCompletedRunAndSummary(t *testing.T) {
+	repo := newFakeRepository()
+	store := &fakeStorage{}
+	seedProblemCheckData(t, repo, store, `[{"input":"1 1\n","output":"2\n"}]`, zipArchive(t, map[string]string{
+		"input1.txt":  "1 1\n",
+		"output1.txt": "2\n",
+		"input2.txt":  "2 3\n",
+		"output2.txt": "5\n",
+	}), 2)
+	service := NewService(repo, store)
+	service.now = func() time.Time { return time.Unix(100, 0).UTC() }
+
+	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1)
+	if err != nil {
+		t.Fatalf("RunProblemCheck returned error: %v", err)
+	}
+
+	if result.Run.ID == 0 || result.Run.Status != ProblemCheckStatusCompleted {
+		t.Fatalf("run = %+v", result.Run)
+	}
+	if result.Run.ProblemID != 1 || result.Run.TestcaseSetID != 7 || result.Run.RequestedBy != 10 {
+		t.Fatalf("run linkage = %+v", result.Run)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings, got %+v", result.Findings)
+	}
+	if result.Run.Summary.CaseCount != 2 || result.Run.Summary.ExpectedCaseCount != 2 {
+		t.Fatalf("summary case counts = %+v", result.Run.Summary)
+	}
+	if !result.Run.Summary.StorageReadable || !result.Run.Summary.ZipReadable {
+		t.Fatalf("summary readability = %+v", result.Run.Summary)
+	}
+	if len(repo.checkRuns) != 1 || repo.checkRuns[result.Run.ID].Status != ProblemCheckStatusCompleted {
+		t.Fatalf("persisted runs = %+v", repo.checkRuns)
+	}
+}
+
+func TestRunProblemCheckReportsArchiveFindings(t *testing.T) {
+	tests := []struct {
+		name      string
+		archive   []byte
+		caseCount int32
+		wantCodes []string
+	}{
+		{
+			name:      "unreadable storage object",
+			archive:   nil,
+			caseCount: 1,
+			wantCodes: []string{"testcase.storage_unreadable"},
+		},
+		{
+			name:      "invalid zip",
+			archive:   []byte("not a zip"),
+			caseCount: 1,
+			wantCodes: []string{"testcase.zip_invalid"},
+		},
+		{
+			name:      "empty archive",
+			archive:   zipArchive(t, nil),
+			caseCount: 1,
+			wantCodes: []string{"testcase.archive_empty", "testcase.case_count_mismatch"},
+		},
+		{
+			name: "missing pairs and case count mismatch",
+			archive: zipArchive(t, map[string]string{
+				"input1.txt":  "1\n",
+				"output2.txt": "2\n",
+			}),
+			caseCount: 2,
+			wantCodes: []string{"testcase.output_missing", "testcase.input_missing", "testcase.case_count_mismatch"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepository()
+			store := &fakeStorage{}
+			seedProblemCheckData(t, repo, store, `[]`, tt.archive, tt.caseCount)
+			service := NewService(repo, store)
+
+			result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1)
+			if err != nil {
+				t.Fatalf("RunProblemCheck returned error: %v", err)
+			}
+
+			if result.Run.Status != ProblemCheckStatusCompleted {
+				t.Fatalf("run status = %s, want completed", result.Run.Status)
+			}
+			assertFindingCodes(t, result.Findings, tt.wantCodes)
+			if result.Run.Summary.ErrorCount != len(tt.wantCodes) {
+				t.Fatalf("summary = %+v, want %d errors", result.Run.Summary, len(tt.wantCodes))
+			}
+			if len(repo.checkFindings[result.Run.ID]) != len(tt.wantCodes) {
+				t.Fatalf("persisted findings = %+v", repo.checkFindings)
+			}
+		})
+	}
+}
+
+func TestRunProblemCheckReportsStatementSampleJSONFindings(t *testing.T) {
+	tests := []struct {
+		name    string
+		samples string
+		code    string
+	}{
+		{name: "invalid json", samples: `{`, code: "statement.samples_invalid"},
+		{name: "null", samples: `null`, code: "statement.samples_invalid"},
+		{name: "not an array", samples: `{"input":"1\n","output":"1\n"}`, code: "statement.samples_invalid"},
+		{name: "missing output", samples: `[{"input":"1\n"}]`, code: "statement.samples_invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepository()
+			store := &fakeStorage{}
+			seedProblemCheckData(t, repo, store, tt.samples, zipArchive(t, map[string]string{
+				"input1.txt":  "1\n",
+				"output1.txt": "1\n",
+			}), 1)
+			service := NewService(repo, store)
+
+			result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1)
+			if err != nil {
+				t.Fatalf("RunProblemCheck returned error: %v", err)
+			}
+
+			assertFindingCodes(t, result.Findings, []string{tt.code})
+		})
+	}
+}
+
+func TestGetProblemCheckReturnsCheckNotFoundForMissingRun(t *testing.T) {
+	repo := newFakeRepository()
+	store := &fakeStorage{}
+	seedProblemCheckData(t, repo, store, `[]`, zipArchive(t, map[string]string{
+		"input1.txt":  "1\n",
+		"output1.txt": "1\n",
+	}), 1)
+	service := NewService(repo, store)
+
+	_, err := service.GetProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, 99)
+
+	assertAppCode(t, err, "problem_check.not_found")
+}
+
+func seedProblemCheckData(t *testing.T, repo *fakeRepository, store *fakeStorage, samples string, archive []byte, caseCount int32) {
+	t.Helper()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate, CurrentStatementID: 3, CurrentTestcaseSetID: 7, CurrentTestcaseStatus: TestcaseStatusReady}
+	repo.statements[3] = Statement{ID: 3, ProblemID: 1, Version: 1, Title: "A", Description: "desc", Samples: json.RawMessage(samples), IsCurrent: true}
+	repo.currentStatement[1] = 3
+	repo.testcaseSets[7] = TestcaseSetRecord{ID: 7, ProblemID: 1, Version: 1, StorageKey: "cases.zip", CaseCount: caseCount, Status: TestcaseStatusReady, IsCurrent: true}
+	repo.currentTestcase[1] = 7
+	if archive != nil {
+		store.objects = map[string][]byte{"cases.zip": archive}
+	}
+}
+
+func assertFindingCodes(t *testing.T, findings []ProblemCheckFinding, want []string) {
+	t.Helper()
+	got := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		got = append(got, finding.Code)
+		if finding.Severity != ProblemCheckSeverityError {
+			t.Fatalf("finding %s severity = %s, want error", finding.Code, finding.Severity)
+		}
+	}
+	sort.Strings(got)
+	want = append([]string(nil), want...)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("finding codes = %v, want %v; findings=%+v", got, want, findings)
+	}
+}
+
 type fakeRepository struct {
 	mu                    sync.Mutex
 	problems              map[int64]ProblemRecord
@@ -226,11 +421,15 @@ type fakeRepository struct {
 	currentStatement      map[int64]int64
 	testcaseSets          map[int64]TestcaseSetRecord
 	currentTestcase       map[int64]int64
+	checkRuns             map[int64]ProblemCheckRunRecord
+	checkFindings         map[int64][]ProblemCheckFindingRecord
 	tags                  map[int64][]Tag
 	nextProblemID         int64
 	nextTagID             int64
 	nextStatementID       int64
 	nextTestcaseID        int64
+	nextCheckRunID        int64
+	nextCheckFindingID    int64
 	nextArtifactID        int64
 	failCreateTestcaseSet bool
 }
@@ -242,6 +441,8 @@ func newFakeRepository() *fakeRepository {
 		currentStatement: map[int64]int64{},
 		testcaseSets:     map[int64]TestcaseSetRecord{},
 		currentTestcase:  map[int64]int64{},
+		checkRuns:        map[int64]ProblemCheckRunRecord{},
+		checkFindings:    map[int64][]ProblemCheckFindingRecord{},
 		tags:             map[int64][]Tag{},
 	}
 }
@@ -416,6 +617,136 @@ func (r *fakeRepository) GetCurrentReadyTestcaseSet(ctx context.Context, problem
 		return TestcaseSetRecord{}, apperror.NotFound("problem.not_found", "problem not found")
 	}
 	return set, nil
+}
+
+func (r *fakeRepository) CreateProblemCheckRun(ctx context.Context, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	r.nextCheckRunID++
+	now := time.Now()
+	status := input.Status
+	if status == "" {
+		status = ProblemCheckStatusQueued
+	}
+	run := ProblemCheckRunRecord{
+		ID:            r.nextCheckRunID,
+		ProblemID:     input.ProblemID,
+		TestcaseSetID: input.TestcaseSetID,
+		RequestedBy:   input.RequestedBy,
+		Status:        status,
+		Summary:       jsonRawFromDB(input.Summary),
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	r.checkRuns[run.ID] = run
+	return run, nil
+}
+
+func (r *fakeRepository) GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error) {
+	run, ok := r.checkRuns[id]
+	if !ok {
+		return ProblemCheckRunRecord{}, apperror.NotFound("problem.not_found", "problem not found")
+	}
+	return run, nil
+}
+
+func (r *fakeRepository) ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
+	runs := make([]ProblemCheckRunRecord, 0)
+	for _, run := range r.checkRuns {
+		if run.ProblemID == filter.ProblemID {
+			runs = append(runs, run)
+		}
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].CreatedAt.Equal(runs[j].CreatedAt) {
+			return runs[i].ID > runs[j].ID
+		}
+		return runs[i].CreatedAt.After(runs[j].CreatedAt)
+	})
+	if filter.Offset >= int32(len(runs)) {
+		return nil, nil
+	}
+	start := int(filter.Offset)
+	end := start + int(filter.Limit)
+	if filter.Limit <= 0 {
+		end = start
+	}
+	if end > len(runs) {
+		end = len(runs)
+	}
+	return append([]ProblemCheckRunRecord(nil), runs[start:end]...), nil
+}
+
+func (r *fakeRepository) CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	run, ok := r.checkRuns[input.ID]
+	if !ok || (run.Status != ProblemCheckStatusQueued && run.Status != ProblemCheckStatusRunning) {
+		return ProblemCheckRunRecord{}, apperror.NotFound("problem.not_found", "problem not found")
+	}
+	now := time.Now()
+	finishedAt := input.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = now
+	}
+	run.Status = ProblemCheckStatusCompleted
+	run.Summary = jsonRawFromDB(input.Summary)
+	run.ErrorMessage = ""
+	run.FinishedAt = finishedAt
+	run.UpdatedAt = now
+	r.checkRuns[run.ID] = run
+	return run, nil
+}
+
+func (r *fakeRepository) FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	run, ok := r.checkRuns[input.ID]
+	if !ok || (run.Status != ProblemCheckStatusQueued && run.Status != ProblemCheckStatusRunning) {
+		return ProblemCheckRunRecord{}, apperror.NotFound("problem.not_found", "problem not found")
+	}
+	now := time.Now()
+	finishedAt := input.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = now
+	}
+	run.Status = ProblemCheckStatusFailed
+	run.Summary = jsonRawFromDB(input.Summary)
+	run.ErrorMessage = input.ErrorMessage
+	run.FinishedAt = finishedAt
+	run.UpdatedAt = now
+	r.checkRuns[run.ID] = run
+	return run, nil
+}
+
+func (r *fakeRepository) CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
+	r.nextCheckFindingID++
+	finding := ProblemCheckFindingRecord{
+		ID:          r.nextCheckFindingID,
+		RunID:       input.RunID,
+		Severity:    input.Severity,
+		Code:        input.Code,
+		Message:     input.Message,
+		CaseIndex:   input.CaseIndex,
+		TestcaseKey: input.TestcaseKey,
+		Details:     jsonRawFromDB(input.Details),
+		CreatedAt:   time.Now(),
+	}
+	r.checkFindings[finding.RunID] = append(r.checkFindings[finding.RunID], finding)
+	return finding, nil
+}
+
+func (r *fakeRepository) GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error) {
+	for _, findings := range r.checkFindings {
+		for _, finding := range findings {
+			if finding.ID == id {
+				return finding, nil
+			}
+		}
+	}
+	return ProblemCheckFindingRecord{}, apperror.NotFound("problem.not_found", "problem not found")
+}
+
+func (r *fakeRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
+	findings := append([]ProblemCheckFindingRecord(nil), r.checkFindings[runID]...)
+	sort.Slice(findings, func(i, j int) bool {
+		return findings[i].ID < findings[j].ID
+	})
+	return findings, nil
 }
 
 func (r *fakeRepository) CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error) {
