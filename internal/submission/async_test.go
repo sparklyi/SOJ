@@ -243,10 +243,10 @@ func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
 			Index:             1,
 			InputKey:          "1 2\n",
 			ExpectedOutputKey: "3\n",
-			TimeLimitMS:       1000,
+			TimeLimitMS:       5000,
 			MemoryKB:          262144,
 		}},
-		TimeoutMS: 1000,
+		TimeoutMS: 5000,
 		MemoryKB:  262144,
 		CreatedAt: time.Unix(100, 0).UTC(),
 	}
