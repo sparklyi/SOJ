@@ -332,6 +332,51 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}/checks:
+    post:
+      tags: [Problems]
+      operationId: runProblemCheck
+      summary: Run a synchronous problem data check
+      x-owner: WP3 Problem
+      x-auth: owner-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "201":
+          description: Problem check run completed or failed synchronously.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemCheckRunEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}/checks/{check_id}:
+    get:
+      tags: [Problems]
+      operationId: getProblemCheck
+      summary: Get a problem check run
+      x-owner: WP3 Problem
+      x-auth: owner-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - $ref: "#/components/parameters/ProblemCheckID"
+      responses:
+        "200":
+          description: Problem check run and findings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemCheckRunEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/problems/{id}/stats:
     get:
       tags: [Problems]
@@ -822,6 +867,14 @@ components:
       schema:
         type: integer
         format: int64
+    ProblemCheckID:
+      x-owner: WP3 Problem
+      name: check_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
     Page:
       x-owner: WP1 Data/API Contract
       name: page
@@ -864,6 +917,10 @@ components:
       x-owner: WP1 Data/API Contract
       description: Validation failed.
       content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    ServiceUnavailable:
+      x-owner: WP1 Data/API Contract
+      description: Service unavailable.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
     InternalError:
       x-owner: WP1 Data/API Contract
       description: Internal error.
@@ -905,13 +962,18 @@ components:
             - route.not_found
             - validation.failed
             - auth.invalid_credentials
+            - auth.required
             - auth.token_expired
             - auth.refresh_token_revoked
             - user.email_exists
+            - problem.id_invalid
+            - problem.forbidden
             - problem.not_found
             - problem.slug_conflict
             - problem.not_publishable
             - problem.testcase_not_ready
+            - problem_check.id_invalid
+            - problem_check.not_found
             - testcase.invalid_archive
             - submission.not_found
             - submission.not_allowed
@@ -954,6 +1016,12 @@ components:
     TestcaseSetStatus:
       type: string
       enum: [uploading, ready, disabled]
+    ProblemCheckStatus:
+      type: string
+      enum: [queued, running, completed, failed, canceled]
+    ProblemCheckSeverity:
+      type: string
+      enum: [info, warning, error]
     JudgeStatus:
       type: string
       enum: [queued, running, accepted, wrong_answer, compile_error, runtime_error, time_limit, memory_limit, system_error, canceled]
@@ -1120,6 +1188,88 @@ components:
         status: { $ref: "#/components/schemas/TestcaseSetStatus" }
         is_current: { type: boolean }
         created_at: { type: string, format: date-time }
+    ProblemCheckSummary:
+      type: object
+      required: [case_count, expected_case_count, finding_count, error_count, warning_count, info_count, storage_readable, zip_readable, valid]
+      properties:
+        case_count:
+          type: integer
+          description: Number of input/output pairs found in the archive.
+        expected_case_count:
+          type: integer
+          description: Case count declared by the current testcase set.
+        finding_count:
+          type: integer
+          minimum: 0
+        error_count:
+          type: integer
+          minimum: 0
+        warning_count:
+          type: integer
+          minimum: 0
+        info_count:
+          type: integer
+          minimum: 0
+        storage_readable:
+          type: boolean
+          description: Whether the current testcase archive object was readable.
+        zip_readable:
+          type: boolean
+          description: Whether the current testcase archive was parseable as zip.
+        valid:
+          type: boolean
+          description: True when the completed check produced no error findings.
+    ProblemCheckFinding:
+      type: object
+      required: [id, run_id, severity, code, message, details, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        run_id: { type: integer, format: int64 }
+        severity: { $ref: "#/components/schemas/ProblemCheckSeverity" }
+        code:
+          type: string
+          description: Stable machine-readable finding code.
+        message:
+          type: string
+          description: Human-readable finding summary.
+        case_index:
+          type: integer
+          nullable: true
+          description: 1-based testcase index when the finding belongs to a specific case.
+        testcase_key:
+          type: string
+          nullable: true
+          description: Testcase archive member or logical key when available.
+        details:
+          type: object
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+    ProblemCheckRun:
+      type: object
+      required: [id, problem_id, status, summary, findings, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        problem_id: { type: integer, format: int64 }
+        testcase_set_id:
+          type: integer
+          format: int64
+          nullable: true
+        requested_by:
+          type: integer
+          format: int64
+          nullable: true
+        status: { $ref: "#/components/schemas/ProblemCheckStatus" }
+        summary: { $ref: "#/components/schemas/ProblemCheckSummary" }
+        error_message:
+          type: string
+          nullable: true
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/ProblemCheckFinding" }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     SubmissionCreateRequest:
       type: object
       required: [problem_id, language_id, source_code]
@@ -1440,6 +1590,9 @@ components:
     TestcaseSetEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/TestcaseSetResponse" } }
+    ProblemCheckRunEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ProblemCheckRun" } }
     ProblemStatsEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ProblemStatsResponse" } }

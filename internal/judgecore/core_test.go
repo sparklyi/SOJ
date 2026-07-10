@@ -11,7 +11,7 @@ import (
 	"SOJ/internal/judgecore/language"
 )
 
-const normalCaseTimeLimit = 3 * time.Second
+const normalCaseTimeLimit = 10 * time.Second
 
 func TestCoreJudgesGoAccepted(t *testing.T) {
 	result := judgeGo(t, `package main

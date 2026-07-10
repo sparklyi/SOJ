@@ -1,6 +1,7 @@
 package problem
 
 import (
+	"context"
 	"io"
 	"strconv"
 
@@ -12,11 +13,26 @@ import (
 )
 
 type Handler struct {
-	service *Service
+	service     *Service
+	checkRunner problemCheckRunner
+	checkGetter problemCheckGetter
 }
 
 func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+	handler := &Handler{service: service}
+	if service != nil {
+		handler.checkRunner, _ = any(service).(problemCheckRunner)
+		handler.checkGetter, _ = any(service).(problemCheckGetter)
+	}
+	return handler
+}
+
+type problemCheckRunner interface {
+	RunProblemCheck(ctx context.Context, actor auth.Actor, problemID int64) (ProblemCheckResult, error)
+}
+
+type problemCheckGetter interface {
+	GetProblemCheck(ctx context.Context, actor auth.Actor, problemID int64, checkID int64) (ProblemCheckResult, error)
 }
 
 func (h *Handler) createProblem(c *gin.Context) {
@@ -206,6 +222,78 @@ func (h *Handler) uploadTestcases(c *gin.Context) {
 	httpapi.Created(c, set)
 }
 
+func (h *Handler) runProblemCheck(c *gin.Context) {
+	id, ok := problemIDParam(c)
+	if !ok {
+		return
+	}
+	service, ok := h.problemCheckRunner()
+	if !ok {
+		httpapi.Error(c, apperror.ServiceUnavailable("problem checks are not available"))
+		return
+	}
+	result, err := service.RunProblemCheck(c.Request.Context(), actorFromContext(c), id)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.Created(c, problemCheckRunResponse(result))
+}
+
+func (h *Handler) getProblemCheck(c *gin.Context) {
+	id, ok := problemIDParam(c)
+	if !ok {
+		return
+	}
+	checkID, ok := problemCheckIDParam(c)
+	if !ok {
+		return
+	}
+	service, ok := h.problemCheckGetter()
+	if !ok {
+		httpapi.Error(c, apperror.ServiceUnavailable("problem checks are not available"))
+		return
+	}
+	result, err := service.GetProblemCheck(c.Request.Context(), actorFromContext(c), id, checkID)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, problemCheckRunResponse(result))
+}
+
+func (h *Handler) problemCheckRunner() (problemCheckRunner, bool) {
+	if h.checkRunner != nil {
+		return h.checkRunner, true
+	}
+	if h.service == nil {
+		return nil, false
+	}
+	service, ok := any(h.service).(problemCheckRunner)
+	return service, ok
+}
+
+func (h *Handler) problemCheckGetter() (problemCheckGetter, bool) {
+	if h.checkGetter != nil {
+		return h.checkGetter, true
+	}
+	if h.service == nil {
+		return nil, false
+	}
+	service, ok := any(h.service).(problemCheckGetter)
+	return service, ok
+}
+
+func problemCheckRunResponse(result ProblemCheckResult) ProblemCheckRun {
+	run := result.Run
+	if result.Findings == nil {
+		run.Findings = []ProblemCheckFinding{}
+	} else {
+		run.Findings = result.Findings
+	}
+	return run
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -232,6 +320,15 @@ func problemIDParam(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		httpapi.Error(c, apperror.BadRequest("problem.id_invalid", "problem id is invalid"))
+		return 0, false
+	}
+	return id, true
+}
+
+func problemCheckIDParam(c *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("check_id"), 10, 64)
+	if err != nil || id <= 0 {
+		httpapi.Error(c, apperror.BadRequest("problem_check.id_invalid", "problem check id is invalid"))
 		return 0, false
 	}
 	return id, true

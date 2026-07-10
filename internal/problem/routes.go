@@ -20,5 +20,7 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	problems.POST("/:id/statement", m.handler.createStatement)
 	problems.GET("/:id/statement", m.handler.currentStatement)
 	problems.POST("/:id/testcase-sets", m.handler.uploadTestcases)
+	problems.POST("/:id/checks", m.handler.runProblemCheck)
+	problems.GET("/:id/checks/:check_id", m.handler.getProblemCheck)
 	problems.GET("/:id/stats", m.handler.stats)
 }

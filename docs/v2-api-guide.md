@@ -6,7 +6,7 @@ This guide summarizes the WP1 contract baseline in `api/openapi.yaml`.
 
 - WP1 owns shared schemas, response envelopes, pagination, error responses, and this guide.
 - WP2 owns auth paths and admin user paths.
-- WP3 owns problem, statement, testcase-set, and problem stats paths.
+- WP3 owns problem, statement, testcase-set, problem check, and problem stats paths.
 - WP4 owns submission, run, and admin language paths.
 - WP5 owns contest, registration, and scoreboard paths.
 
@@ -75,7 +75,17 @@ Problems:
 - `DELETE /api/v1/problems/{id}`
 - `POST /api/v1/problems/{id}/statement`
 - `POST /api/v1/problems/{id}/testcase-sets`
+- `POST /api/v1/problems/{id}/checks`
+- `GET /api/v1/problems/{id}/checks/{check_id}`
 - `GET /api/v1/problems/{id}/stats`
+
+Problem checks:
+
+- `POST /api/v1/problems/{id}/checks` synchronously validates the current ready testcase set for the problem. The response is a `201` envelope whose `data` is a `ProblemCheckRun`.
+- `GET /api/v1/problems/{id}/checks/{check_id}` returns the persisted check run and its findings in a `200` envelope.
+- Check endpoints are owner/admin/root scoped. They use the same error envelope as the rest of the API.
+- `ProblemCheckRun.summary` includes archive counts, finding counts by severity, storage/zip readability flags, and `valid`.
+- `ProblemCheckRun.findings` contains stable finding `code`, `severity`, `message`, optional `case_index` and `testcase_key`, and structured `details`.
 
 Submissions and runs:
 

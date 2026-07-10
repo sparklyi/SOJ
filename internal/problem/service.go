@@ -1,6 +1,7 @@
 package problem
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	crand "crypto/rand"
@@ -9,7 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"path"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +37,16 @@ const (
 	StatusArchived  = "archived"
 
 	TestcaseStatusReady = "ready"
+
+	ProblemCheckStatusQueued    = "queued"
+	ProblemCheckStatusRunning   = "running"
+	ProblemCheckStatusCompleted = "completed"
+	ProblemCheckStatusFailed    = "failed"
+	ProblemCheckStatusCanceled  = "canceled"
+
+	ProblemCheckSeverityInfo    = "info"
+	ProblemCheckSeverityWarning = "warning"
+	ProblemCheckSeverityError   = "error"
 )
 
 type ProblemRecord struct {
@@ -193,6 +208,50 @@ type UploadTestcaseInput struct {
 	CaseCount      int32  `json:"case_count"`
 	ChecksumSHA256 string `json:"checksum_sha256"`
 	ContentType    string `json:"content_type"`
+}
+
+type ProblemCheckSummary struct {
+	FindingCount      int   `json:"finding_count"`
+	ErrorCount        int   `json:"error_count"`
+	WarningCount      int   `json:"warning_count"`
+	InfoCount         int   `json:"info_count"`
+	ExpectedCaseCount int32 `json:"expected_case_count"`
+	CaseCount         int   `json:"case_count"`
+	StorageReadable   bool  `json:"storage_readable"`
+	ZipReadable       bool  `json:"zip_readable"`
+	Valid             bool  `json:"valid"`
+}
+
+type ProblemCheckRun struct {
+	ID            int64                 `json:"id"`
+	ProblemID     int64                 `json:"problem_id"`
+	TestcaseSetID int64                 `json:"testcase_set_id,omitempty"`
+	RequestedBy   int64                 `json:"requested_by,omitempty"`
+	Status        string                `json:"status"`
+	Summary       ProblemCheckSummary   `json:"summary"`
+	ErrorMessage  string                `json:"error_message,omitempty"`
+	Findings      []ProblemCheckFinding `json:"findings"`
+	StartedAt     time.Time             `json:"started_at,omitempty"`
+	FinishedAt    time.Time             `json:"finished_at,omitempty"`
+	CreatedAt     time.Time             `json:"created_at,omitempty"`
+	UpdatedAt     time.Time             `json:"updated_at,omitempty"`
+}
+
+type ProblemCheckFinding struct {
+	ID          int64           `json:"id"`
+	RunID       int64           `json:"run_id"`
+	Severity    string          `json:"severity"`
+	Code        string          `json:"code"`
+	Message     string          `json:"message"`
+	CaseIndex   int32           `json:"case_index,omitempty"`
+	TestcaseKey string          `json:"testcase_key,omitempty"`
+	Details     json.RawMessage `json:"details"`
+	CreatedAt   time.Time       `json:"created_at,omitempty"`
+}
+
+type ProblemCheckResult struct {
+	Run      ProblemCheckRun       `json:"run"`
+	Findings []ProblemCheckFinding `json:"findings"`
 }
 
 type Service struct {
@@ -451,6 +510,143 @@ func (s *Service) UploadTestcaseArchive(ctx context.Context, actor auth.Actor, p
 	return created, err
 }
 
+func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problemID int64) (ProblemCheckResult, error) {
+	p, err := s.repo.GetProblem(ctx, problemID)
+	if err != nil {
+		return ProblemCheckResult{}, err
+	}
+	if err := canWriteProblem(actor, p); err != nil {
+		return ProblemCheckResult{}, err
+	}
+
+	statement, err := s.repo.GetCurrentProblemStatement(ctx, problemID)
+	if err != nil {
+		return ProblemCheckResult{}, err
+	}
+	set, err := s.repo.GetCurrentReadyTestcaseSet(ctx, problemID)
+	if err != nil {
+		return ProblemCheckResult{}, err
+	}
+
+	findings := validateProblemCheckStatementSamples(statement)
+	storageReadable := false
+	zipReadable := false
+	caseCount := 0
+	if s.storage == nil {
+		findings = append(findings, problemCheckFindingDraft{
+			severity: ProblemCheckSeverityError,
+			code:     "testcase.storage_unreadable",
+			message:  "testcase object storage is unavailable",
+			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
+		})
+	} else if strings.TrimSpace(set.StorageKey) == "" {
+		findings = append(findings, problemCheckFindingDraft{
+			severity: ProblemCheckSeverityError,
+			code:     "testcase.storage_unreadable",
+			message:  "testcase archive storage key is missing",
+		})
+	} else {
+		body, _, err := s.storage.Get(ctx, set.StorageKey)
+		if err != nil {
+			findings = append(findings, problemCheckFindingDraft{
+				severity: ProblemCheckSeverityError,
+				code:     "testcase.storage_unreadable",
+				message:  "testcase archive cannot be read from storage",
+				details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
+			})
+		} else {
+			storageReadable = true
+			data, err := readAllAndClose(body)
+			if err != nil {
+				storageReadable = false
+				findings = append(findings, problemCheckFindingDraft{
+					severity: ProblemCheckSeverityError,
+					code:     "testcase.storage_unreadable",
+					message:  "testcase archive cannot be read from storage",
+					details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
+				})
+			} else {
+				archiveResult := validateProblemCheckArchive(data, set)
+				zipReadable = archiveResult.zipReadable
+				caseCount = archiveResult.caseCount
+				findings = append(findings, archiveResult.findings...)
+			}
+		}
+	}
+
+	summary := problemCheckSummary(set.CaseCount, caseCount, storageReadable, zipReadable, findings)
+	summaryJSON, err := marshalProblemCheckSummary(summary)
+	if err != nil {
+		return ProblemCheckResult{}, err
+	}
+
+	var runRecord ProblemCheckRunRecord
+	persistedFindings := make([]ProblemCheckFinding, 0, len(findings))
+	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
+		run, err := repo.CreateProblemCheckRun(ctx, CreateProblemCheckRunInput{
+			ProblemID:     problemID,
+			TestcaseSetID: set.ID,
+			RequestedBy:   actor.UserID,
+			Status:        ProblemCheckStatusRunning,
+			Summary:       json.RawMessage(`{}`),
+		})
+		if err != nil {
+			return err
+		}
+		for _, finding := range findings {
+			record, err := repo.CreateProblemCheckFinding(ctx, CreateProblemCheckFindingInput{
+				RunID:       run.ID,
+				Severity:    finding.severity,
+				Code:        finding.code,
+				Message:     finding.message,
+				CaseIndex:   finding.caseIndex,
+				TestcaseKey: finding.testcaseKey,
+				Details:     finding.details,
+			})
+			if err != nil {
+				return err
+			}
+			persistedFindings = append(persistedFindings, serviceProblemCheckFindingFromRecord(record))
+		}
+		runRecord, err = repo.CompleteProblemCheckRun(ctx, CompleteProblemCheckRunInput{
+			ID:         run.ID,
+			Summary:    summaryJSON,
+			FinishedAt: s.now(),
+		})
+		return err
+	})
+	if err != nil {
+		return ProblemCheckResult{}, err
+	}
+	return ProblemCheckResult{Run: serviceProblemCheckRunFromRecord(runRecord), Findings: persistedFindings}, nil
+}
+
+func (s *Service) GetProblemCheck(ctx context.Context, actor auth.Actor, problemID int64, checkID int64) (ProblemCheckResult, error) {
+	p, err := s.repo.GetProblem(ctx, problemID)
+	if err != nil {
+		return ProblemCheckResult{}, err
+	}
+	if err := canWriteProblem(actor, p); err != nil {
+		return ProblemCheckResult{}, err
+	}
+	run, err := s.repo.GetProblemCheckRun(ctx, checkID)
+	if err != nil {
+		return ProblemCheckResult{}, problemCheckNotFoundErr(err)
+	}
+	if run.ProblemID != problemID {
+		return ProblemCheckResult{}, apperror.NotFound("problem_check.not_found", "problem check not found")
+	}
+	records, err := s.repo.ListProblemCheckFindings(ctx, checkID)
+	if err != nil {
+		return ProblemCheckResult{}, err
+	}
+	findings := make([]ProblemCheckFinding, 0, len(records))
+	for _, record := range records {
+		findings = append(findings, serviceProblemCheckFindingFromRecord(record))
+	}
+	return ProblemCheckResult{Run: serviceProblemCheckRunFromRecord(run), Findings: findings}, nil
+}
+
 func (s *Service) ProblemResponse(ctx context.Context, p ProblemRecord) (ProblemResponse, error) {
 	tags, err := s.repo.ListProblemTags(ctx, p.ID)
 	if err != nil {
@@ -564,6 +760,259 @@ func ensurePublishable(ctx context.Context, repo Repository, problemID int64) er
 		return apperror.Unprocessable("problem.not_publishable", "current ready testcase set is required before publishing")
 	}
 	return nil
+}
+
+type problemCheckFindingDraft struct {
+	severity    string
+	code        string
+	message     string
+	caseIndex   int32
+	testcaseKey string
+	details     json.RawMessage
+}
+
+type problemCheckArchiveValidationResult struct {
+	findings    []problemCheckFindingDraft
+	caseCount   int
+	zipReadable bool
+}
+
+func validateProblemCheckArchive(data []byte, set TestcaseSetRecord) problemCheckArchiveValidationResult {
+	result := problemCheckArchiveValidationResult{}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		result.findings = append(result.findings, problemCheckFindingDraft{
+			severity: ProblemCheckSeverityError,
+			code:     "testcase.zip_invalid",
+			message:  "testcase archive must be a valid zip file",
+			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
+		})
+		return result
+	}
+	result.zipReadable = true
+
+	inputs := map[string]string{}
+	outputs := map[string]string{}
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		name := path.Base(file.Name)
+		lower := strings.ToLower(name)
+		matches := caseNameRE.FindStringSubmatch(lower)
+		if len(matches) != 2 {
+			continue
+		}
+		if strings.HasPrefix(lower, "input") {
+			inputs[matches[1]] = name
+		} else {
+			outputs[matches[1]] = name
+		}
+	}
+
+	if len(inputs) == 0 && len(outputs) == 0 {
+		result.findings = append(result.findings, problemCheckFindingDraft{
+			severity: ProblemCheckSeverityError,
+			code:     "testcase.archive_empty",
+			message:  "testcase archive has no input/output pairs",
+			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
+		})
+	}
+
+	ids := sortedProblemCheckCaseIDs(inputs)
+	for _, id := range ids {
+		if _, ok := outputs[id]; ok {
+			result.caseCount++
+			continue
+		}
+		result.findings = append(result.findings, problemCheckFindingDraft{
+			severity:    ProblemCheckSeverityError,
+			code:        "testcase.output_missing",
+			message:     "each input must have a matching output",
+			caseIndex:   problemCheckCaseIndex(id),
+			testcaseKey: inputs[id],
+			details:     problemCheckDetails(map[string]any{"case_id": id, "input": inputs[id]}),
+		})
+	}
+
+	ids = sortedProblemCheckCaseIDs(outputs)
+	for _, id := range ids {
+		if _, ok := inputs[id]; ok {
+			continue
+		}
+		result.findings = append(result.findings, problemCheckFindingDraft{
+			severity:    ProblemCheckSeverityError,
+			code:        "testcase.input_missing",
+			message:     "each output must have a matching input",
+			caseIndex:   problemCheckCaseIndex(id),
+			testcaseKey: outputs[id],
+			details:     problemCheckDetails(map[string]any{"case_id": id, "output": outputs[id]}),
+		})
+	}
+
+	if int32(result.caseCount) != set.CaseCount {
+		result.findings = append(result.findings, problemCheckFindingDraft{
+			severity: ProblemCheckSeverityError,
+			code:     "testcase.case_count_mismatch",
+			message:  "case_count does not match input/output pairs",
+			details: problemCheckDetails(map[string]any{
+				"expected_case_count": set.CaseCount,
+				"actual_case_count":   result.caseCount,
+			}),
+		})
+	}
+	return result
+}
+
+func validateProblemCheckStatementSamples(statement Statement) []problemCheckFindingDraft {
+	samplesJSON := strings.TrimSpace(string(statement.Samples))
+	if samplesJSON == "" {
+		return nil
+	}
+	if !strings.HasPrefix(samplesJSON, "[") {
+		return []problemCheckFindingDraft{statementSamplesInvalidFinding(0)}
+	}
+
+	var samples []map[string]json.RawMessage
+	if err := json.Unmarshal(statement.Samples, &samples); err != nil {
+		return []problemCheckFindingDraft{statementSamplesInvalidFinding(0)}
+	}
+	for index, sample := range samples {
+		if !problemCheckSampleStringField(sample, "input") || !problemCheckSampleStringField(sample, "output") {
+			return []problemCheckFindingDraft{statementSamplesInvalidFinding(index + 1)}
+		}
+	}
+	return nil
+}
+
+func statementSamplesInvalidFinding(sampleIndex int) problemCheckFindingDraft {
+	details := map[string]any{}
+	if sampleIndex > 0 {
+		details["sample_index"] = sampleIndex
+	}
+	return problemCheckFindingDraft{
+		severity: ProblemCheckSeverityError,
+		code:     "statement.samples_invalid",
+		message:  "statement samples must be a JSON array with string input and output fields",
+		details:  problemCheckDetails(details),
+	}
+}
+
+func problemCheckSampleStringField(sample map[string]json.RawMessage, key string) bool {
+	raw, ok := sample[key]
+	if !ok {
+		return false
+	}
+	var value string
+	return json.Unmarshal(raw, &value) == nil
+}
+
+func sortedProblemCheckCaseIDs(files map[string]string) []string {
+	ids := make([]string, 0, len(files))
+	for id := range files {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if len(ids[i]) != len(ids[j]) {
+			return len(ids[i]) < len(ids[j])
+		}
+		return ids[i] < ids[j]
+	})
+	return ids
+}
+
+func problemCheckCaseIndex(id string) int32 {
+	value, err := strconv.ParseInt(id, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int32(value)
+}
+
+func problemCheckSummary(expectedCaseCount int32, caseCount int, storageReadable, zipReadable bool, findings []problemCheckFindingDraft) ProblemCheckSummary {
+	summary := ProblemCheckSummary{
+		FindingCount:      len(findings),
+		ExpectedCaseCount: expectedCaseCount,
+		CaseCount:         caseCount,
+		StorageReadable:   storageReadable,
+		ZipReadable:       zipReadable,
+	}
+	for _, finding := range findings {
+		switch finding.severity {
+		case ProblemCheckSeverityError:
+			summary.ErrorCount++
+		case ProblemCheckSeverityWarning:
+			summary.WarningCount++
+		case ProblemCheckSeverityInfo:
+			summary.InfoCount++
+		}
+	}
+	summary.Valid = summary.ErrorCount == 0
+	return summary
+}
+
+func marshalProblemCheckSummary(summary ProblemCheckSummary) (json.RawMessage, error) {
+	data, err := json.Marshal(summary)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data), nil
+}
+
+func problemCheckDetails(value map[string]any) json.RawMessage {
+	if len(value) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(data)
+}
+
+func serviceProblemCheckRunFromRecord(record ProblemCheckRunRecord) ProblemCheckRun {
+	summary := ProblemCheckSummary{}
+	if len(record.Summary) > 0 {
+		_ = json.Unmarshal(record.Summary, &summary)
+	}
+	return ProblemCheckRun{
+		ID:            record.ID,
+		ProblemID:     record.ProblemID,
+		TestcaseSetID: record.TestcaseSetID,
+		RequestedBy:   record.RequestedBy,
+		Status:        record.Status,
+		Summary:       summary,
+		ErrorMessage:  record.ErrorMessage,
+		StartedAt:     record.StartedAt,
+		FinishedAt:    record.FinishedAt,
+		CreatedAt:     record.CreatedAt,
+		UpdatedAt:     record.UpdatedAt,
+	}
+}
+
+func serviceProblemCheckFindingFromRecord(record ProblemCheckFindingRecord) ProblemCheckFinding {
+	details := record.Details
+	if len(details) == 0 {
+		details = json.RawMessage(`{}`)
+	}
+	return ProblemCheckFinding{
+		ID:          record.ID,
+		RunID:       record.RunID,
+		Severity:    record.Severity,
+		Code:        record.Code,
+		Message:     record.Message,
+		CaseIndex:   record.CaseIndex,
+		TestcaseKey: record.TestcaseKey,
+		Details:     details,
+		CreatedAt:   record.CreatedAt,
+	}
+}
+
+func problemCheckNotFoundErr(err error) error {
+	if appErr, ok := apperror.From(err); ok && appErr.HTTPStatus == http.StatusNotFound {
+		return apperror.NotFound("problem_check.not_found", "problem check not found")
+	}
+	return err
 }
 
 func requireAuthenticated(actor auth.Actor) error {
