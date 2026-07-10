@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/postgres"
@@ -35,8 +36,79 @@ type Repository interface {
 	ClearCurrentTestcaseSet(ctx context.Context, problemID int64) error
 	CreateTestcaseSet(ctx context.Context, problemID int64, version int32, storageKey, checksum string, sizeBytes int64, caseCount int32, createdBy int64) (TestcaseSetRecord, error)
 	GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error)
+	CreateProblemCheckRun(ctx context.Context, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error)
+	GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error)
+	ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error)
+	CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error)
+	FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error)
+	CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error)
+	GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error)
+	ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error)
 	CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error)
 	GetProblemStats(ctx context.Context, problemID int64) (ProblemStats, error)
+}
+
+type CreateProblemCheckRunInput struct {
+	ProblemID     int64
+	TestcaseSetID int64
+	RequestedBy   int64
+	Status        string
+	Summary       json.RawMessage
+}
+
+type ListProblemCheckRunsFilter struct {
+	ProblemID int64
+	Offset    int32
+	Limit     int32
+}
+
+type CompleteProblemCheckRunInput struct {
+	ID         int64
+	Summary    json.RawMessage
+	FinishedAt time.Time
+}
+
+type FailProblemCheckRunInput struct {
+	ID           int64
+	Summary      json.RawMessage
+	ErrorMessage string
+	FinishedAt   time.Time
+}
+
+type CreateProblemCheckFindingInput struct {
+	RunID       int64
+	Severity    string
+	Code        string
+	Message     string
+	CaseIndex   int32
+	TestcaseKey string
+	Details     json.RawMessage
+}
+
+type ProblemCheckRunRecord struct {
+	ID            int64           `json:"id"`
+	ProblemID     int64           `json:"problem_id"`
+	TestcaseSetID int64           `json:"testcase_set_id,omitempty"`
+	RequestedBy   int64           `json:"requested_by,omitempty"`
+	Status        string          `json:"status"`
+	Summary       json.RawMessage `json:"summary"`
+	ErrorMessage  string          `json:"error_message,omitempty"`
+	StartedAt     time.Time       `json:"started_at,omitempty"`
+	FinishedAt    time.Time       `json:"finished_at,omitempty"`
+	CreatedAt     time.Time       `json:"created_at,omitempty"`
+	UpdatedAt     time.Time       `json:"updated_at,omitempty"`
+}
+
+type ProblemCheckFindingRecord struct {
+	ID          int64           `json:"id"`
+	RunID       int64           `json:"run_id"`
+	Severity    string          `json:"severity"`
+	Code        string          `json:"code"`
+	Message     string          `json:"message"`
+	CaseIndex   int32           `json:"case_index,omitempty"`
+	TestcaseKey string          `json:"testcase_key,omitempty"`
+	Details     json.RawMessage `json:"details"`
+	CreatedAt   time.Time       `json:"created_at,omitempty"`
 }
 
 type PostgresRepository struct {
@@ -164,6 +236,40 @@ func (r *PostgresRepository) CreateTestcaseSet(ctx context.Context, problemID in
 func (r *PostgresRepository) GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error) {
 	set, err := r.queries.GetCurrentReadyTestcaseSet(ctx, problemID)
 	return testcaseSetFromDB(set), mapDBErr(err)
+}
+
+func (r *PostgresRepository) CreateProblemCheckRun(ctx context.Context, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	return createProblemCheckRun(ctx, r.queries, input)
+}
+
+func (r *PostgresRepository) GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error) {
+	run, err := r.queries.GetProblemCheckRunByID(ctx, id)
+	return problemCheckRunFromDB(run), mapDBErr(err)
+}
+
+func (r *PostgresRepository) ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
+	return listProblemCheckRuns(ctx, r.queries, filter)
+}
+
+func (r *PostgresRepository) CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	return completeProblemCheckRun(ctx, r.queries, input)
+}
+
+func (r *PostgresRepository) FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	return failProblemCheckRun(ctx, r.queries, input)
+}
+
+func (r *PostgresRepository) CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
+	return createProblemCheckFinding(ctx, r.queries, input)
+}
+
+func (r *PostgresRepository) GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error) {
+	finding, err := r.queries.GetProblemCheckFindingByID(ctx, id)
+	return problemCheckFindingFromDB(finding), mapDBErr(err)
+}
+
+func (r *PostgresRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
+	return listProblemCheckFindings(ctx, r.queries, runID)
 }
 
 func (r *PostgresRepository) CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error) {
@@ -295,6 +401,40 @@ func (r *txRepository) GetCurrentReadyTestcaseSet(ctx context.Context, problemID
 	return testcaseSetFromDB(set), mapDBErr(err)
 }
 
+func (r *txRepository) CreateProblemCheckRun(ctx context.Context, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	return createProblemCheckRun(ctx, r.queries, input)
+}
+
+func (r *txRepository) GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error) {
+	run, err := r.queries.GetProblemCheckRunByID(ctx, id)
+	return problemCheckRunFromDB(run), mapDBErr(err)
+}
+
+func (r *txRepository) ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
+	return listProblemCheckRuns(ctx, r.queries, filter)
+}
+
+func (r *txRepository) CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	return completeProblemCheckRun(ctx, r.queries, input)
+}
+
+func (r *txRepository) FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	return failProblemCheckRun(ctx, r.queries, input)
+}
+
+func (r *txRepository) CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
+	return createProblemCheckFinding(ctx, r.queries, input)
+}
+
+func (r *txRepository) GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error) {
+	finding, err := r.queries.GetProblemCheckFindingByID(ctx, id)
+	return problemCheckFindingFromDB(finding), mapDBErr(err)
+}
+
+func (r *txRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
+	return listProblemCheckFindings(ctx, r.queries, runID)
+}
+
 func (r *txRepository) CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error) {
 	return createArtifact(ctx, r.queries, artifact)
 }
@@ -381,6 +521,81 @@ func createTestcaseSet(ctx context.Context, q *db.Queries, problemID int64, vers
 		CreatedBy:      createdBy,
 	})
 	return testcaseSetFromDB(set), mapDBErr(err)
+}
+
+func createProblemCheckRun(ctx context.Context, q *db.Queries, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	status := input.Status
+	if status == "" {
+		status = ProblemCheckStatusQueued
+	}
+	run, err := q.CreateProblemCheckRun(ctx, db.CreateProblemCheckRunParams{
+		ProblemID:     input.ProblemID,
+		TestcaseSetID: int8Value(input.TestcaseSetID),
+		RequestedBy:   int8Value(input.RequestedBy),
+		Status:        status,
+		Summary:       jsonbArg(input.Summary),
+	})
+	return problemCheckRunFromDB(run), mapDBErr(err)
+}
+
+func listProblemCheckRuns(ctx context.Context, q *db.Queries, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
+	rows, err := q.ListProblemCheckRunsByProblemID(ctx, db.ListProblemCheckRunsByProblemIDParams{
+		ProblemID: filter.ProblemID,
+		Offset:    filter.Offset,
+		Limit:     filter.Limit,
+	})
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	runs := make([]ProblemCheckRunRecord, 0, len(rows))
+	for _, row := range rows {
+		runs = append(runs, problemCheckRunFromDB(row))
+	}
+	return runs, nil
+}
+
+func completeProblemCheckRun(ctx context.Context, q *db.Queries, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	run, err := q.CompleteProblemCheckRun(ctx, db.CompleteProblemCheckRunParams{
+		ID:         input.ID,
+		Summary:    jsonbArg(input.Summary),
+		FinishedAt: timeArg(input.FinishedAt),
+	})
+	return problemCheckRunFromDB(run), mapDBErr(err)
+}
+
+func failProblemCheckRun(ctx context.Context, q *db.Queries, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	run, err := q.FailProblemCheckRun(ctx, db.FailProblemCheckRunParams{
+		ID:           input.ID,
+		Summary:      jsonbArg(input.Summary),
+		ErrorMessage: textValue(input.ErrorMessage),
+		FinishedAt:   timeArg(input.FinishedAt),
+	})
+	return problemCheckRunFromDB(run), mapDBErr(err)
+}
+
+func createProblemCheckFinding(ctx context.Context, q *db.Queries, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
+	finding, err := q.CreateProblemCheckFinding(ctx, db.CreateProblemCheckFindingParams{
+		RunID:       input.RunID,
+		Severity:    input.Severity,
+		Code:        input.Code,
+		Message:     input.Message,
+		CaseIndex:   int4Value(input.CaseIndex),
+		TestcaseKey: textValue(input.TestcaseKey),
+		Details:     jsonbArg(input.Details),
+	})
+	return problemCheckFindingFromDB(finding), mapDBErr(err)
+}
+
+func listProblemCheckFindings(ctx context.Context, q *db.Queries, runID int64) ([]ProblemCheckFindingRecord, error) {
+	rows, err := q.ListProblemCheckFindingsByRunID(ctx, runID)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	findings := make([]ProblemCheckFindingRecord, 0, len(rows))
+	for _, row := range rows {
+		findings = append(findings, problemCheckFindingFromDB(row))
+	}
+	return findings, nil
 }
 
 func createArtifact(ctx context.Context, q *db.Queries, artifact ArtifactRecord) (ArtifactRecord, error) {
@@ -510,6 +725,70 @@ func testcaseSetFromDB(set db.TestcaseSet) TestcaseSetRecord {
 	}
 }
 
+func problemCheckRunFromDB(run db.ProblemCheckRun) ProblemCheckRunRecord {
+	return ProblemCheckRunRecord{
+		ID:            run.ID,
+		ProblemID:     run.ProblemID,
+		TestcaseSetID: int8FromDB(run.TestcaseSetID),
+		RequestedBy:   int8FromDB(run.RequestedBy),
+		Status:        run.Status,
+		Summary:       jsonRawFromDB(run.Summary),
+		ErrorMessage:  textFromDB(run.ErrorMessage),
+		StartedAt:     timeFromDB(run.StartedAt),
+		FinishedAt:    timeFromDB(run.FinishedAt),
+		CreatedAt:     timeFromDB(run.CreatedAt),
+		UpdatedAt:     timeFromDB(run.UpdatedAt),
+	}
+}
+
+func problemCheckFindingFromDB(finding db.ProblemCheckFinding) ProblemCheckFindingRecord {
+	return ProblemCheckFindingRecord{
+		ID:          finding.ID,
+		RunID:       finding.RunID,
+		Severity:    finding.Severity,
+		Code:        finding.Code,
+		Message:     finding.Message,
+		CaseIndex:   int4FromDB(finding.CaseIndex),
+		TestcaseKey: textFromDB(finding.TestcaseKey),
+		Details:     jsonRawFromDB(finding.Details),
+		CreatedAt:   timeFromDB(finding.CreatedAt),
+	}
+}
+
+func problemCheckRunFromRecord(record ProblemCheckRunRecord) ProblemCheckRun {
+	summary := ProblemCheckSummary{}
+	if len(record.Summary) > 0 {
+		_ = json.Unmarshal(record.Summary, &summary)
+	}
+	return ProblemCheckRun{
+		ID:            record.ID,
+		ProblemID:     record.ProblemID,
+		TestcaseSetID: record.TestcaseSetID,
+		RequestedBy:   record.RequestedBy,
+		Status:        record.Status,
+		Summary:       summary,
+		ErrorMessage:  record.ErrorMessage,
+		StartedAt:     record.StartedAt,
+		FinishedAt:    record.FinishedAt,
+		CreatedAt:     record.CreatedAt,
+		UpdatedAt:     record.UpdatedAt,
+	}
+}
+
+func problemCheckFindingFromRecord(record ProblemCheckFindingRecord) ProblemCheckFinding {
+	return ProblemCheckFinding{
+		ID:          record.ID,
+		RunID:       record.RunID,
+		Severity:    record.Severity,
+		Code:        record.Code,
+		Message:     record.Message,
+		CaseIndex:   record.CaseIndex,
+		TestcaseKey: record.TestcaseKey,
+		Details:     jsonRawFromDB(record.Details),
+		CreatedAt:   record.CreatedAt,
+	}
+}
+
 func statsFromDB(row db.GetProblemStatsRow) ProblemStats {
 	stats := ProblemStats{
 		ProblemID:           row.ProblemID,
@@ -558,6 +837,69 @@ func int4Ptr(value *int32) pgtype.Int4 {
 		return pgtype.Int4{}
 	}
 	return pgtype.Int4{Int32: *value, Valid: true}
+}
+
+func int4Value(value int32) pgtype.Int4 {
+	if value <= 0 {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: value, Valid: true}
+}
+
+func int4FromDB(value pgtype.Int4) int32 {
+	if !value.Valid {
+		return 0
+	}
+	return value.Int32
+}
+
+func int8Value(value int64) pgtype.Int8 {
+	if value <= 0 {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: value, Valid: true}
+}
+
+func int8FromDB(value pgtype.Int8) int64 {
+	if !value.Valid {
+		return 0
+	}
+	return value.Int64
+}
+
+func timeArg(value time.Time) pgtype.Timestamptz {
+	if value.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: value.UTC(), Valid: true}
+}
+
+func timeFromDB(value pgtype.Timestamptz) time.Time {
+	if !value.Valid {
+		return time.Time{}
+	}
+	return value.Time
+}
+
+func textFromDB(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}
+
+func jsonbArg(value json.RawMessage) []byte {
+	if len(value) == 0 {
+		return []byte("{}")
+	}
+	return append([]byte(nil), value...)
+}
+
+func jsonRawFromDB(value []byte) json.RawMessage {
+	if len(value) == 0 {
+		return json.RawMessage("{}")
+	}
+	return append(json.RawMessage(nil), value...)
 }
 
 func stringsTrim(value string) string {
