@@ -65,6 +65,11 @@ func (h *Handler) listProblems(c *gin.Context) {
 		httpapi.Error(c, apperror.BadRequest("request.invalid", "page_size must be between 1 and 100"))
 		return
 	}
+	mine, ok := boolQuery(c, "mine", false)
+	if !ok {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "mine must be a boolean"))
+		return
+	}
 	list, err := h.service.ListProblems(c.Request.Context(), actorFromContext(c), ListProblemsFilter{
 		Difficulty: c.Query("difficulty"),
 		Status:     c.Query("status"),
@@ -73,12 +78,26 @@ func (h *Handler) listProblems(c *gin.Context) {
 		Keyword:    c.Query("keyword"),
 		Page:       page,
 		PageSize:   pageSize,
+		Mine:       mine,
 	})
 	if err != nil {
 		httpapi.Error(c, err)
 		return
 	}
 	httpapi.OK(c, list)
+}
+
+func (h *Handler) getProblemAuthoringState(c *gin.Context) {
+	id, ok := problemIDParam(c)
+	if !ok {
+		return
+	}
+	state, err := h.service.GetProblemAuthoringState(c.Request.Context(), actorFromContext(c), id)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, state)
 }
 
 func (h *Handler) getProblem(c *gin.Context) {
@@ -344,6 +363,15 @@ func int32Query(c *gin.Context, key string, fallback int32) (int32, bool) {
 		return 0, false
 	}
 	return int32(parsed), true
+}
+
+func boolQuery(c *gin.Context, key string, fallback bool) (bool, bool) {
+	value := c.Query(key)
+	if value == "" {
+		return fallback, true
+	}
+	parsed, err := strconv.ParseBool(value)
+	return parsed, err == nil
 }
 
 func actorFromContext(c *gin.Context) auth.Actor {

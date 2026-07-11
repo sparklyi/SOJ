@@ -2,7 +2,7 @@ version: "2"
 sql:
   - engine: "postgresql"
     schema:
-      - "../migrations/000001_init.up.sql"
+      - "../migrations"
     queries:
       - "queries"
     gen:
