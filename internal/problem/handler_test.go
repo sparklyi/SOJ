@@ -166,6 +166,56 @@ func TestUploadTestcasesMissingArchiveReturnsTestcaseNotReady(t *testing.T) {
 	}
 }
 
+func TestGetProblemAuthoringStateReturnsOwnerWorkspace(t *testing.T) {
+	repo := newFakeRepository()
+	seedPublishableProblem(repo)
+	repo.checkRuns[1] = ProblemCheckRunRecord{
+		ID: 1, ProblemID: 1, StatementID: 3, TestcaseSetID: 7, Status: ProblemCheckStatusCompleted,
+		Summary: json.RawMessage(`{"valid":true}`),
+	}
+	service := NewService(repo, &fakeStorage{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems/1/authoring", nil)
+	req.Header.Set("X-User-ID", "10")
+	req.Header.Set("X-User-Role", "user")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var envelope struct {
+		Data ProblemAuthoringState `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !envelope.Data.Publishable || envelope.Data.Problem.ID != 1 || envelope.Data.LatestCheck == nil {
+		t.Fatalf("unexpected authoring state: %+v", envelope.Data)
+	}
+}
+
+func TestListProblemsMineScopesRequestToCurrentUser(t *testing.T) {
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Owned", Status: StatusDraft, Visibility: VisibilityPrivate}
+	service := NewService(repo, &fakeStorage{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems?mine=true", nil)
+	req.Header.Set("X-User-ID", "10")
+	req.Header.Set("X-User-Role", "user")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !repo.lastListFilter.Mine || repo.lastListFilter.OwnerUserID != 10 {
+		t.Fatalf("list filter = %+v", repo.lastListFilter)
+	}
+}
+
 func TestCreateProblemStoresTags(t *testing.T) {
 	repo := newFakeRepository()
 	service := NewService(repo, &fakeStorage{})

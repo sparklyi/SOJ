@@ -203,6 +203,7 @@ type ProblemCheckRun struct {
 	FinishedAt    pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
 	CreatedAt     pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	StatementID   pgtype.Int8        `db:"statement_id" json:"statement_id"`
 }
 
 type ProblemStatement struct {

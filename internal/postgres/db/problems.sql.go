@@ -82,7 +82,7 @@ SET status = 'completed',
     updated_at = now()
 WHERE id = $3
   AND status IN ('queued', 'running')
-RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at, statement_id
 `
 
 type CompleteProblemCheckRunParams struct {
@@ -106,6 +106,7 @@ func (q *Queries) CompleteProblemCheckRun(ctx context.Context, arg CompleteProbl
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StatementID,
 	)
 	return i, err
 }
@@ -131,10 +132,11 @@ WHERE ($1::text IS NULL OR difficulty = $1::text)
       OR title ILIKE '%' || $5::text || '%'
       OR slug ILIKE '%' || $5::text || '%'
   )
+  AND ($6::bigint = 0 OR owner_user_id = $6::bigint)
   AND (
-      $6::boolean
+      $7::boolean
       OR (status = 'published' AND visibility = 'public')
-      OR ($7::bigint > 0 AND owner_user_id = $7::bigint)
+      OR ($8::bigint > 0 AND owner_user_id = $8::bigint)
   )
 `
 
@@ -144,6 +146,7 @@ type CountProblemsParams struct {
 	Visibility   pgtype.Text `db:"visibility" json:"visibility"`
 	Tag          pgtype.Text `db:"tag" json:"tag"`
 	Keyword      pgtype.Text `db:"keyword" json:"keyword"`
+	OwnerUserID  int64       `db:"owner_user_id" json:"owner_user_id"`
 	IncludeAll   bool        `db:"include_all" json:"include_all"`
 	ViewerUserID int64       `db:"viewer_user_id" json:"viewer_user_id"`
 }
@@ -155,6 +158,7 @@ func (q *Queries) CountProblems(ctx context.Context, arg CountProblemsParams) (i
 		arg.Visibility,
 		arg.Tag,
 		arg.Keyword,
+		arg.OwnerUserID,
 		arg.IncludeAll,
 		arg.ViewerUserID,
 	)
@@ -280,6 +284,7 @@ func (q *Queries) CreateProblemCheckFinding(ctx context.Context, arg CreateProbl
 const createProblemCheckRun = `-- name: CreateProblemCheckRun :one
 INSERT INTO problem_check_runs (
     problem_id,
+    statement_id,
     testcase_set_id,
     requested_by,
     status,
@@ -289,13 +294,15 @@ INSERT INTO problem_check_runs (
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6
 )
-RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at, statement_id
 `
 
 type CreateProblemCheckRunParams struct {
 	ProblemID     int64       `db:"problem_id" json:"problem_id"`
+	StatementID   pgtype.Int8 `db:"statement_id" json:"statement_id"`
 	TestcaseSetID pgtype.Int8 `db:"testcase_set_id" json:"testcase_set_id"`
 	RequestedBy   pgtype.Int8 `db:"requested_by" json:"requested_by"`
 	Status        string      `db:"status" json:"status"`
@@ -305,6 +312,7 @@ type CreateProblemCheckRunParams struct {
 func (q *Queries) CreateProblemCheckRun(ctx context.Context, arg CreateProblemCheckRunParams) (ProblemCheckRun, error) {
 	row := q.db.QueryRow(ctx, createProblemCheckRun,
 		arg.ProblemID,
+		arg.StatementID,
 		arg.TestcaseSetID,
 		arg.RequestedBy,
 		arg.Status,
@@ -323,6 +331,7 @@ func (q *Queries) CreateProblemCheckRun(ctx context.Context, arg CreateProblemCh
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StatementID,
 	)
 	return i, err
 }
@@ -476,7 +485,7 @@ SET status = 'failed',
     updated_at = now()
 WHERE id = $4
   AND status IN ('queued', 'running')
-RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+RETURNING id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at, statement_id
 `
 
 type FailProblemCheckRunParams struct {
@@ -506,6 +515,7 @@ func (q *Queries) FailProblemCheckRun(ctx context.Context, arg FailProblemCheckR
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StatementID,
 	)
 	return i, err
 }
@@ -560,6 +570,43 @@ func (q *Queries) GetCurrentReadyTestcaseSet(ctx context.Context, problemID int6
 		&i.IsCurrent,
 		&i.CreatedBy,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getLatestCompletedProblemCheckRun = `-- name: GetLatestCompletedProblemCheckRun :one
+SELECT id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at, statement_id
+FROM problem_check_runs
+WHERE problem_id = $1
+  AND statement_id = $2
+  AND testcase_set_id = $3
+  AND status = 'completed'
+ORDER BY finished_at DESC NULLS LAST, id DESC
+LIMIT 1
+`
+
+type GetLatestCompletedProblemCheckRunParams struct {
+	ProblemID     int64       `db:"problem_id" json:"problem_id"`
+	StatementID   pgtype.Int8 `db:"statement_id" json:"statement_id"`
+	TestcaseSetID pgtype.Int8 `db:"testcase_set_id" json:"testcase_set_id"`
+}
+
+func (q *Queries) GetLatestCompletedProblemCheckRun(ctx context.Context, arg GetLatestCompletedProblemCheckRunParams) (ProblemCheckRun, error) {
+	row := q.db.QueryRow(ctx, getLatestCompletedProblemCheckRun, arg.ProblemID, arg.StatementID, arg.TestcaseSetID)
+	var i ProblemCheckRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProblemID,
+		&i.TestcaseSetID,
+		&i.RequestedBy,
+		&i.Status,
+		&i.Summary,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StatementID,
 	)
 	return i, err
 }
@@ -694,7 +741,7 @@ func (q *Queries) GetProblemCheckFindingByID(ctx context.Context, id int64) (Pro
 }
 
 const getProblemCheckRunByID = `-- name: GetProblemCheckRunByID :one
-SELECT id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+SELECT id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at, statement_id
 FROM problem_check_runs
 WHERE id = $1
 `
@@ -714,6 +761,7 @@ func (q *Queries) GetProblemCheckRunByID(ctx context.Context, id int64) (Problem
 		&i.FinishedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StatementID,
 	)
 	return i, err
 }
@@ -808,7 +856,7 @@ func (q *Queries) ListProblemCheckFindingsByRunID(ctx context.Context, runID int
 }
 
 const listProblemCheckRunsByProblemID = `-- name: ListProblemCheckRunsByProblemID :many
-SELECT id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at
+SELECT id, problem_id, testcase_set_id, requested_by, status, summary, error_message, started_at, finished_at, created_at, updated_at, statement_id
 FROM problem_check_runs
 WHERE problem_id = $1
 ORDER BY created_at DESC, id DESC
@@ -842,6 +890,7 @@ func (q *Queries) ListProblemCheckRunsByProblemID(ctx context.Context, arg ListP
 			&i.FinishedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.StatementID,
 		); err != nil {
 			return nil, err
 		}
@@ -908,13 +957,14 @@ WHERE ($1::text IS NULL OR p.difficulty = $1::text)
       OR p.title ILIKE '%' || $5::text || '%'
       OR p.slug ILIKE '%' || $5::text || '%'
   )
+  AND ($6::bigint = 0 OR p.owner_user_id = $6::bigint)
   AND (
-      $6::boolean
+      $7::boolean
       OR (p.status = 'published' AND p.visibility = 'public')
-      OR ($7::bigint > 0 AND p.owner_user_id = $7::bigint)
+      OR ($8::bigint > 0 AND p.owner_user_id = $8::bigint)
   )
 ORDER BY p.created_at DESC, p.id DESC
-LIMIT $9 OFFSET $8
+LIMIT $10 OFFSET $9
 `
 
 type ListProblemsParams struct {
@@ -923,6 +973,7 @@ type ListProblemsParams struct {
 	Visibility   pgtype.Text `db:"visibility" json:"visibility"`
 	Tag          pgtype.Text `db:"tag" json:"tag"`
 	Keyword      pgtype.Text `db:"keyword" json:"keyword"`
+	OwnerUserID  int64       `db:"owner_user_id" json:"owner_user_id"`
 	IncludeAll   bool        `db:"include_all" json:"include_all"`
 	ViewerUserID int64       `db:"viewer_user_id" json:"viewer_user_id"`
 	Offset       int32       `db:"offset" json:"offset"`
@@ -954,6 +1005,7 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]L
 		arg.Visibility,
 		arg.Tag,
 		arg.Keyword,
+		arg.OwnerUserID,
 		arg.IncludeAll,
 		arg.ViewerUserID,
 		arg.Offset,
