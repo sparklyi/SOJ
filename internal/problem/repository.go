@@ -38,6 +38,7 @@ type Repository interface {
 	GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error)
 	CreateProblemCheckRun(ctx context.Context, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error)
 	GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error)
+	GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error)
 	ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error)
 	CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error)
 	FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error)
@@ -50,6 +51,7 @@ type Repository interface {
 
 type CreateProblemCheckRunInput struct {
 	ProblemID     int64
+	StatementID   int64
 	TestcaseSetID int64
 	RequestedBy   int64
 	Status        string
@@ -88,6 +90,7 @@ type CreateProblemCheckFindingInput struct {
 type ProblemCheckRunRecord struct {
 	ID            int64           `json:"id"`
 	ProblemID     int64           `json:"problem_id"`
+	StatementID   int64           `json:"statement_id,omitempty"`
 	TestcaseSetID int64           `json:"testcase_set_id,omitempty"`
 	RequestedBy   int64           `json:"requested_by,omitempty"`
 	Status        string          `json:"status"`
@@ -152,6 +155,7 @@ func (r *PostgresRepository) ListProblems(ctx context.Context, filter ListProble
 		Visibility:   textArg(filter.Visibility),
 		Tag:          textArg(filter.Tag),
 		Keyword:      textArg(filter.Keyword),
+		OwnerUserID:  filter.OwnerUserID,
 		IncludeAll:   filter.IncludeAll,
 		ViewerUserID: filter.ViewerUserID,
 		Offset:       filter.Offset,
@@ -174,6 +178,7 @@ func (r *PostgresRepository) CountProblems(ctx context.Context, filter ListProbl
 		Visibility:   textArg(filter.Visibility),
 		Tag:          textArg(filter.Tag),
 		Keyword:      textArg(filter.Keyword),
+		OwnerUserID:  filter.OwnerUserID,
 		IncludeAll:   filter.IncludeAll,
 		ViewerUserID: filter.ViewerUserID,
 	})
@@ -247,6 +252,11 @@ func (r *PostgresRepository) GetProblemCheckRun(ctx context.Context, id int64) (
 	return problemCheckRunFromDB(run), mapDBErr(err)
 }
 
+func (r *PostgresRepository) GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error) {
+	run, err := r.queries.GetLatestCompletedProblemCheckRun(ctx, db.GetLatestCompletedProblemCheckRunParams{ProblemID: problemID, StatementID: int8Value(statementID), TestcaseSetID: int8Value(testcaseSetID)})
+	return problemCheckRunFromDB(run), mapDBErr(err)
+}
+
 func (r *PostgresRepository) ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
 	return listProblemCheckRuns(ctx, r.queries, filter)
 }
@@ -315,6 +325,7 @@ func (r *txRepository) ListProblems(ctx context.Context, filter ListProblemsFilt
 		Visibility:   textArg(filter.Visibility),
 		Tag:          textArg(filter.Tag),
 		Keyword:      textArg(filter.Keyword),
+		OwnerUserID:  filter.OwnerUserID,
 		IncludeAll:   filter.IncludeAll,
 		ViewerUserID: filter.ViewerUserID,
 		Offset:       filter.Offset,
@@ -337,6 +348,7 @@ func (r *txRepository) CountProblems(ctx context.Context, filter ListProblemsFil
 		Visibility:   textArg(filter.Visibility),
 		Tag:          textArg(filter.Tag),
 		Keyword:      textArg(filter.Keyword),
+		OwnerUserID:  filter.OwnerUserID,
 		IncludeAll:   filter.IncludeAll,
 		ViewerUserID: filter.ViewerUserID,
 	})
@@ -407,6 +419,11 @@ func (r *txRepository) CreateProblemCheckRun(ctx context.Context, input CreatePr
 
 func (r *txRepository) GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error) {
 	run, err := r.queries.GetProblemCheckRunByID(ctx, id)
+	return problemCheckRunFromDB(run), mapDBErr(err)
+}
+
+func (r *txRepository) GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error) {
+	run, err := r.queries.GetLatestCompletedProblemCheckRun(ctx, db.GetLatestCompletedProblemCheckRunParams{ProblemID: problemID, StatementID: int8Value(statementID), TestcaseSetID: int8Value(testcaseSetID)})
 	return problemCheckRunFromDB(run), mapDBErr(err)
 }
 
@@ -530,6 +547,7 @@ func createProblemCheckRun(ctx context.Context, q *db.Queries, input CreateProbl
 	}
 	run, err := q.CreateProblemCheckRun(ctx, db.CreateProblemCheckRunParams{
 		ProblemID:     input.ProblemID,
+		StatementID:   int8Value(input.StatementID),
 		TestcaseSetID: int8Value(input.TestcaseSetID),
 		RequestedBy:   int8Value(input.RequestedBy),
 		Status:        status,
@@ -729,6 +747,7 @@ func problemCheckRunFromDB(run db.ProblemCheckRun) ProblemCheckRunRecord {
 	return ProblemCheckRunRecord{
 		ID:            run.ID,
 		ProblemID:     run.ProblemID,
+		StatementID:   int8FromDB(run.StatementID),
 		TestcaseSetID: int8FromDB(run.TestcaseSetID),
 		RequestedBy:   int8FromDB(run.RequestedBy),
 		Status:        run.Status,
@@ -763,6 +782,7 @@ func problemCheckRunFromRecord(record ProblemCheckRunRecord) ProblemCheckRun {
 	return ProblemCheckRun{
 		ID:            record.ID,
 		ProblemID:     record.ProblemID,
+		StatementID:   record.StatementID,
 		TestcaseSetID: record.TestcaseSetID,
 		RequestedBy:   record.RequestedBy,
 		Status:        record.Status,

@@ -64,6 +64,7 @@ WHERE (sqlc.narg('difficulty')::text IS NULL OR p.difficulty = sqlc.narg('diffic
       OR p.title ILIKE '%' || sqlc.narg('keyword')::text || '%'
       OR p.slug ILIKE '%' || sqlc.narg('keyword')::text || '%'
   )
+  AND (sqlc.arg('owner_user_id')::bigint = 0 OR p.owner_user_id = sqlc.arg('owner_user_id')::bigint)
   AND (
       sqlc.arg('include_all')::boolean
       OR (p.status = 'published' AND p.visibility = 'public')
@@ -93,6 +94,7 @@ WHERE (sqlc.narg('difficulty')::text IS NULL OR difficulty = sqlc.narg('difficul
       OR title ILIKE '%' || sqlc.narg('keyword')::text || '%'
       OR slug ILIKE '%' || sqlc.narg('keyword')::text || '%'
   )
+  AND (sqlc.arg('owner_user_id')::bigint = 0 OR owner_user_id = sqlc.arg('owner_user_id')::bigint)
   AND (
       sqlc.arg('include_all')::boolean
       OR (status = 'published' AND visibility = 'public')
@@ -230,12 +232,14 @@ WHERE problem_id = $1;
 -- name: CreateProblemCheckRun :one
 INSERT INTO problem_check_runs (
     problem_id,
+    statement_id,
     testcase_set_id,
     requested_by,
     status,
     summary
 ) VALUES (
     sqlc.arg('problem_id'),
+    sqlc.narg('statement_id'),
     sqlc.narg('testcase_set_id'),
     sqlc.narg('requested_by'),
     sqlc.arg('status'),
@@ -247,6 +251,16 @@ RETURNING *;
 SELECT *
 FROM problem_check_runs
 WHERE id = $1;
+
+-- name: GetLatestCompletedProblemCheckRun :one
+SELECT *
+FROM problem_check_runs
+WHERE problem_id = sqlc.arg('problem_id')
+  AND statement_id = sqlc.arg('statement_id')
+  AND testcase_set_id = sqlc.arg('testcase_set_id')
+  AND status = 'completed'
+ORDER BY finished_at DESC NULLS LAST, id DESC
+LIMIT 1;
 
 -- name: ListProblemCheckRunsByProblemID :many
 SELECT *

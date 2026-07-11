@@ -61,6 +61,7 @@ type Querier interface {
 	GetJudgeTaskByID(ctx context.Context, id int64) (JudgeTask, error)
 	GetJudgeTaskBySubmissionID(ctx context.Context, submissionID int64) (JudgeTask, error)
 	GetLanguageByID(ctx context.Context, id int64) (Language, error)
+	GetLatestCompletedProblemCheckRun(ctx context.Context, arg GetLatestCompletedProblemCheckRunParams) (ProblemCheckRun, error)
 	GetLatestContestScoreSnapshot(ctx context.Context, arg GetLatestContestScoreSnapshotParams) (ContestScoreSnapshot, error)
 	GetLatestJudgeAttemptByRunID(ctx context.Context, runID pgtype.Int8) (JudgeAttempt, error)
 	GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID pgtype.Int8) (JudgeAttempt, error)

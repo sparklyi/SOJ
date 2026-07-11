@@ -138,6 +138,13 @@ curl -fsS -X POST "$API_URL/api/v1/problems/$PROBLEM_ID/testcase-sets" \
   -F "case_count=1" \
   -F "checksum_sha256=$SHA" >/dev/null
 
+CHECK_RESPONSE="$(api_json POST "/api/v1/problems/$PROBLEM_ID/checks" '{}')"
+CHECK_VALID="$(jq -r '.data.summary.valid' <<<"$CHECK_RESPONSE")"
+if [[ "$CHECK_VALID" != "true" ]]; then
+  echo "problem check did not validate current testcase set: $CHECK_RESPONSE" >&2
+  exit 1
+fi
+
 api_json PATCH "/api/v1/problems/$PROBLEM_ID" '{"status":"published"}' >/dev/null
 
 SUBMISSION_PAYLOAD="$(jq -cn --argjson problem_id "$PROBLEM_ID" --argjson language_id "$LANG_ID" --arg source "$SOURCE_CODE" '{problem_id:$problem_id,language_id:$language_id,source_code:$source}')"
