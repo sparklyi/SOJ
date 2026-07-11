@@ -191,17 +191,32 @@ func TestProblemCheckSchemaAndQueriesExposeRunsAndFindings(t *testing.T) {
 	}
 
 	for name, query := range map[string]string{
-		"CreateProblemCheckRun":           createProblemCheckRun,
-		"GetProblemCheckRunByID":          getProblemCheckRunByID,
-		"ListProblemCheckRunsByProblemID": listProblemCheckRunsByProblemID,
-		"CompleteProblemCheckRun":         completeProblemCheckRun,
-		"FailProblemCheckRun":             failProblemCheckRun,
-		"CreateProblemCheckFinding":       createProblemCheckFinding,
-		"GetProblemCheckFindingByID":      getProblemCheckFindingByID,
-		"ListProblemCheckFindingsByRunID": listProblemCheckFindingsByRunID,
+		"CreateProblemCheckRun":             createProblemCheckRun,
+		"GetProblemCheckRunByID":            getProblemCheckRunByID,
+		"GetLatestCompletedProblemCheckRun": getLatestCompletedProblemCheckRun,
+		"ListProblemCheckRunsByProblemID":   listProblemCheckRunsByProblemID,
+		"CompleteProblemCheckRun":           completeProblemCheckRun,
+		"FailProblemCheckRun":               failProblemCheckRun,
+		"CreateProblemCheckFinding":         createProblemCheckFinding,
+		"GetProblemCheckFindingByID":        getProblemCheckFindingByID,
+		"ListProblemCheckFindingsByRunID":   listProblemCheckFindingsByRunID,
 	} {
 		if !strings.Contains(query, "problem_check_") {
 			t.Fatalf("%s does not target problem check tables:\n%s", name, query)
+		}
+	}
+	for _, want := range []string{"statement_id = $2", "testcase_set_id = $3", "status = 'completed'", "ORDER BY finished_at DESC NULLS LAST, id DESC"} {
+		if !strings.Contains(getLatestCompletedProblemCheckRun, want) {
+			t.Fatalf("GetLatestCompletedProblemCheckRun missing %q:\n%s", want, getLatestCompletedProblemCheckRun)
+		}
+	}
+	statementMigration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "000002_problem_check_statement.up.sql"))
+	if err != nil {
+		t.Fatalf("read statement migration: %v", err)
+	}
+	for _, want := range []string{"ADD COLUMN statement_id", "problem_check_runs_publish_gate_idx"} {
+		if !strings.Contains(string(statementMigration), want) {
+			t.Fatalf("statement migration missing %q", want)
 		}
 	}
 	if !strings.Contains(completeProblemCheckRun, "AND status IN ('queued', 'running')") {
