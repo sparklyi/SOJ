@@ -77,7 +77,10 @@ Problems:
 - `POST /api/v1/problems/{id}/testcase-sets`
 - `POST /api/v1/problems/{id}/checks`
 - `GET /api/v1/problems/{id}/checks/{check_id}`
+- `GET /api/v1/problems/{id}/authoring`
 - `GET /api/v1/problems/{id}/stats`
+
+Use `GET /api/v1/problems?mine=true` with an authenticated request to list only problems owned by the current user. This is the supported source for authoring consoles.
 
 Problem checks:
 
@@ -86,6 +89,8 @@ Problem checks:
 - Check endpoints are owner/admin/root scoped. They use the same error envelope as the rest of the API.
 - `ProblemCheckRun.summary` includes archive counts, finding counts by severity, storage/zip readability flags, and `valid`.
 - `ProblemCheckRun.findings` contains stable finding `code`, `severity`, `message`, optional `case_index` and `testcase_key`, and structured `details`.
+- `GET /api/v1/problems/{id}/authoring` returns the current statement, current ready testcase set, the latest completed check for that exact statement and testcase-set pair, and stable publish blockers.
+- Publishing with `PATCH /api/v1/problems/{id}` and `status=published` requires a completed check whose summary is valid for the current statement and testcase set. Saving a replacement statement or testcase archive invalidates the previous check for publication.
 
 Submissions and runs:
 

@@ -173,7 +173,9 @@ type ListProblemsFilter struct {
 	Limit        int32
 	Offset       int32
 	ViewerUserID int64
+	OwnerUserID  int64
 	IncludeAll   bool
+	Mine         bool
 }
 
 type ProblemList struct {
@@ -225,6 +227,7 @@ type ProblemCheckSummary struct {
 type ProblemCheckRun struct {
 	ID            int64                 `json:"id"`
 	ProblemID     int64                 `json:"problem_id"`
+	StatementID   int64                 `json:"statement_id,omitempty"`
 	TestcaseSetID int64                 `json:"testcase_set_id,omitempty"`
 	RequestedBy   int64                 `json:"requested_by,omitempty"`
 	Status        string                `json:"status"`
@@ -252,6 +255,20 @@ type ProblemCheckFinding struct {
 type ProblemCheckResult struct {
 	Run      ProblemCheckRun       `json:"run"`
 	Findings []ProblemCheckFinding `json:"findings"`
+}
+
+type ProblemAuthoringBlocker struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type ProblemAuthoringState struct {
+	Problem     ProblemResponse           `json:"problem"`
+	Statement   *Statement                `json:"statement"`
+	TestcaseSet *TestcaseSetRecord        `json:"testcase_set"`
+	LatestCheck *ProblemCheckRun          `json:"latest_check"`
+	Publishable bool                      `json:"publishable"`
+	Blockers    []ProblemAuthoringBlocker `json:"blockers"`
 }
 
 type Service struct {
@@ -302,6 +319,9 @@ func (s *Service) GetProblem(ctx context.Context, actor auth.Actor, id int64) (P
 }
 
 func (s *Service) ListProblems(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemList, error) {
+	if filter.Mine && !actor.Authenticated() {
+		return ProblemList{}, requireAuthenticated(actor)
+	}
 	filter = normalizeListFilter(actor, filter)
 	items, err := s.repo.ListProblems(ctx, filter)
 	if err != nil {
@@ -320,6 +340,32 @@ func (s *Service) ListProblems(ctx context.Context, actor auth.Actor, filter Lis
 		responses = append(responses, response)
 	}
 	return ProblemList{Items: responses, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
+}
+
+func (s *Service) GetProblemAuthoringState(ctx context.Context, actor auth.Actor, id int64) (ProblemAuthoringState, error) {
+	p, err := s.repo.GetProblem(ctx, id)
+	if err != nil {
+		return ProblemAuthoringState{}, err
+	}
+	if err := canWriteProblem(actor, p); err != nil {
+		return ProblemAuthoringState{}, err
+	}
+	response, err := s.ProblemResponse(ctx, p)
+	if err != nil {
+		return ProblemAuthoringState{}, err
+	}
+	readiness, err := loadProblemAuthoringReadiness(ctx, s.repo, id)
+	if err != nil {
+		return ProblemAuthoringState{}, err
+	}
+	return ProblemAuthoringState{
+		Problem:     response,
+		Statement:   readiness.statement,
+		TestcaseSet: readiness.testcaseSet,
+		LatestCheck: readiness.latestCheck,
+		Publishable: len(readiness.blockers) == 0,
+		Blockers:    readiness.blockers,
+	}, nil
 }
 
 func (s *Service) UpdateProblem(ctx context.Context, actor auth.Actor, id int64, input UpdateProblemInput) (ProblemRecord, error) {
@@ -398,7 +444,10 @@ func (s *Service) CreateStatement(ctx context.Context, actor auth.Actor, problem
 			}
 		}
 		statement, err = repo.CreateProblemStatement(ctx, problemID, version, input)
-		return err
+		if err != nil {
+			return err
+		}
+		return demotePublishedProblem(ctx, repo, p)
 	})
 	return statement, err
 }
@@ -502,7 +551,10 @@ func (s *Service) UploadTestcaseArchive(ctx context.Context, actor auth.Actor, p
 			return err
 		}
 		created, err = repo.CreateTestcaseSet(ctx, problemID, version, key, actualChecksum, int64(len(input.Content)), input.CaseCount, actor.UserID)
-		return err
+		if err != nil {
+			return err
+		}
+		return demotePublishedProblem(ctx, repo, p)
 	})
 	if err != nil {
 		_ = s.storage.Delete(ctx, key)
@@ -585,6 +637,7 @@ func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problem
 	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		run, err := repo.CreateProblemCheckRun(ctx, CreateProblemCheckRunInput{
 			ProblemID:     problemID,
+			StatementID:   statement.ID,
 			TestcaseSetID: set.ID,
 			RequestedBy:   actor.UserID,
 			Status:        ProblemCheckStatusRunning,
@@ -753,13 +806,85 @@ func (s *Service) Stats(ctx context.Context, actor auth.Actor, problemID int64) 
 }
 
 func ensurePublishable(ctx context.Context, repo Repository, problemID int64) error {
-	if _, err := repo.GetCurrentProblemStatement(ctx, problemID); err != nil {
-		return apperror.Unprocessable("problem.not_publishable", "current statement is required before publishing")
+	readiness, err := loadProblemAuthoringReadiness(ctx, repo, problemID)
+	if err != nil {
+		return err
 	}
-	if _, err := repo.GetCurrentReadyTestcaseSet(ctx, problemID); err != nil {
-		return apperror.Unprocessable("problem.not_publishable", "current ready testcase set is required before publishing")
+	if len(readiness.blockers) > 0 {
+		blocker := readiness.blockers[0]
+		return apperror.Unprocessable(blocker.Code, blocker.Message)
 	}
 	return nil
+}
+
+func demotePublishedProblem(ctx context.Context, repo Repository, problem ProblemRecord) error {
+	if problem.Status != StatusPublished {
+		return nil
+	}
+	status := StatusDraft
+	_, err := repo.UpdateProblem(ctx, problem.ID, UpdateProblemInput{Status: &status})
+	return err
+}
+
+type problemAuthoringReadiness struct {
+	statement   *Statement
+	testcaseSet *TestcaseSetRecord
+	latestCheck *ProblemCheckRun
+	blockers    []ProblemAuthoringBlocker
+}
+
+func loadProblemAuthoringReadiness(ctx context.Context, repo Repository, problemID int64) (problemAuthoringReadiness, error) {
+	state := problemAuthoringReadiness{blockers: []ProblemAuthoringBlocker{}}
+	statement, err := repo.GetCurrentProblemStatement(ctx, problemID)
+	if err != nil {
+		if !isNotFoundError(err) {
+			return problemAuthoringReadiness{}, err
+		}
+		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.statement_required", Message: "current statement is required before publishing"})
+	} else {
+		state.statement = &statement
+	}
+
+	testcaseSet, err := repo.GetCurrentReadyTestcaseSet(ctx, problemID)
+	if err != nil {
+		if !isNotFoundError(err) {
+			return problemAuthoringReadiness{}, err
+		}
+		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.testcase_required", Message: "current ready testcase set is required before publishing"})
+		return state, nil
+	}
+	state.testcaseSet = &testcaseSet
+
+	if state.statement == nil {
+		return state, nil
+	}
+	runRecord, err := repo.GetLatestCompletedProblemCheckRun(ctx, problemID, state.statement.ID, testcaseSet.ID)
+	if err != nil {
+		if !isNotFoundError(err) {
+			return problemAuthoringReadiness{}, err
+		}
+		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.check_required", Message: "run a problem check for the current testcase set before publishing"})
+		return state, nil
+	}
+	run := problemCheckRunFromRecord(runRecord)
+	findings, err := repo.ListProblemCheckFindings(ctx, run.ID)
+	if err != nil {
+		return problemAuthoringReadiness{}, err
+	}
+	run.Findings = make([]ProblemCheckFinding, 0, len(findings))
+	for _, finding := range findings {
+		run.Findings = append(run.Findings, problemCheckFindingFromRecord(finding))
+	}
+	state.latestCheck = &run
+	if !run.Summary.Valid {
+		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.check_failed", Message: "the current testcase set has validation errors"})
+	}
+	return state, nil
+}
+
+func isNotFoundError(err error) bool {
+	appErr, ok := apperror.From(err)
+	return ok && appErr.HTTPStatus == http.StatusNotFound
 }
 
 type problemCheckFindingDraft struct {
@@ -978,6 +1103,7 @@ func serviceProblemCheckRunFromRecord(record ProblemCheckRunRecord) ProblemCheck
 	return ProblemCheckRun{
 		ID:            record.ID,
 		ProblemID:     record.ProblemID,
+		StatementID:   record.StatementID,
 		TestcaseSetID: record.TestcaseSetID,
 		RequestedBy:   record.RequestedBy,
 		Status:        record.Status,
@@ -1162,6 +1288,12 @@ func normalizeListFilter(actor auth.Actor, filter ListProblemsFilter) ListProble
 	}
 	filter.Limit = filter.PageSize
 	filter.Offset = (filter.Page - 1) * filter.PageSize
+	if filter.Mine && actor.Authenticated() {
+		filter.OwnerUserID = actor.UserID
+		filter.ViewerUserID = actor.UserID
+		filter.IncludeAll = false
+		return filter
+	}
 	if actor.Admin() {
 		filter.IncludeAll = true
 		return filter
