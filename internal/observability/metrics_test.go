@@ -20,6 +20,7 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 	metrics.RecordReadinessCheck("redis.request_stream", "success", 10*time.Millisecond)
 	metrics.RecordJudgeTaskRecovery("recover_dead_task", "success")
 	metrics.RecordReconcilerAction("reset_stale_tasks", "success", 2)
+	metrics.RecordRejudgeBatch("create", "problem", "success")
 
 	rec := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
@@ -40,6 +41,7 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 		"soj_readiness_check_duration_seconds",
 		"soj_worker_judge_task_recovery_total",
 		"soj_worker_reconciliation_total",
+		`soj_rejudge_batches_total{action="create",result="success",service="test",target="problem"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics body missing %s:\n%s", want, body)

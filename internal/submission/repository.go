@@ -14,6 +14,7 @@ import (
 	"SOJ/internal/postgres/db"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -219,6 +220,142 @@ func NewSQLRepositoryWithTxRunner(q *db.Queries, txRunner postgres.TxRunner) *SQ
 	return &SQLRepository{q: q, txRunner: txRunner}
 }
 
+func (r *SQLRepository) CreateRejudgeBatchWithItems(ctx context.Context, input CreateRejudgeBatchRecordInput) (RejudgeBatchRecord, error) {
+	if r.txRunner == nil {
+		return RejudgeBatchRecord{}, errors.New("transaction runner is required to create rejudge batch")
+	}
+	var batch RejudgeBatchRecord
+	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		var submissions []db.Submission
+		var err error
+		switch {
+		case input.ProblemID != nil:
+			submissions, err = q.ListEligibleProblemSubmissionsForRejudge(ctx, *input.ProblemID)
+		case input.ContestID != nil:
+			submissions, err = q.ListEligibleContestSubmissionsForRejudge(ctx, pgtype.Int8{Int64: *input.ContestID, Valid: true})
+		default:
+			return errors.New("rejudge target is required")
+		}
+		if err != nil {
+			return err
+		}
+		if len(submissions) == 0 {
+			return ErrNoRejudgeSubmissions
+		}
+		row, err := q.CreateRejudgeBatch(ctx, db.CreateRejudgeBatchParams{
+			ProblemID: int8Ptr(input.ProblemID), ContestID: int8Ptr(input.ContestID), RequestedBy: input.RequestedBy,
+			Status: RejudgeBatchStatusQueued, Reason: input.Reason, Filters: []byte(`{}`), TotalCount: int32(len(submissions)),
+		})
+		if err != nil {
+			return err
+		}
+		batch = rejudgeBatchRecord(row)
+		for _, submission := range submissions {
+			task, err := q.GetJudgeTaskBySubmissionID(ctx, submission.ID)
+			if err != nil {
+				return err
+			}
+			if _, err := q.CreateRejudgeBatchItem(ctx, db.CreateRejudgeBatchItemParams{BatchID: batch.ID, SubmissionID: submission.ID, TaskID: task.ID}); err != nil {
+				return err
+			}
+			if _, err := q.PrepareJudgeTaskForRejudge(ctx, db.PrepareJudgeTaskForRejudgeParams{NextRunAt: timestamptz(input.NextRunAt), ID: task.ID, SubmissionID: submission.ID}); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return apperror.Conflict("rejudge.task_not_ready", "submission judge task is not done or dead")
+				}
+				return err
+			}
+			if _, err := q.PrepareSubmissionForRejudge(ctx, submission.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return RejudgeBatchRecord{}, apperror.Conflict("rejudge.active_conflict", "a submission already belongs to an active rejudge batch")
+	}
+	return batch, err
+}
+
+func (r *SQLRepository) GetRejudgeBatch(ctx context.Context, id int64) (RejudgeBatchRecord, error) {
+	row, err := r.q.GetRejudgeBatchByID(ctx, id)
+	return rejudgeBatchRecord(row), mapNotFound(err, "rejudge.not_found", "rejudge batch not found")
+}
+
+func (r *SQLRepository) ListRejudgeBatches(ctx context.Context, input ListRejudgeBatchesInput) ([]RejudgeBatchRecord, int64, error) {
+	params := db.ListRejudgeBatchesParams{
+		ProblemID: int8Ptr(input.ProblemID), ContestID: int8Ptr(input.ContestID), RequestedBy: int8Ptr(input.RequestedBy),
+		Status: textPtr(input.Status), Offset: input.Offset, Limit: input.Limit,
+	}
+	rows, err := r.q.ListRejudgeBatches(ctx, params)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := r.q.CountRejudgeBatches(ctx, db.CountRejudgeBatchesParams{ProblemID: params.ProblemID, ContestID: params.ContestID, RequestedBy: params.RequestedBy, Status: params.Status})
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]RejudgeBatchRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, rejudgeBatchRecord(row))
+	}
+	return out, total, nil
+}
+
+func (r *SQLRepository) ListRejudgeBatchItems(ctx context.Context, batchID int64) ([]RejudgeBatchItemRecord, error) {
+	rows, err := r.q.ListRejudgeBatchItems(ctx, batchID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RejudgeBatchItemRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, rejudgeBatchItemRecord(row))
+	}
+	return out, nil
+}
+
+func (r *SQLRepository) CancelRejudgeBatch(ctx context.Context, id int64, reason string) (RejudgeBatchRecord, error) {
+	if r.txRunner == nil {
+		return RejudgeBatchRecord{}, errors.New("transaction runner is required to cancel rejudge batch")
+	}
+	var batch RejudgeBatchRecord
+	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		current, err := q.GetRejudgeBatchByID(ctx, id)
+		if err != nil {
+			return mapNotFound(err, "rejudge.not_found", "rejudge batch not found")
+		}
+		items, err := q.CancelQueuedRejudgeBatchItems(ctx, db.CancelQueuedRejudgeBatchItemsParams{ErrorMessage: text(reason), BatchID: id})
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			if _, err := q.CancelPendingJudgeTaskForRejudge(ctx, db.CancelPendingJudgeTaskForRejudgeParams{LastError: text(reason), ID: item.TaskID}); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return apperror.Conflict("rejudge.cancel_race", "a queued rejudge item started while cancellation was requested")
+				}
+				return err
+			}
+			if _, err := q.RestoreSubmissionAfterCanceledRejudge(ctx, item.SubmissionID); err != nil {
+				return err
+			}
+		}
+		row, err := q.CancelRejudgeBatch(ctx, db.CancelRejudgeBatchParams{
+			CanceledCount: current.CanceledCount + int32(len(items)), ErrorMessage: text(reason), FinishedAt: timestamptz(time.Now().UTC()), ID: id,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return apperror.Conflict("rejudge.not_cancelable", "rejudge batch cannot be canceled")
+			}
+			return err
+		}
+		batch = rejudgeBatchRecord(row)
+		return nil
+	})
+	return batch, err
+}
+
 func (r *SQLRepository) CreateArtifact(ctx context.Context, arg ArtifactRecord) (ArtifactRecord, error) {
 	row, err := r.q.CreateArtifact(ctx, db.CreateArtifactParams{
 		OwnerType:      arg.OwnerType,
@@ -376,9 +513,22 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 }
 
 func (r *SQLRepository) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAttemptInput) (JudgeAttemptRecord, error) {
+	if r.txRunner == nil {
+		return ensureJudgeAttempt(ctx, r.q, input)
+	}
+	var attempt JudgeAttemptRecord
+	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		var err error
+		attempt, err = ensureJudgeAttempt(ctx, r.q.WithTx(tx), input)
+		return err
+	})
+	return attempt, err
+}
+
+func ensureJudgeAttempt(ctx context.Context, q *db.Queries, input EnsureJudgeAttemptInput) (JudgeAttemptRecord, error) {
 	if input.AttemptID != "" {
 		if id, err := strconv.ParseInt(input.AttemptID, 10, 64); err == nil {
-			row, err := r.q.GetJudgeAttemptByID(ctx, id)
+			row, err := q.GetJudgeAttemptByID(ctx, id)
 			if err == nil {
 				return judgeAttemptRecord(row), nil
 			}
@@ -387,10 +537,19 @@ func (r *SQLRepository) EnsureJudgeAttempt(ctx context.Context, input EnsureJudg
 			}
 		}
 	}
-	latest, err := r.q.GetLatestJudgeAttemptBySubmissionID(ctx, pgtype.Int8{Int64: input.SubmissionID, Valid: true})
+	item, itemErr := q.GetQueuedRejudgeBatchItemByTaskID(ctx, input.TaskID)
+	if itemErr != nil && !errors.Is(itemErr, pgx.ErrNoRows) {
+		return JudgeAttemptRecord{}, itemErr
+	}
+	latest, err := q.GetLatestJudgeAttemptBySubmissionID(ctx, pgtype.Int8{Int64: input.SubmissionID, Valid: true})
 	attemptNo := int32(1)
 	if err == nil {
 		if latest.TaskID.Valid && latest.TaskID.Int64 == input.TaskID && !terminalStatus(latest.Status) {
+			if itemErr == nil {
+				if _, err := q.StartRejudgeBatchItem(ctx, db.StartRejudgeBatchItemParams{AttemptID: pgtype.Int8{Int64: latest.ID, Valid: true}, ID: item.ID}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return JudgeAttemptRecord{}, err
+				}
+			}
 			return judgeAttemptRecord(latest), nil
 		}
 		attemptNo = latest.AttemptNo + 1
@@ -408,9 +567,10 @@ func (r *SQLRepository) EnsureJudgeAttempt(ctx context.Context, input EnsureJudg
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
-	row, err := r.q.CreateJudgeAttempt(ctx, db.CreateJudgeAttemptParams{
+	row, err := q.CreateJudgeAttempt(ctx, db.CreateJudgeAttemptParams{
 		SubmissionID:     pgtype.Int8{Int64: input.SubmissionID, Valid: true},
 		TaskID:           pgtype.Int8{Int64: input.TaskID, Valid: input.TaskID > 0},
+		RejudgeBatchID:   pgtype.Int8{Int64: item.BatchID, Valid: itemErr == nil},
 		AttemptNo:        attemptNo,
 		ProtocolVersion:  input.ProtocolVersion,
 		JudgeCoreVersion: input.ProtocolVersion,
@@ -425,7 +585,18 @@ func (r *SQLRepository) EnsureJudgeAttempt(ctx context.Context, input EnsureJudg
 		TraceID:          text(input.TraceID),
 		StartedAt:        timestamptz(startedAt),
 	})
-	return judgeAttemptRecord(row), err
+	if err != nil {
+		return JudgeAttemptRecord{}, err
+	}
+	if itemErr == nil {
+		if _, err := q.StartRejudgeBatchItem(ctx, db.StartRejudgeBatchItemParams{AttemptID: pgtype.Int8{Int64: row.ID, Valid: true}, ID: item.ID}); err != nil {
+			return JudgeAttemptRecord{}, err
+		}
+		if _, err := q.RefreshRejudgeBatchProgress(ctx, item.BatchID); err != nil {
+			return JudgeAttemptRecord{}, err
+		}
+	}
+	return judgeAttemptRecord(row), nil
 }
 
 func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error) {
@@ -563,6 +734,17 @@ func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input Co
 		}
 		if finished.TaskID.Valid {
 			if _, err := q.MarkJudgeTaskDone(ctx, finished.TaskID.Int64); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
+		if finished.RejudgeBatchID.Valid {
+			item, err := q.FinishRejudgeBatchItem(ctx, db.FinishRejudgeBatchItemParams{
+				Status: RejudgeItemStatusCompleted, ErrorMessage: pgtype.Text{}, AttemptID: pgtype.Int8{Int64: finished.ID, Valid: true},
+			})
+			if err != nil {
+				return err
+			}
+			if _, err := q.RefreshRejudgeBatchProgress(ctx, item.BatchID); err != nil {
 				return err
 			}
 		}
@@ -923,13 +1105,37 @@ func (r *SQLRepository) RetryJudgeTask(ctx context.Context, id int64, nextRunAt 
 }
 
 func (r *SQLRepository) MarkJudgeTaskDead(ctx context.Context, id int64, reason string) (JudgeTaskRecord, error) {
-	row, err := r.q.MarkJudgeTaskDead(ctx, db.MarkJudgeTaskDeadParams{ID: id, LastError: text(reason)})
-	return judgeTaskRecord(row), err
+	if r.txRunner == nil {
+		row, err := r.q.MarkJudgeTaskDead(ctx, db.MarkJudgeTaskDeadParams{ID: id, LastError: text(reason)})
+		return judgeTaskRecord(row), err
+	}
+	var task JudgeTaskRecord
+	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		row, err := q.MarkJudgeTaskDead(ctx, db.MarkJudgeTaskDeadParams{ID: id, LastError: text(reason)})
+		if err != nil {
+			return err
+		}
+		task = judgeTaskRecord(row)
+		if _, err := q.MarkSubmissionSystemError(ctx, db.MarkSubmissionSystemErrorParams{ID: task.SubmissionID, ErrorMessage: text(reason)}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		item, err := q.FailActiveRejudgeBatchItemByTaskID(ctx, db.FailActiveRejudgeBatchItemByTaskIDParams{ErrorMessage: text(reason), TaskID: id})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		_, err = q.RefreshRejudgeBatchProgress(ctx, item.BatchID)
+		return err
+	})
+	return task, err
 }
 
 func (r *SQLRepository) RecoverDeadJudgeTask(ctx context.Context, id int64, nextRunAt time.Time, reason string) (JudgeTaskRecord, error) {
 	row, err := r.q.RecoverDeadJudgeTask(ctx, db.RecoverDeadJudgeTaskParams{NextRunAt: timestamptz(nextRunAt), LastError: text(reason), ID: id})
-	return judgeTaskRecord(row), err
+	return recoverDeadJudgeTaskRecord(row), err
 }
 
 func (r *SQLRepository) CreateRun(ctx context.Context, arg RunRecord) (RunRecord, error) {
@@ -1054,6 +1260,10 @@ func resetJudgeTaskRecord(row db.ResetStaleJudgeTasksRow) JudgeTaskRecord {
 	return JudgeTaskRecord{ID: row.ID, SubmissionID: row.SubmissionID, StreamID: row.StreamID.String, Status: row.Status, Attempts: row.Attempts, NextRunAt: row.NextRunAt.Time, LastError: row.LastError.String}
 }
 
+func recoverDeadJudgeTaskRecord(row db.RecoverDeadJudgeTaskRow) JudgeTaskRecord {
+	return JudgeTaskRecord{ID: row.ID, SubmissionID: row.SubmissionID, StreamID: row.StreamID.String, Status: row.Status, Attempts: row.Attempts, NextRunAt: row.NextRunAt.Time, LastError: row.LastError.String}
+}
+
 func languageRecord(row db.Language) LanguageRecord {
 	return LanguageRecord{ID: row.ID, Engine: row.Engine, EngineLanguageID: row.EngineLanguageID, Name: row.Name, DefaultTimeLimit: time.Duration(row.DefaultTimeLimitMs) * time.Millisecond, DefaultMemoryKB: int64(row.DefaultMemoryLimitKb), Enabled: row.Enabled}
 }
@@ -1097,6 +1307,23 @@ func judgeAttemptRecord(row db.JudgeAttempt) JudgeAttemptRecord {
 		FinishedAt:           timeValue(row.FinishedAt),
 		CreatedAt:            row.CreatedAt.Time,
 		UpdatedAt:            row.UpdatedAt.Time,
+	}
+}
+
+func rejudgeBatchRecord(row db.RejudgeBatch) RejudgeBatchRecord {
+	return RejudgeBatchRecord{
+		ID: row.ID, ProblemID: int8Value(row.ProblemID), ContestID: int8Value(row.ContestID), RequestedBy: row.RequestedBy,
+		Status: row.Status, Reason: row.Reason, TotalCount: row.TotalCount, CompletedCount: row.CompletedCount,
+		FailedCount: row.FailedCount, CanceledCount: row.CanceledCount, ErrorMessage: textValue(row.ErrorMessage),
+		StartedAt: timeValue(row.StartedAt), FinishedAt: timeValue(row.FinishedAt), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+	}
+}
+
+func rejudgeBatchItemRecord(row db.RejudgeBatchItem) RejudgeBatchItemRecord {
+	return RejudgeBatchItemRecord{
+		ID: row.ID, BatchID: row.BatchID, SubmissionID: row.SubmissionID, TaskID: row.TaskID, AttemptID: int8Value(row.AttemptID),
+		Status: row.Status, ErrorMessage: textValue(row.ErrorMessage), StartedAt: timeValue(row.StartedAt), FinishedAt: timeValue(row.FinishedAt),
+		CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 	}
 }
 

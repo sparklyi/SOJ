@@ -787,6 +787,14 @@ func (s *Service) GetForJudge(ctx context.Context, problemID int64) (Problem, er
 	}, nil
 }
 
+func (s *Service) AuthorizeProblemRejudge(ctx context.Context, actor auth.Actor, id int64) error {
+	problem, err := s.repo.GetProblem(ctx, id)
+	if err != nil {
+		return err
+	}
+	return canWriteProblem(actor, problem)
+}
+
 func (s *Service) Stats(ctx context.Context, actor auth.Actor, problemID int64) (ProblemStats, error) {
 	p, err := s.repo.GetProblem(ctx, problemID)
 	if err != nil {
