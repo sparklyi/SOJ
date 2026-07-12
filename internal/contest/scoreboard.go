@@ -77,11 +77,6 @@ func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (S
 		if candidate.View != ScoreboardViewFrozen && candidate.View != ScoreboardViewFinal {
 			continue
 		}
-		if _, err := s.repo.LatestScoreSnapshot(ctx, candidate.Contest.ID, candidate.View); err == nil {
-			continue
-		} else if !scoreSnapshotMissing(err) {
-			return result, err
-		}
 		generatedAt := s.now()
 		board, err := s.buildScoreboard(ctx, candidate.Contest, candidate.View, generatedAt)
 		if err != nil {
@@ -103,11 +98,6 @@ func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (S
 		}
 	}
 	return result, nil
-}
-
-func scoreSnapshotMissing(err error) bool {
-	var appErr *apperror.Error
-	return errors.As(err, &appErr) && appErr.HTTPStatus == 404
 }
 
 func (s *Service) buildScoreboard(ctx context.Context, contest ContestRecord, view ScoreboardView, generatedAt time.Time) (ScoreboardResponse, error) {

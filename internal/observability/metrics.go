@@ -32,6 +32,7 @@ type Metrics struct {
 	readinessDuration    *prometheus.HistogramVec
 	taskRecovery         *prometheus.CounterVec
 	reconcilerActions    *prometheus.CounterVec
+	rejudgeBatches       *prometheus.CounterVec
 }
 
 func NewMetrics(service string) *Metrics {
@@ -173,6 +174,13 @@ func NewMetrics(service string) *Metrics {
 			Help:        "Worker reconciliation actions by action and result.",
 			ConstLabels: labels,
 		}, []string{"action", "result"}),
+		rejudgeBatches: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "rejudge",
+			Name:        "batches_total",
+			Help:        "Rejudge batch operations by action, target type, and result.",
+			ConstLabels: labels,
+		}, []string{"action", "target", "result"}),
 	}
 
 	registry.MustRegister(
@@ -197,6 +205,7 @@ func NewMetrics(service string) *Metrics {
 		metrics.readinessDuration,
 		metrics.taskRecovery,
 		metrics.reconcilerActions,
+		metrics.rejudgeBatches,
 	)
 	return metrics
 }
@@ -258,6 +267,10 @@ func (m *Metrics) RecordReadinessCheck(dependency, result string, duration time.
 
 func (m *Metrics) RecordJudgeTaskRecovery(action, result string) {
 	m.taskRecovery.WithLabelValues(action, result).Inc()
+}
+
+func (m *Metrics) RecordRejudgeBatch(action, target, result string) {
+	m.rejudgeBatches.WithLabelValues(action, target, boundedResultLabel(result)).Inc()
 }
 
 func (m *Metrics) RecordReconcilerAction(action, result string, count int) {

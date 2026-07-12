@@ -360,8 +360,8 @@ func listScoreSnapshotCandidates(ctx context.Context, q *db.Queries, now time.Ti
 		limit = 100
 	}
 	rows, err := q.ListContestScoreSnapshotCandidates(ctx, db.ListContestScoreSnapshotCandidatesParams{
-		Now:   timestamptz(now),
-		Limit: limit,
+		FreezeAt: timestamptz(now),
+		Limit:    limit,
 	})
 	if err != nil {
 		return nil, mapDBErr(err)

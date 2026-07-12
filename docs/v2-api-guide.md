@@ -112,6 +112,18 @@ Submission result visibility:
 - ACM contest submissions after freeze return `visibility: "frozen"` and omit `result`, `cases`, and `admin_diagnostics` for contestants until final visibility opens.
 - Admin/root and contest owner views may still inspect frozen contest submissions for operations and adjudication.
 
+Rejudge batches:
+
+- `POST /api/v1/rejudge-batches`
+- `GET /api/v1/rejudge-batches`
+- `GET /api/v1/rejudge-batches/{id}`
+- `POST /api/v1/rejudge-batches/{id}/cancel`
+- A create request must provide exactly one of `problem_id` or `contest_id`, plus a non-empty `reason`.
+- Problem batches select terminal non-contest submissions only. Contest batches select terminal submissions from an ended contest.
+- Batch membership is fixed at creation. Each item records its submission, reused judge task, new attempt, status, and timestamps.
+- While a submission is queued or running for rejudge, the API omits its previous result projection even though historical attempts remain stored.
+- Cancellation restores undispatched submissions to their previous projected result. Attempts already running may finish, and completed results are not rolled back.
+
 Contests:
 
 - `GET /api/v1/contests`
