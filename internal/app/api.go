@@ -85,6 +85,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		ContestPolicy:    contestService,
 		TerminalHook:     contestService,
 	})
+	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemService, contests: contestService}, nil, metrics)
 
 	middleware := httpapi.DefaultMiddlewareSet()
 	middleware.Auth = actorMiddleware(jwtManager)
@@ -98,7 +99,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 			user.NewModule(userService),
 			problem.NewModule(problemService),
 			contest.NewModule(contestService),
-			submission.NewModule(submission.NewHandler(submissionService)),
+			submission.NewModule(submission.NewHandler(submissionService, rejudgeService)),
 		},
 	})
 	logger.InfoContext(ctx, "starting soj api", "addr", cfg.HTTP.Addr)
@@ -110,6 +111,23 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
 	return runHTTPServer(ctx, server, cfg.Worker.ShutdownTimeout)
+}
+
+type rejudgeAuthorizationPolicy struct {
+	problems *problem.Service
+	contests *contest.Service
+}
+
+func (p rejudgeAuthorizationPolicy) AuthorizeProblemRejudge(ctx context.Context, actor auth.Actor, problemID int64) error {
+	return p.problems.AuthorizeProblemRejudge(ctx, actor, problemID)
+}
+
+func (p rejudgeAuthorizationPolicy) AuthorizeContestRejudge(ctx context.Context, actor auth.Actor, contestID int64) error {
+	return p.contests.AuthorizeContestRejudge(ctx, actor, contestID)
+}
+
+func (p rejudgeAuthorizationPolicy) ValidateContestRejudgeTarget(ctx context.Context, contestID int64) error {
+	return p.contests.ValidateContestRejudgeTarget(ctx, contestID)
 }
 
 func actorMiddleware(jwtManager *auth.JWTManager) gin.HandlerFunc {

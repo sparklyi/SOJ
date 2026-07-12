@@ -744,6 +744,22 @@ func TestFrozenContestSubmissionHidesResultForContestant(t *testing.T) {
 	}
 }
 
+func TestQueuedRejudgeSubmissionDoesNotExposePreviousResult(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, Status: StatusQueued}
+	repo.results[1] = SubmissionResultRecord{SubmissionID: 1, AttemptID: 9, Status: StatusAccepted}
+	repo.attempts[9] = JudgeAttemptRecord{ID: 9, SubmissionID: int64Ptr(1), Status: StatusAccepted}
+	service := NewService(ServiceOptions{Repository: repo})
+
+	view, err := service.GetSubmission(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, 1)
+	if err != nil {
+		t.Fatalf("GetSubmission returned error: %v", err)
+	}
+	if view.Result != nil || len(view.Cases) != 0 || view.AdminDiagnostics != nil {
+		t.Fatalf("queued rejudge exposed previous result: %+v", view)
+	}
+}
+
 type frozenSubmissionPolicy struct {
 	freezeAt time.Time
 	endAt    time.Time
