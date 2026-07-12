@@ -327,6 +327,25 @@ func (s *Service) DeleteContest(ctx context.Context, actor auth.Actor, id int64)
 	return s.repo.ArchiveContest(ctx, id)
 }
 
+func (s *Service) AuthorizeContestRejudge(ctx context.Context, actor auth.Actor, id int64) error {
+	contest, err := s.repo.GetContest(ctx, id)
+	if err != nil {
+		return err
+	}
+	return requireContestWriter(actor, contest)
+}
+
+func (s *Service) ValidateContestRejudgeTarget(ctx context.Context, id int64) error {
+	contest, err := s.repo.GetContest(ctx, id)
+	if err != nil {
+		return err
+	}
+	if contest.Status != StatusEnded {
+		return apperror.Conflict("rejudge.contest_not_ended", "contest must be ended before rejudge")
+	}
+	return nil
+}
+
 func (s *Service) Register(ctx context.Context, actor auth.Actor, contestID int64, input RegistrationInput) (ContestRegistration, error) {
 	if !actor.Authenticated() {
 		return ContestRegistration{}, apperror.Unauthorized("auth_required", "authentication required")

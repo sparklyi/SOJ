@@ -162,6 +162,57 @@ if [[ "$STATUS" != "accepted" ]]; then
   exit 1
 fi
 
+ORIGINAL_ATTEMPT_ID="$(compose exec -T postgres psql -U soj -d soj -Atc "select max(id) from judge_attempts where submission_id = $SUBMISSION_ID;" | tr -d '\r[:space:]')"
+REJUDGE_RESPONSE="$(api_json POST /api/v1/rejudge-batches "{\"problem_id\":$PROBLEM_ID,\"reason\":\"smoke rejudge\"}")"
+REJUDGE_BATCH_ID="$(jq -r '.data.id' <<<"$REJUDGE_RESPONSE")"
+REJUDGE_STATUS=""
+for _ in $(seq 1 30); do
+  REJUDGE_STATUS="$(api_json GET "/api/v1/rejudge-batches/$REJUDGE_BATCH_ID" | jq -r '.data.batch.status')"
+  [[ "$REJUDGE_STATUS" == "completed" ]] && break
+  sleep 1
+done
+if [[ "$REJUDGE_STATUS" != "completed" ]]; then
+  echo "rejudge batch $REJUDGE_BATCH_ID ended with status $REJUDGE_STATUS" >&2
+  exit 1
+fi
+
+REJUDGE_DB_ROWS="$(compose exec -T postgres psql -U soj -d soj -Atc "
+select count(*)
+from rejudge_batch_items rbi
+join judge_attempts ja on ja.id = rbi.attempt_id
+where rbi.batch_id = $REJUDGE_BATCH_ID
+  and rbi.submission_id = $SUBMISSION_ID
+  and rbi.status = 'completed'
+  and ja.rejudge_batch_id = $REJUDGE_BATCH_ID
+  and ja.id > $ORIGINAL_ATTEMPT_ID;
+" | tr -d '\r[:space:]')"
+if [[ "$REJUDGE_DB_ROWS" != "1" ]]; then
+  echo "rejudge DB state rows = $REJUDGE_DB_ROWS, want 1" >&2
+  exit 1
+fi
+
+compose stop worker >/dev/null
+CANCEL_REJUDGE_RESPONSE="$(api_json POST /api/v1/rejudge-batches "{\"problem_id\":$PROBLEM_ID,\"reason\":\"smoke cancel\"}")"
+CANCEL_REJUDGE_BATCH_ID="$(jq -r '.data.id' <<<"$CANCEL_REJUDGE_RESPONSE")"
+api_json POST "/api/v1/rejudge-batches/$CANCEL_REJUDGE_BATCH_ID/cancel" '{"reason":"smoke cancel before dispatch"}' >/dev/null
+CANCELED_DB_ROWS="$(compose exec -T postgres psql -U soj -d soj -Atc "
+select count(*)
+from rejudge_batch_items rbi
+join submissions s on s.id = rbi.submission_id
+join judge_tasks jt on jt.id = rbi.task_id
+where rbi.batch_id = $CANCEL_REJUDGE_BATCH_ID
+  and rbi.submission_id = $SUBMISSION_ID
+  and rbi.status = 'canceled'
+  and s.status = 'accepted'
+  and jt.status = 'done';
+" | tr -d '\r[:space:]')"
+if [[ "$CANCELED_DB_ROWS" != "1" ]]; then
+  echo "canceled rejudge DB state rows = $CANCELED_DB_ROWS, want 1" >&2
+  exit 1
+fi
+compose start worker >/dev/null
+wait_http "${WORKER_URL:-http://localhost:8081}/readyz"
+
 if [[ "$SMOKE_REAL_JUDGE" == "1" ]]; then
   WRONG_PAYLOAD="$(jq -cn --argjson problem_id "$PROBLEM_ID" --argjson language_id "$LANG_ID" --arg source "$WRONG_SOURCE_CODE" '{problem_id:$problem_id,language_id:$language_id,source_code:$source}')"
   WRONG_RESPONSE="$(api_json POST /api/v1/submissions "$WRONG_PAYLOAD")"
@@ -250,4 +301,40 @@ if [[ "$ACCEPTED_COUNT" != "1" ]]; then
   exit 1
 fi
 
-echo "smoke ok: problem=$PROBLEM_ID submission=$SUBMISSION_ID contest=$CONTEST_ID contest_submission=$CONTEST_SUBMISSION_ID judge_results=$RESULT_STREAM_LEN async_rows=$ASYNC_DB_ROWS case_results=$CASE_RESULT_ROWS"
+api_json PATCH "/api/v1/contests/$CONTEST_ID" '{"status":"ended","end_at":"2026-01-03T00:00:00Z","freeze_at":"2026-01-02T00:00:00Z"}' >/dev/null
+FINAL_SNAPSHOT_ID=""
+for _ in $(seq 1 45); do
+  FINAL_SNAPSHOT_ID="$(compose exec -T postgres psql -U soj -d soj -Atc "select max(id) from contest_score_snapshots where contest_id = $CONTEST_ID and kind = 'final';" | tr -d '\r[:space:]')"
+  [[ -n "$FINAL_SNAPSHOT_ID" ]] && break
+  sleep 1
+done
+if [[ -z "$FINAL_SNAPSHOT_ID" ]]; then
+  echo "initial final scoreboard snapshot was not generated" >&2
+  exit 1
+fi
+
+CONTEST_REJUDGE_RESPONSE="$(api_json POST /api/v1/rejudge-batches "{\"contest_id\":$CONTEST_ID,\"reason\":\"smoke contest rejudge\"}")"
+CONTEST_REJUDGE_BATCH_ID="$(jq -r '.data.id' <<<"$CONTEST_REJUDGE_RESPONSE")"
+CONTEST_REJUDGE_STATUS=""
+for _ in $(seq 1 30); do
+  CONTEST_REJUDGE_STATUS="$(api_json GET "/api/v1/rejudge-batches/$CONTEST_REJUDGE_BATCH_ID" | jq -r '.data.batch.status')"
+  [[ "$CONTEST_REJUDGE_STATUS" == "completed" ]] && break
+  sleep 1
+done
+if [[ "$CONTEST_REJUDGE_STATUS" != "completed" ]]; then
+  echo "contest rejudge batch $CONTEST_REJUDGE_BATCH_ID ended with status $CONTEST_REJUDGE_STATUS" >&2
+  exit 1
+fi
+
+REFRESHED_FINAL_SNAPSHOT_ID="$FINAL_SNAPSHOT_ID"
+for _ in $(seq 1 45); do
+  REFRESHED_FINAL_SNAPSHOT_ID="$(compose exec -T postgres psql -U soj -d soj -Atc "select max(id) from contest_score_snapshots where contest_id = $CONTEST_ID and kind = 'final';" | tr -d '\r[:space:]')"
+  [[ "$REFRESHED_FINAL_SNAPSHOT_ID" -gt "$FINAL_SNAPSHOT_ID" ]] && break
+  sleep 1
+done
+if [[ "$REFRESHED_FINAL_SNAPSHOT_ID" -le "$FINAL_SNAPSHOT_ID" ]]; then
+  echo "final scoreboard snapshot was not refreshed after contest rejudge" >&2
+  exit 1
+fi
+
+echo "smoke ok: problem=$PROBLEM_ID submission=$SUBMISSION_ID rejudge_batch=$REJUDGE_BATCH_ID canceled_rejudge_batch=$CANCEL_REJUDGE_BATCH_ID contest=$CONTEST_ID contest_submission=$CONTEST_SUBMISSION_ID contest_rejudge_batch=$CONTEST_REJUDGE_BATCH_ID final_snapshot=$REFRESHED_FINAL_SNAPSHOT_ID judge_results=$RESULT_STREAM_LEN async_rows=$ASYNC_DB_ROWS case_results=$CASE_RESULT_ROWS"

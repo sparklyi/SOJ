@@ -36,6 +36,21 @@ func TestProblemAuthorizationAllowsOwnerAndAdmin(t *testing.T) {
 	}
 }
 
+func TestAuthorizeProblemRejudgeUsesProblemOwnership(t *testing.T) {
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic}
+	service := NewService(repo, &fakeStorage{})
+
+	if err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1); err != nil {
+		t.Fatalf("owner authorization returned error: %v", err)
+	}
+	if err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1); err != nil {
+		t.Fatalf("admin authorization returned error: %v", err)
+	}
+	err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1)
+	assertAppCode(t, err, "problem.forbidden")
+}
+
 func TestPublishRequiresValidCheckForCurrentTestcaseSet(t *testing.T) {
 	tests := []struct {
 		name     string

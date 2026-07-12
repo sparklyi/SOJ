@@ -440,7 +440,7 @@ func (s *Service) submissionView(ctx context.Context, actor auth.Actor, record S
 	}
 
 	view := SubmissionView{Submission: record, Visibility: visibility.Visibility}
-	if !visibility.ShowResult {
+	if !visibility.ShowResult || !terminalStatus(record.Status) {
 		return view, nil
 	}
 	result, err := s.repo.GetSubmissionResult(ctx, record.ID)

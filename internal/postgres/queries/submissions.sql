@@ -309,6 +309,14 @@ WHERE (sqlc.narg('problem_id')::bigint IS NULL OR problem_id = sqlc.narg('proble
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
+-- name: CountRejudgeBatches :one
+SELECT count(*)::bigint
+FROM rejudge_batches
+WHERE (sqlc.narg('problem_id')::bigint IS NULL OR problem_id = sqlc.narg('problem_id')::bigint)
+  AND (sqlc.narg('contest_id')::bigint IS NULL OR contest_id = sqlc.narg('contest_id')::bigint)
+  AND (sqlc.narg('requested_by')::bigint IS NULL OR requested_by = sqlc.narg('requested_by')::bigint)
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
+
 -- name: UpdateRejudgeBatchProgress :one
 UPDATE rejudge_batches
 SET status = CASE
@@ -362,6 +370,168 @@ SET status = 'canceled',
 WHERE id = sqlc.arg('id')
   AND status IN ('queued', 'running')
 RETURNING *;
+
+-- name: ListEligibleProblemSubmissionsForRejudge :many
+SELECT *
+FROM submissions
+WHERE problem_id = $1
+  AND contest_id IS NULL
+  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+ORDER BY id
+FOR UPDATE;
+
+-- name: ListEligibleContestSubmissionsForRejudge :many
+SELECT *
+FROM submissions
+WHERE contest_id = $1
+  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+ORDER BY id
+FOR UPDATE;
+
+-- name: CreateRejudgeBatchItem :one
+INSERT INTO rejudge_batch_items (
+    batch_id,
+    submission_id,
+    task_id,
+    status
+) VALUES (
+    $1, $2, $3, 'queued'
+)
+RETURNING *;
+
+-- name: ListRejudgeBatchItems :many
+SELECT *
+FROM rejudge_batch_items
+WHERE batch_id = $1
+ORDER BY id;
+
+-- name: GetQueuedRejudgeBatchItemByTaskID :one
+SELECT *
+FROM rejudge_batch_items
+WHERE task_id = $1
+  AND status = 'queued';
+
+-- name: PrepareJudgeTaskForRejudge :one
+UPDATE judge_tasks
+SET status = 'pending',
+    stream_id = NULL,
+    attempts = 0,
+    next_run_at = sqlc.arg('next_run_at'),
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND submission_id = sqlc.arg('submission_id')
+  AND status IN ('done', 'dead')
+RETURNING *;
+
+-- name: PrepareSubmissionForRejudge :one
+UPDATE submissions
+SET status = 'queued',
+    time_ms = NULL,
+    memory_kb = NULL,
+    score = 0,
+    error_message = NULL,
+    judged_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+RETURNING *;
+
+-- name: StartRejudgeBatchItem :one
+UPDATE rejudge_batch_items
+SET status = 'running',
+    attempt_id = sqlc.arg('attempt_id'),
+    started_at = coalesce(started_at, now()),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status = 'queued'
+  AND attempt_id IS NULL
+RETURNING *;
+
+-- name: FinishRejudgeBatchItem :one
+UPDATE rejudge_batch_items
+SET status = sqlc.arg('status'),
+    error_message = sqlc.narg('error_message'),
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+WHERE attempt_id = sqlc.arg('attempt_id')
+  AND status = 'running'
+RETURNING *;
+
+-- name: FailActiveRejudgeBatchItemByTaskID :one
+UPDATE rejudge_batch_items
+SET status = 'failed',
+    error_message = sqlc.arg('error_message'),
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+WHERE task_id = sqlc.arg('task_id')
+  AND status IN ('queued', 'running')
+RETURNING *;
+
+-- name: CancelQueuedRejudgeBatchItems :many
+UPDATE rejudge_batch_items
+SET status = 'canceled',
+    error_message = sqlc.narg('error_message'),
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+WHERE batch_id = sqlc.arg('batch_id')
+  AND status = 'queued'
+RETURNING *;
+
+-- name: CancelPendingJudgeTaskForRejudge :one
+UPDATE judge_tasks
+SET status = 'done',
+    stream_id = NULL,
+    last_error = sqlc.narg('last_error'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND status = 'pending'
+RETURNING *;
+
+-- name: RestoreSubmissionAfterCanceledRejudge :one
+UPDATE submissions
+SET status = submission_results.status,
+    time_ms = submission_results.time_ms,
+    memory_kb = submission_results.memory_kb,
+    score = submission_results.score,
+    error_message = NULL,
+    judged_at = coalesce(submissions.judged_at, submission_results.updated_at),
+    updated_at = now()
+FROM submission_results
+WHERE submissions.id = sqlc.arg('submission_id')
+  AND submission_results.submission_id = submissions.id
+  AND submissions.status = 'queued'
+RETURNING submissions.*;
+
+-- name: RefreshRejudgeBatchProgress :one
+WITH counts AS (
+    SELECT count(*) FILTER (WHERE status = 'completed')::integer AS completed_count,
+           count(*) FILTER (WHERE status = 'failed')::integer AS failed_count,
+           count(*) FILTER (WHERE status = 'canceled')::integer AS canceled_count,
+           count(*) FILTER (WHERE status IN ('queued', 'running'))::integer AS active_count
+    FROM rejudge_batch_items
+    WHERE batch_id = $1
+)
+UPDATE rejudge_batches
+SET status = CASE
+        WHEN rejudge_batches.status = 'canceled' THEN 'canceled'
+        WHEN counts.active_count = 0 AND counts.failed_count > 0 THEN 'failed'
+        WHEN counts.active_count = 0 THEN 'completed'
+        ELSE 'running'
+    END,
+    completed_count = counts.completed_count,
+    failed_count = counts.failed_count,
+    canceled_count = counts.canceled_count,
+    started_at = coalesce(started_at, now()),
+    finished_at = CASE
+        WHEN counts.active_count = 0 THEN coalesce(finished_at, now())
+        ELSE finished_at
+    END,
+    updated_at = now()
+FROM counts
+WHERE rejudge_batches.id = $1
+  AND rejudge_batches.status IN ('queued', 'running', 'canceled')
+RETURNING rejudge_batches.*;
 
 -- name: UpdateSubmissionStatus :one
 UPDATE submissions
@@ -498,8 +668,8 @@ WITH recovered AS (
         next_run_at = sqlc.arg('next_run_at'),
         last_error = sqlc.arg('last_error'),
         updated_at = now()
-    WHERE id = sqlc.arg('id')
-      AND status = 'dead'
+    WHERE judge_tasks.id = sqlc.arg('id')
+      AND judge_tasks.status = 'dead'
       AND EXISTS (
           SELECT 1
           FROM submissions

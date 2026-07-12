@@ -381,6 +381,26 @@ func TestContestResponsesIncludeFrontendContractFields(t *testing.T) {
 	}
 }
 
+func TestAuthorizeContestRejudgeRequiresWriterAndEndedContest(t *testing.T) {
+	repo := newMemoryRepository()
+	repo.contests[1] = ContestRecord{ID: 1, OwnerUserID: 10, Status: StatusEnded, Visibility: VisibilityPublic}
+	repo.contests[2] = ContestRecord{ID: 2, OwnerUserID: 10, Status: StatusRunning, Visibility: VisibilityPublic}
+	service := NewService(repo)
+
+	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1); err != nil {
+		t.Fatalf("owner authorization returned error: %v", err)
+	}
+	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1); err != nil {
+		t.Fatalf("admin authorization returned error: %v", err)
+	}
+	if codeOf(service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1)) != "contest.not_allowed" {
+		t.Fatalf("unrelated actor should be forbidden")
+	}
+	if codeOf(service.ValidateContestRejudgeTarget(t.Context(), 2)) != "rejudge.contest_not_ended" {
+		t.Fatalf("running contest should not be rejudged")
+	}
+}
+
 func TestContestCRUDRegistrationAndPermissions(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	repo := newMemoryRepository()
