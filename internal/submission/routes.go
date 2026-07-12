@@ -17,6 +17,12 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	group.POST("/runs", m.handler.CreateRun)
 	group.GET("/runs/:id", m.handler.GetRun)
 	group.GET("/languages", m.handler.ListPublicLanguages)
+	if m.handler.rejudge != nil {
+		group.POST("/rejudge-batches", m.handler.CreateRejudgeBatch)
+		group.GET("/rejudge-batches", m.handler.ListRejudgeBatches)
+		group.GET("/rejudge-batches/:id", m.handler.GetRejudgeBatch)
+		group.POST("/rejudge-batches/:id/cancel", m.handler.CancelRejudgeBatch)
+	}
 	admin := group.Group("/admin")
 	admin.GET("/languages", m.handler.ListLanguages)
 	admin.POST("/languages/sync", m.handler.SyncLanguages)

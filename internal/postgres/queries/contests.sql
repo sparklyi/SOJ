@@ -248,11 +248,25 @@ FROM (
     FROM contests c
     WHERE c.status IN ('published', 'running', 'ended')
       AND c.end_at <= $1
-      AND NOT EXISTS (
-          SELECT 1
-          FROM contest_score_snapshots css
-          WHERE css.contest_id = c.id
-            AND css.kind = 'final'
+      AND (
+          NOT EXISTS (
+              SELECT 1
+              FROM contest_score_snapshots css
+              WHERE css.contest_id = c.id
+                AND css.kind = 'final'
+          )
+          OR EXISTS (
+              SELECT 1
+              FROM rejudge_batches rb
+              LEFT JOIN contest_score_snapshots css
+                ON css.contest_id = rb.contest_id
+               AND css.kind = 'final'
+              WHERE rb.contest_id = c.id
+                AND rb.status = 'completed'
+                AND rb.finished_at IS NOT NULL
+              GROUP BY rb.id, rb.finished_at
+              HAVING rb.finished_at > coalesce(max(css.generated_at), '-infinity'::timestamptz)
+          )
       )
 ) due
 ORDER BY due_at, id, snapshot_kind

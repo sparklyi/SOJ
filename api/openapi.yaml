@@ -20,6 +20,9 @@ tags:
   - name: Submissions
     description: Formal submissions and judge-visible results.
     x-owner: WP4 Submission/Run
+  - name: Rejudge
+    description: Durable problem and ended-contest rejudge batches.
+    x-owner: WP4 Submission/Run
   - name: Runs
     description: Custom stdin self-runs that do not affect official judging.
     x-owner: WP4 Submission/Run
@@ -501,6 +504,105 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/rejudge-batches:
+    post:
+      tags: [Rejudge]
+      operationId: createRejudgeBatch
+      summary: Create a rejudge batch
+      description: Problem targets include non-contest terminal submissions. Contest targets require an ended contest.
+      x-owner: WP4 Submission/Run
+      x-auth: problem-owner-contest-owner-admin-root
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RejudgeBatchCreateRequest" }
+      responses:
+        "202":
+          description: Rejudge batch accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RejudgeBatchEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      tags: [Rejudge]
+      operationId: listRejudgeBatches
+      summary: List visible rejudge batches
+      x-owner: WP4 Submission/Run
+      x-auth: user
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: problem_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: contest_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/RejudgeBatchStatus" }
+      responses:
+        "200":
+          description: Rejudge batch page. Non-admin users see batches they requested.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RejudgeBatchPageEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/rejudge-batches/{id}:
+    get:
+      tags: [Rejudge]
+      operationId: getRejudgeBatch
+      summary: Get a rejudge batch and immutable item set
+      x-owner: WP4 Submission/Run
+      x-auth: problem-owner-contest-owner-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Rejudge batch detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RejudgeBatchDetailEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/rejudge-batches/{id}/cancel:
+    post:
+      tags: [Rejudge]
+      operationId: cancelRejudgeBatch
+      summary: Cancel queued rejudge items
+      description: Already running attempts may finish; cancellation does not roll completed results back.
+      x-owner: WP4 Submission/Run
+      x-auth: problem-owner-contest-owner-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RejudgeBatchCancelRequest" }
+      responses:
+        "200":
+          description: Rejudge batch canceled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RejudgeBatchEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/runs:
     post:
@@ -1333,6 +1435,76 @@ components:
         language_id: { type: integer, format: int64 }
         source_code: { type: string }
         contest_id: { type: integer, format: int64, nullable: true }
+    RejudgeBatchStatus:
+      type: string
+      enum: [queued, running, completed, failed, canceled]
+    RejudgeItemStatus:
+      type: string
+      enum: [queued, running, completed, failed, canceled]
+    RejudgeBatchCreateRequest:
+      type: object
+      required: [reason]
+      properties:
+        problem_id: { type: integer, format: int64, nullable: true }
+        contest_id: { type: integer, format: int64, nullable: true }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+      description: Exactly one of problem_id and contest_id is required.
+    RejudgeBatchCancelRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    RejudgeBatch:
+      type: object
+      required: [id, requested_by, status, reason, total_count, completed_count, failed_count, canceled_count, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        problem_id: { type: integer, format: int64, nullable: true }
+        contest_id: { type: integer, format: int64, nullable: true }
+        requested_by: { type: integer, format: int64 }
+        status: { $ref: "#/components/schemas/RejudgeBatchStatus" }
+        reason: { type: string }
+        total_count: { type: integer }
+        completed_count: { type: integer }
+        failed_count: { type: integer }
+        canceled_count: { type: integer }
+        error_message: { type: string, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RejudgeBatchItem:
+      type: object
+      required: [id, batch_id, submission_id, task_id, status, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        batch_id: { type: integer, format: int64 }
+        submission_id: { type: integer, format: int64 }
+        task_id: { type: integer, format: int64 }
+        attempt_id: { type: integer, format: int64, nullable: true }
+        status: { $ref: "#/components/schemas/RejudgeItemStatus" }
+        error_message: { type: string, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RejudgeBatchDetail:
+      type: object
+      required: [batch, items]
+      properties:
+        batch: { $ref: "#/components/schemas/RejudgeBatch" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RejudgeBatchItem" }
+    RejudgeBatchPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/RejudgeBatch" }
     SubmissionResponse:
       type: object
       required: [id, user_id, problem_id, language_id, status, score, submitted_at, updated_at]
@@ -1659,6 +1831,15 @@ components:
     SubmissionPageEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/SubmissionPage" } }
+    RejudgeBatchEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/RejudgeBatch" } }
+    RejudgeBatchPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/RejudgeBatchPage" } }
+    RejudgeBatchDetailEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/RejudgeBatchDetail" } }
     RunEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/RunResponse" } }
