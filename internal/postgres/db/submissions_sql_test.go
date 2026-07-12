@@ -39,7 +39,7 @@ func TestRecoverDeadJudgeTaskSQLQueuesOnlyDeadSystemErrorTasks(t *testing.T) {
 		"UPDATE judge_tasks",
 		"status = 'pending'",
 		"attempts = 0",
-		"WHERE id = $3",
+		"WHERE judge_tasks.id = $3",
 		"status = 'dead'",
 		"submissions.status = 'system_error'",
 		"UPDATE submissions",
@@ -231,6 +231,13 @@ func TestRejudgeBatchSchemaAndQueriesExposeProgressLifecycle(t *testing.T) {
 	schema := readInitialSchema(t)
 	for _, want := range []string{
 		"CREATE TABLE rejudge_batches",
+		"CREATE TABLE rejudge_batch_items",
+		"UNIQUE (batch_id, submission_id)",
+		"CREATE UNIQUE INDEX rejudge_batch_items_active_submission_uidx",
+		"WHERE status IN ('queued', 'running')",
+		"CREATE INDEX rejudge_batch_items_batch_status_idx",
+		"CREATE INDEX rejudge_batch_items_task_id_idx",
+		"CREATE UNIQUE INDEX rejudge_batch_items_attempt_id_uidx",
 		"rejudge_batch_id bigint REFERENCES rejudge_batches(id) ON DELETE SET NULL",
 		"CREATE INDEX rejudge_batches_status_updated_idx",
 		"CREATE INDEX rejudge_batches_problem_created_idx",
@@ -266,6 +273,54 @@ func TestRejudgeBatchSchemaAndQueriesExposeProgressLifecycle(t *testing.T) {
 	} {
 		if !strings.Contains(query, "AND status IN ('queued', 'running')") {
 			t.Fatalf("%s should guard mutable statuses:\n%s", name, query)
+		}
+	}
+}
+
+func TestRejudgeItemQueriesGuardSelectionAndTransitions(t *testing.T) {
+	queries, err := os.ReadFile(filepath.Join("..", "queries", "submissions.sql"))
+	if err != nil {
+		t.Fatalf("read submissions queries: %v", err)
+	}
+	source := string(queries)
+	for _, want := range []string{
+		"-- name: ListEligibleProblemSubmissionsForRejudge :many",
+		"contest_id IS NULL",
+		"-- name: ListEligibleContestSubmissionsForRejudge :many",
+		"-- name: CreateRejudgeBatchItem :one",
+		"-- name: PrepareJudgeTaskForRejudge :one",
+		"status IN ('done', 'dead')",
+		"-- name: PrepareSubmissionForRejudge :one",
+		"-- name: StartRejudgeBatchItem :one",
+		"status = 'queued'",
+		"-- name: FinishRejudgeBatchItem :one",
+		"status = 'running'",
+		"-- name: FailActiveRejudgeBatchItemByTaskID :one",
+		"-- name: CancelQueuedRejudgeBatchItems :many",
+		"-- name: CancelPendingJudgeTaskForRejudge :one",
+		"-- name: RestoreSubmissionAfterCanceledRejudge :one",
+		"-- name: RefreshRejudgeBatchProgress :one",
+		"WHEN counts.active_count = 0 AND counts.failed_count > 0 THEN 'failed'",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("rejudge queries missing %q", want)
+		}
+	}
+}
+
+func TestFinalScoreSnapshotCandidatesRefreshAfterCompletedRejudge(t *testing.T) {
+	queries, err := os.ReadFile(filepath.Join("..", "queries", "contests.sql"))
+	if err != nil {
+		t.Fatalf("read contest queries: %v", err)
+	}
+	source := string(queries)
+	for _, want := range []string{
+		"FROM rejudge_batches rb",
+		"rb.status = 'completed'",
+		"rb.finished_at > coalesce(max(css.generated_at)",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("score snapshot candidate query missing %q", want)
 		}
 	}
 }

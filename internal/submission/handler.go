@@ -15,10 +15,95 @@ import (
 
 type Handler struct {
 	service *Service
+	rejudge *RejudgeService
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service *Service, rejudge ...*RejudgeService) *Handler {
+	handler := &Handler{service: service}
+	if len(rejudge) > 0 {
+		handler.rejudge = rejudge[0]
+	}
+	return handler
+}
+
+type cancelRejudgeBatchRequest struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
+func (h *Handler) CreateRejudgeBatch(c *gin.Context) {
+	var req CreateRejudgeBatchInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpapi.Error(c, apperror.BadRequest("invalid_request", err.Error()))
+		return
+	}
+	batch, err := h.rejudge.CreateBatch(c.Request.Context(), actorFromContext(c), req)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.Accepted(c, batch)
+}
+
+func (h *Handler) ListRejudgeBatches(c *gin.Context) {
+	page, pageSize, ok := pageQuery(c)
+	if !ok {
+		return
+	}
+	input := ListRejudgeBatchesInput{Offset: (page - 1) * pageSize, Limit: pageSize}
+	if raw := c.Query("problem_id"); raw != "" {
+		value, ok := int64Query(c, raw, "invalid_problem_id")
+		if !ok {
+			return
+		}
+		input.ProblemID = &value
+	}
+	if raw := c.Query("contest_id"); raw != "" {
+		value, ok := int64Query(c, raw, "invalid_contest_id")
+		if !ok {
+			return
+		}
+		input.ContestID = &value
+	}
+	if raw := c.Query("status"); raw != "" {
+		input.Status = &raw
+	}
+	items, total, err := h.rejudge.ListBatches(c.Request.Context(), actorFromContext(c), input)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
+}
+
+func (h *Handler) GetRejudgeBatch(c *gin.Context) {
+	id, ok := idParam(c, "id", "invalid_rejudge_batch_id")
+	if !ok {
+		return
+	}
+	detail, err := h.rejudge.GetBatch(c.Request.Context(), actorFromContext(c), id)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, detail)
+}
+
+func (h *Handler) CancelRejudgeBatch(c *gin.Context) {
+	id, ok := idParam(c, "id", "invalid_rejudge_batch_id")
+	if !ok {
+		return
+	}
+	var req cancelRejudgeBatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpapi.Error(c, apperror.BadRequest("invalid_request", err.Error()))
+		return
+	}
+	batch, err := h.rejudge.CancelBatch(c.Request.Context(), actorFromContext(c), id, req.Reason)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, batch)
 }
 
 type createSubmissionRequest struct {
