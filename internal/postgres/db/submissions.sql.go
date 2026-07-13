@@ -882,6 +882,36 @@ func (q *Queries) CreateSubmission(ctx context.Context, arg CreateSubmissionPara
 	return i, err
 }
 
+const ensureContestProblemResultProjection = `-- name: EnsureContestProblemResultProjection :exec
+INSERT INTO contest_problem_results (
+    contest_id,
+    user_id,
+    problem_id,
+    status,
+    attempts,
+    penalty_minutes
+) VALUES (
+    $1,
+    $2,
+    $3,
+    'none',
+    0,
+    0
+)
+ON CONFLICT (contest_id, user_id, problem_id) DO NOTHING
+`
+
+type EnsureContestProblemResultProjectionParams struct {
+	ContestID int64 `db:"contest_id" json:"contest_id"`
+	UserID    int64 `db:"user_id" json:"user_id"`
+	ProblemID int64 `db:"problem_id" json:"problem_id"`
+}
+
+func (q *Queries) EnsureContestProblemResultProjection(ctx context.Context, arg EnsureContestProblemResultProjectionParams) error {
+	_, err := q.db.Exec(ctx, ensureContestProblemResultProjection, arg.ContestID, arg.UserID, arg.ProblemID)
+	return err
+}
+
 const failActiveRejudgeBatchItemByTaskID = `-- name: FailActiveRejudgeBatchItemByTaskID :one
 UPDATE rejudge_batch_items
 SET status = 'failed',
@@ -1407,6 +1437,58 @@ func (q *Queries) GetSubmissionResultBySubmissionID(ctx context.Context, submiss
 	return i, err
 }
 
+const listContestProblemSubmissionsForProjection = `-- name: ListContestProblemSubmissionsForProjection :many
+SELECT s.id,
+       s.status,
+       s.submitted_at,
+       sr.attempt_id
+FROM submissions s
+LEFT JOIN submission_results sr ON sr.submission_id = s.id
+WHERE s.contest_id = $1
+  AND s.user_id = $2
+  AND s.problem_id = $3
+  AND s.status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+ORDER BY s.submitted_at, s.id
+`
+
+type ListContestProblemSubmissionsForProjectionParams struct {
+	ContestID pgtype.Int8 `db:"contest_id" json:"contest_id"`
+	UserID    int64       `db:"user_id" json:"user_id"`
+	ProblemID int64       `db:"problem_id" json:"problem_id"`
+}
+
+type ListContestProblemSubmissionsForProjectionRow struct {
+	ID          int64              `db:"id" json:"id"`
+	Status      string             `db:"status" json:"status"`
+	SubmittedAt pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
+	AttemptID   pgtype.Int8        `db:"attempt_id" json:"attempt_id"`
+}
+
+func (q *Queries) ListContestProblemSubmissionsForProjection(ctx context.Context, arg ListContestProblemSubmissionsForProjectionParams) ([]ListContestProblemSubmissionsForProjectionRow, error) {
+	rows, err := q.db.Query(ctx, listContestProblemSubmissionsForProjection, arg.ContestID, arg.UserID, arg.ProblemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListContestProblemSubmissionsForProjectionRow
+	for rows.Next() {
+		var i ListContestProblemSubmissionsForProjectionRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.SubmittedAt,
+			&i.AttemptID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEligibleContestSubmissionsForRejudge = `-- name: ListEligibleContestSubmissionsForRejudge :many
 SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
 FROM submissions
@@ -1837,6 +1919,41 @@ func (q *Queries) ListSubmissions(ctx context.Context, arg ListSubmissionsParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockContestProblemResultProjection = `-- name: LockContestProblemResultProjection :one
+SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
+FROM contest_problem_results
+WHERE contest_id = $1
+  AND user_id = $2
+  AND problem_id = $3
+FOR UPDATE
+`
+
+type LockContestProblemResultProjectionParams struct {
+	ContestID int64 `db:"contest_id" json:"contest_id"`
+	UserID    int64 `db:"user_id" json:"user_id"`
+	ProblemID int64 `db:"problem_id" json:"problem_id"`
+}
+
+func (q *Queries) LockContestProblemResultProjection(ctx context.Context, arg LockContestProblemResultProjectionParams) (ContestProblemResult, error) {
+	row := q.db.QueryRow(ctx, lockContestProblemResultProjection, arg.ContestID, arg.UserID, arg.ProblemID)
+	var i ContestProblemResult
+	err := row.Scan(
+		&i.ContestID,
+		&i.UserID,
+		&i.ProblemID,
+		&i.Status,
+		&i.Attempts,
+		&i.AcceptedAt,
+		&i.PenaltyMinutes,
+		&i.LastSubmissionID,
+		&i.BestSubmissionID,
+		&i.BestAttemptID,
+		&i.LastAttemptID,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const markJudgeAttemptFinished = `-- name: MarkJudgeAttemptFinished :one

@@ -153,6 +153,29 @@ func TestContestProjectionReferencesJudgeAttempts(t *testing.T) {
 	}
 }
 
+func TestContestProjectionQueriesSerializeAndRebuildFromCurrentResults(t *testing.T) {
+	for _, want := range []string{
+		"INSERT INTO contest_problem_results",
+		"ON CONFLICT (contest_id, user_id, problem_id) DO NOTHING",
+	} {
+		if !strings.Contains(ensureContestProblemResultProjection, want) {
+			t.Fatalf("EnsureContestProblemResultProjection missing %q:\n%s", want, ensureContestProblemResultProjection)
+		}
+	}
+	if !strings.Contains(lockContestProblemResultProjection, "FOR UPDATE") {
+		t.Fatalf("LockContestProblemResultProjection must serialize projection rebuilds:\n%s", lockContestProblemResultProjection)
+	}
+	for _, want := range []string{
+		"LEFT JOIN submission_results sr ON sr.submission_id = s.id",
+		"s.status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')",
+		"ORDER BY s.submitted_at, s.id",
+	} {
+		if !strings.Contains(listContestProblemSubmissionsForProjection, want) {
+			t.Fatalf("ListContestProblemSubmissionsForProjection missing %q:\n%s", want, listContestProblemSubmissionsForProjection)
+		}
+	}
+}
+
 func TestJudgeResultQueriesExposeAttemptsCasesAndProjection(t *testing.T) {
 	for name, query := range map[string]string{
 		"CreateJudgeAttempt":                  createJudgeAttempt,
