@@ -221,10 +221,10 @@ func buildBoardFromSubmissions(
 	now time.Time,
 ) ScoreboardResponse {
 	sort.Slice(submissions, func(i, j int) bool {
-		if submissions[i].JudgedAt.Equal(submissions[j].JudgedAt) {
+		if submissions[i].SubmittedAt.Equal(submissions[j].SubmittedAt) {
 			return submissions[i].ID < submissions[j].ID
 		}
-		return submissions[i].JudgedAt.Before(submissions[j].JudgedAt)
+		return submissions[i].SubmittedAt.Before(submissions[j].SubmittedAt)
 	})
 	states := make(map[int64]map[int64]*submissionCellState)
 	for _, sub := range submissions {
