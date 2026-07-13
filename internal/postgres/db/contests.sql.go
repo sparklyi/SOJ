@@ -615,8 +615,8 @@ SELECT id, user_id, problem_id, contest_id, status, submitted_at, judged_at
 FROM submissions
 WHERE contest_id = $1::bigint
   AND judged_at IS NOT NULL
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'system_error', 'canceled')
-ORDER BY judged_at, id
+  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+ORDER BY submitted_at, id
 `
 
 type ListContestTerminalSubmissionsRow struct {
