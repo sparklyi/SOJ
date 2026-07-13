@@ -53,6 +53,7 @@ type Querier interface {
 	// Owner: WP2 Auth/User
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteContestProblems(ctx context.Context, contestID int64) error
+	EnsureContestProblemResultProjection(ctx context.Context, arg EnsureContestProblemResultProjectionParams) error
 	FailActiveRejudgeBatchItemByTaskID(ctx context.Context, arg FailActiveRejudgeBatchItemByTaskIDParams) (RejudgeBatchItem, error)
 	FailProblemCheckRun(ctx context.Context, arg FailProblemCheckRunParams) (ProblemCheckRun, error)
 	FailRejudgeBatch(ctx context.Context, arg FailRejudgeBatchParams) (RejudgeBatch, error)
@@ -87,6 +88,7 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	LinkProblemTag(ctx context.Context, arg LinkProblemTagParams) error
 	ListContestProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error)
+	ListContestProblemSubmissionsForProjection(ctx context.Context, arg ListContestProblemSubmissionsForProjectionParams) ([]ListContestProblemSubmissionsForProjectionRow, error)
 	ListContestProblems(ctx context.Context, contestID int64) ([]ListContestProblemsRow, error)
 	ListContestRegistrations(ctx context.Context, arg ListContestRegistrationsParams) ([]ContestRegistration, error)
 	ListContestScoreSnapshotCandidates(ctx context.Context, arg ListContestScoreSnapshotCandidatesParams) ([]ListContestScoreSnapshotCandidatesRow, error)
@@ -106,6 +108,7 @@ type Querier interface {
 	ListRejudgeBatches(ctx context.Context, arg ListRejudgeBatchesParams) ([]RejudgeBatch, error)
 	ListSubmissions(ctx context.Context, arg ListSubmissionsParams) ([]Submission, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
+	LockContestProblemResultProjection(ctx context.Context, arg LockContestProblemResultProjectionParams) (ContestProblemResult, error)
 	LockProblemForUpdate(ctx context.Context, id int64) (LockProblemForUpdateRow, error)
 	MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAttemptFinishedParams) (JudgeAttempt, error)
 	MarkJudgeTaskDead(ctx context.Context, arg MarkJudgeTaskDeadParams) (JudgeTask, error)
