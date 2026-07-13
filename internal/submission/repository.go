@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -493,6 +494,18 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 	var record SubmissionRecord
 	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
 		q := r.q.WithTx(tx)
+		current, err := q.GetSubmissionByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		record = submissionRecord(current)
+		if terminalStatus(record.Status) {
+			return nil
+		}
+		projectionLock, err := lockContestProblemProjection(ctx, q, record)
+		if err != nil {
+			return err
+		}
 		row, err := q.UpdateSubmissionStatus(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			row, err = q.GetSubmissionByID(ctx, id)
@@ -503,11 +516,10 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 		if err != nil {
 			return err
 		}
-		attempt, err := persistJudgeResult(ctx, q, record, result, score)
-		if err != nil {
+		if _, err := persistJudgeResult(ctx, q, record, result, score); err != nil {
 			return err
 		}
-		return updateContestProblemResult(ctx, q, record, attempt.ID)
+		return rebuildContestProblemResult(ctx, q, record, projectionLock)
 	})
 	return record, err
 }
@@ -634,6 +646,10 @@ func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input Co
 		if !attempt.SubmissionID.Valid {
 			return fmt.Errorf("judge attempt %d is not linked to a submission", attempt.ID)
 		}
+		projectionLock, err := lockContestProblemProjection(ctx, q, record)
+		if err != nil {
+			return err
+		}
 
 		params := db.UpdateSubmissionStatusParams{
 			Status:       status,
@@ -729,7 +745,7 @@ func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input Co
 		if err != nil {
 			return err
 		}
-		if err := updateContestProblemResult(ctx, q, record, finished.ID); err != nil {
+		if err := rebuildContestProblemResult(ctx, q, record, projectionLock); err != nil {
 			return err
 		}
 		if finished.TaskID.Valid {
@@ -953,82 +969,139 @@ func truncateSummary(value string) string {
 	return value[:limit]
 }
 
-func updateContestProblemResult(ctx context.Context, q *db.Queries, submission SubmissionRecord, attemptID int64) error {
+type contestProblemProjectionLock struct {
+	contestStart time.Time
+	enabled      bool
+}
+
+type contestProjectionSubmission struct {
+	ID          int64
+	Status      string
+	SubmittedAt time.Time
+	AttemptID   *int64
+}
+
+type contestProblemProjection struct {
+	Status           string
+	Attempts         int32
+	AcceptedAt       *time.Time
+	PenaltyMinutes   int32
+	LastSubmissionID *int64
+	BestSubmissionID *int64
+	BestAttemptID    *int64
+	LastAttemptID    *int64
+}
+
+func lockContestProblemProjection(ctx context.Context, q *db.Queries, submission SubmissionRecord) (contestProblemProjectionLock, error) {
 	if submission.ContestID == nil {
-		return nil
+		return contestProblemProjectionLock{}, nil
 	}
 	contest, err := q.GetContestByID(ctx, *submission.ContestID)
 	if err != nil {
-		return err
+		return contestProblemProjectionLock{}, err
 	}
 	problems, err := q.ListContestProblems(ctx, *submission.ContestID)
 	if err != nil {
-		return err
+		return contestProblemProjectionLock{}, err
 	}
-	inContest := false
 	for _, problem := range problems {
-		if problem.ProblemID == submission.ProblemID {
-			inContest = true
-			break
+		if problem.ProblemID != submission.ProblemID {
+			continue
 		}
+		params := db.EnsureContestProblemResultProjectionParams{
+			ContestID: *submission.ContestID,
+			UserID:    submission.UserID,
+			ProblemID: submission.ProblemID,
+		}
+		if err := q.EnsureContestProblemResultProjection(ctx, params); err != nil {
+			return contestProblemProjectionLock{}, err
+		}
+		if _, err := q.LockContestProblemResultProjection(ctx, db.LockContestProblemResultProjectionParams(params)); err != nil {
+			return contestProblemProjectionLock{}, err
+		}
+		return contestProblemProjectionLock{contestStart: contest.StartAt.Time, enabled: true}, nil
 	}
-	if !inContest {
+	return contestProblemProjectionLock{}, nil
+}
+
+func rebuildContestProblemResult(ctx context.Context, q *db.Queries, submission SubmissionRecord, lock contestProblemProjectionLock) error {
+	if !lock.enabled || submission.ContestID == nil {
 		return nil
 	}
-
-	current := db.ContestProblemResult{
-		ContestID: *submission.ContestID,
+	rows, err := q.ListContestProblemSubmissionsForProjection(ctx, db.ListContestProblemSubmissionsForProjectionParams{
+		ContestID: pgtype.Int8{Int64: *submission.ContestID, Valid: true},
 		UserID:    submission.UserID,
 		ProblemID: submission.ProblemID,
-		Status:    "none",
-	}
-	results, err := q.ListContestProblemResults(ctx, *submission.ContestID)
+	})
 	if err != nil {
 		return err
 	}
-	for _, result := range results {
-		if result.UserID == submission.UserID && result.ProblemID == submission.ProblemID {
-			current = result
-			break
-		}
+	items := make([]contestProjectionSubmission, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, contestProjectionSubmission{
+			ID:          row.ID,
+			Status:      row.Status,
+			SubmittedAt: row.SubmittedAt.Time,
+			AttemptID:   int8Value(row.AttemptID),
+		})
 	}
-	if current.LastSubmissionID.Valid && current.LastSubmissionID.Int64 == submission.ID {
-		return nil
-	}
-	if current.Status == StatusAccepted {
-		return nil
-	}
-
-	attempts := current.Attempts + 1
-	status := "attempted"
+	projection := buildContestProblemProjection(lock.contestStart, items)
 	acceptedAt := pgtype.Timestamptz{}
-	penaltyMinutes := current.PenaltyMinutes
-	if submission.Status == StatusAccepted {
-		status = "accepted"
-		accepted := submission.SubmittedAt
-		acceptedAt = timestamptz(accepted)
-		penaltyMinutes = int32(accepted.Sub(contest.StartAt.Time).Minutes()) + (attempts-1)*20
-	}
-	bestSubmissionID := current.BestSubmissionID
-	bestAttemptID := current.BestAttemptID
-	if submission.Status == StatusAccepted {
-		bestSubmissionID = pgtype.Int8{Int64: submission.ID, Valid: true}
-		bestAttemptID = pgtype.Int8{Int64: attemptID, Valid: true}
+	if projection.AcceptedAt != nil {
+		acceptedAt = timestamptz(*projection.AcceptedAt)
 	}
 	_, err = q.UpsertContestProblemResult(ctx, db.UpsertContestProblemResultParams{
 		ContestID:        *submission.ContestID,
 		UserID:           submission.UserID,
 		ProblemID:        submission.ProblemID,
-		Status:           status,
-		Attempts:         attempts,
+		Status:           projection.Status,
+		Attempts:         projection.Attempts,
 		AcceptedAt:       acceptedAt,
-		PenaltyMinutes:   penaltyMinutes,
-		LastSubmissionID: pgtype.Int8{Int64: submission.ID, Valid: true},
-		BestSubmissionID: bestSubmissionID,
-		BestAttemptID:    bestAttemptID,
-		LastAttemptID:    pgtype.Int8{Int64: attemptID, Valid: true},
+		PenaltyMinutes:   projection.PenaltyMinutes,
+		LastSubmissionID: int8Ptr(projection.LastSubmissionID),
+		BestSubmissionID: int8Ptr(projection.BestSubmissionID),
+		BestAttemptID:    int8Ptr(projection.BestAttemptID),
+		LastAttemptID:    int8Ptr(projection.LastAttemptID),
 	})
 	return err
+}
+
+func buildContestProblemProjection(contestStart time.Time, submissions []contestProjectionSubmission) contestProblemProjection {
+	ordered := append([]contestProjectionSubmission(nil), submissions...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].SubmittedAt.Equal(ordered[j].SubmittedAt) {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].SubmittedAt.Before(ordered[j].SubmittedAt)
+	})
+
+	projection := contestProblemProjection{Status: "none"}
+	for _, submission := range ordered {
+		projection.Status = "attempted"
+		projection.Attempts++
+		lastSubmissionID := submission.ID
+		projection.LastSubmissionID = &lastSubmissionID
+		projection.LastAttemptID = copyInt64Ptr(submission.AttemptID)
+		if submission.Status != StatusAccepted {
+			continue
+		}
+		acceptedAt := submission.SubmittedAt
+		projection.Status = StatusAccepted
+		projection.AcceptedAt = &acceptedAt
+		projection.PenaltyMinutes = int32(acceptedAt.Sub(contestStart).Minutes()) + (projection.Attempts-1)*20
+		projection.BestSubmissionID = &lastSubmissionID
+		projection.BestAttemptID = copyInt64Ptr(submission.AttemptID)
+		break
+	}
+	return projection
+}
+
+func copyInt64Ptr(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	result := *value
+	return &result
 }
 
 func (r *SQLRepository) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID int64) (JudgeAttemptRecord, error) {
