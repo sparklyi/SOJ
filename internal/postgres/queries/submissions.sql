@@ -274,6 +274,45 @@ WHERE (sqlc.narg('user_id')::bigint IS NULL OR user_id = sqlc.narg('user_id')::b
   AND (sqlc.narg('contest_id')::bigint IS NULL OR contest_id = sqlc.narg('contest_id')::bigint)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
 
+-- name: EnsureContestProblemResultProjection :exec
+INSERT INTO contest_problem_results (
+    contest_id,
+    user_id,
+    problem_id,
+    status,
+    attempts,
+    penalty_minutes
+) VALUES (
+    sqlc.arg('contest_id'),
+    sqlc.arg('user_id'),
+    sqlc.arg('problem_id'),
+    'none',
+    0,
+    0
+)
+ON CONFLICT (contest_id, user_id, problem_id) DO NOTHING;
+
+-- name: LockContestProblemResultProjection :one
+SELECT *
+FROM contest_problem_results
+WHERE contest_id = sqlc.arg('contest_id')
+  AND user_id = sqlc.arg('user_id')
+  AND problem_id = sqlc.arg('problem_id')
+FOR UPDATE;
+
+-- name: ListContestProblemSubmissionsForProjection :many
+SELECT s.id,
+       s.status,
+       s.submitted_at,
+       sr.attempt_id
+FROM submissions s
+LEFT JOIN submission_results sr ON sr.submission_id = s.id
+WHERE s.contest_id = sqlc.arg('contest_id')
+  AND s.user_id = sqlc.arg('user_id')
+  AND s.problem_id = sqlc.arg('problem_id')
+  AND s.status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+ORDER BY s.submitted_at, s.id;
+
 -- name: CreateRejudgeBatch :one
 INSERT INTO rejudge_batches (
     problem_id,
