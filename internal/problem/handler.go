@@ -2,7 +2,9 @@ package problem
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net/http"
 	"strconv"
 
 	"SOJ/internal/apperror"
@@ -204,19 +206,41 @@ func (h *Handler) assignTags(c *gin.Context) {
 }
 
 func (h *Handler) uploadTestcases(c *gin.Context) {
+	h.uploadTestcasesWithRequestLimit(c, defaultMaxTestcaseUploadRequestBytes)
+}
+
+func (h *Handler) uploadTestcasesWithRequestLimit(c *gin.Context, maxRequestBytes int64) {
 	id, ok := problemIDParam(c)
 	if !ok {
 		return
 	}
+	if c.Request.ContentLength > maxRequestBytes {
+		httpapi.Error(c, testcaseUploadTooLarge())
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBytes)
 	file, header, err := c.Request.FormFile("archive")
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			httpapi.Error(c, testcaseUploadTooLarge())
+			return
+		}
 		httpapi.Error(c, testcaseNotReady("archive file is required"))
 		return
 	}
-	defer file.Close()
-	content, err := io.ReadAll(file)
+	defer func() { _ = file.Close() }()
+	if header.Size > defaultMaxTestcaseArchiveBytes {
+		httpapi.Error(c, testcaseUploadTooLarge())
+		return
+	}
+	content, err := io.ReadAll(io.LimitReader(file, defaultMaxTestcaseArchiveBytes+1))
 	if err != nil {
 		httpapi.Error(c, apperror.BadRequest("testcase.archive_read_failed", "failed to read archive"))
+		return
+	}
+	if len(content) > defaultMaxTestcaseArchiveBytes {
+		httpapi.Error(c, testcaseUploadTooLarge())
 		return
 	}
 	caseCount64, err := strconv.ParseInt(c.PostForm("case_count"), 10, 32)
@@ -239,6 +263,10 @@ func (h *Handler) uploadTestcases(c *gin.Context) {
 		return
 	}
 	httpapi.Created(c, set)
+}
+
+func testcaseUploadTooLarge() error {
+	return apperror.New("testcase.archive_too_large", "testcase archive is too large", http.StatusRequestEntityTooLarge)
 }
 
 func (h *Handler) runProblemCheck(c *gin.Context) {

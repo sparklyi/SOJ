@@ -608,15 +608,24 @@ func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problem
 			})
 		} else {
 			storageReadable = true
-			data, err := readAllAndClose(body)
+			data, err := readAllAndClose(body, defaultMaxTestcaseArchiveBytes)
 			if err != nil {
-				storageReadable = false
-				findings = append(findings, problemCheckFindingDraft{
-					severity: ProblemCheckSeverityError,
-					code:     "testcase.storage_unreadable",
-					message:  "testcase archive cannot be read from storage",
-					details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
-				})
+				if resourceErr, ok := err.(*testcaseArchiveResourceError); ok {
+					findings = append(findings, problemCheckFindingDraft{
+						severity: ProblemCheckSeverityError,
+						code:     resourceErr.code,
+						message:  resourceErr.message,
+						details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
+					})
+				} else {
+					storageReadable = false
+					findings = append(findings, problemCheckFindingDraft{
+						severity: ProblemCheckSeverityError,
+						code:     "testcase.storage_unreadable",
+						message:  "testcase archive cannot be read from storage",
+						details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
+					})
+				}
 			} else {
 				archiveResult := validateProblemCheckArchive(data, set)
 				zipReadable = archiveResult.zipReadable
@@ -747,9 +756,11 @@ func (s *Service) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) 
 	if err != nil {
 		return TestcaseSet{}, err
 	}
-	defer body.Close()
-	data, err := io.ReadAll(body)
+	data, err := readAllAndClose(body, defaultMaxTestcaseArchiveBytes)
 	if err != nil {
+		if _, ok := err.(*testcaseArchiveResourceError); ok {
+			return TestcaseSet{}, testcaseArchiveBadRequest(err)
+		}
 		return TestcaseSet{}, err
 	}
 	cases, err := parseTestcaseArchiveCases(data, time.Duration(p.TimeLimitMS)*time.Millisecond, int64(p.MemoryLimitKB))
@@ -912,6 +923,21 @@ type problemCheckArchiveValidationResult struct {
 
 func validateProblemCheckArchive(data []byte, set TestcaseSetRecord) problemCheckArchiveValidationResult {
 	result := problemCheckArchiveValidationResult{}
+	if err := verifyTestcaseArchiveContents(data, defaultTestcaseArchiveLimits); err != nil {
+		code := "testcase.zip_invalid"
+		message := "testcase archive must be a valid zip file"
+		if resourceErr, ok := err.(*testcaseArchiveResourceError); ok {
+			code = resourceErr.code
+			message = resourceErr.message
+		}
+		result.findings = append(result.findings, problemCheckFindingDraft{
+			severity: ProblemCheckSeverityError,
+			code:     code,
+			message:  message,
+			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
+		})
+		return result
+	}
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		result.findings = append(result.findings, problemCheckFindingDraft{
@@ -1358,7 +1384,18 @@ func testcaseArchiveKey(problemID int64, checksum string) (string, error) {
 	return fmt.Sprintf("problems/%d/testcases/%s-%s.zip", problemID, checksum, hex.EncodeToString(random[:])), nil
 }
 
-func readAllAndClose(body io.ReadCloser) ([]byte, error) {
-	defer body.Close()
-	return io.ReadAll(body)
+func readAllAndClose(body io.ReadCloser, maxBytes int64) ([]byte, error) {
+	defer func() { _ = body.Close() }()
+	reader := io.Reader(body)
+	if maxBytes > 0 {
+		reader = io.LimitReader(body, maxBytes+1)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return nil, testcaseArchiveLimitError("testcase.archive_too_large", "testcase archive is too large")
+	}
+	return data, nil
 }
