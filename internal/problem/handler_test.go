@@ -1,8 +1,10 @@
 package problem
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,8 @@ import (
 
 	"SOJ/internal/auth"
 	"SOJ/internal/httpapi"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestRunProblemCheckReturnsCreatedEnvelope(t *testing.T) {
@@ -163,6 +167,66 @@ func TestUploadTestcasesMissingArchiveReturnsTestcaseNotReady(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"code":"problem.testcase_not_ready"`) {
 		t.Fatalf("body missing problem.testcase_not_ready: %s", rec.Body.String())
+	}
+}
+
+func TestUploadTestcasesRejectsOversizedContentLengthBeforeMultipartParsing(t *testing.T) {
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
+	service := NewService(repo, &fakeStorage{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", strings.NewReader("archive=x"))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	req.Header.Set("X-User-ID", "10")
+	req.ContentLength = defaultMaxTestcaseUploadRequestBytes + 1
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"testcase.archive_too_large"`) {
+		t.Fatalf("body missing testcase.archive_too_large: %s", rec.Body.String())
+	}
+}
+
+func TestUploadTestcasesRejectsOversizedMultipartWithUnknownContentLength(t *testing.T) {
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
+	handler := NewHandler(NewService(repo, &fakeStorage{}))
+	router := httpapi.NewRouter(httpapi.RouterOptions{})
+	router.POST("/problems/:id/testcase-upload", func(c *gin.Context) {
+		handler.uploadTestcasesWithRequestLimit(c, 128)
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	archive, err := writer.CreateFormFile("archive", "cases.zip")
+	if err != nil {
+		t.Fatalf("create archive part: %v", err)
+	}
+	if _, err := archive.Write(bytes.Repeat([]byte("x"), 256)); err != nil {
+		t.Fatalf("write archive part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart body: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/problems/1/testcase-upload", bytes.NewReader(body.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-User-ID", "10")
+	req.ContentLength = -1
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"testcase.archive_too_large"`) {
+		t.Fatalf("body missing testcase.archive_too_large: %s", rec.Body.String())
 	}
 }
 

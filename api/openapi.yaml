@@ -357,6 +357,7 @@ paths:
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/problems/{id}/checks:
@@ -1042,6 +1043,10 @@ components:
     ValidationFailed:
       x-owner: WP1 Data/API Contract
       description: Validation failed.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    PayloadTooLarge:
+      x-owner: WP1 Data/API Contract
+      description: Request payload exceeds the supported size limit.
       content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
     ServiceUnavailable:
       x-owner: WP1 Data/API Contract
