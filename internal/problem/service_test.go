@@ -537,6 +537,15 @@ func TestRunProblemCheckReportsArchiveFindings(t *testing.T) {
 			caseCount: 2,
 			wantCodes: []string{"testcase.output_missing", "testcase.input_missing", "testcase.case_count_mismatch"},
 		},
+		{
+			name: "high compression ratio",
+			archive: zipArchive(t, map[string]string{
+				"input1.txt":  strings.Repeat("a", 1<<20),
+				"output1.txt": "1\n",
+			}),
+			caseCount: 1,
+			wantCodes: []string{"testcase.compression_ratio_exceeded"},
+		},
 	}
 
 	for _, tt := range tests {
