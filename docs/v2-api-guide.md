@@ -84,6 +84,7 @@ Use `GET /api/v1/problems?mine=true` with an authenticated request to list only 
 
 Problem checks:
 
+- Testcase archive uploads allow at most 128 MiB of compressed ZIP data in a 129 MiB multipart request. Upload validation, problem checks, and worker parsing share limits of 16 MiB per file, 128 MiB total uncompressed data, 2048 files, and a 200:1 per-file compression ratio.
 - `POST /api/v1/problems/{id}/checks` synchronously validates the current ready testcase set for the problem. The response is a `201` envelope whose `data` is a `ProblemCheckRun`.
 - `GET /api/v1/problems/{id}/checks/{check_id}` returns the persisted check run and its findings in a `200` envelope.
 - Check endpoints are owner/admin/root scoped. They use the same error envelope as the rest of the API.
