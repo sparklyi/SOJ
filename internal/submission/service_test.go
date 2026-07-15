@@ -316,10 +316,28 @@ func TestCreateRunReturnsRunningWhenShortWaitExpiresAndCompletesAsync(t *testing
 		t.Fatalf("run status = %s, want %s", out.Run.Status, StatusRunning)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-	completed := repo.runs[out.Run.ID]
+	completed := waitForRunStatus(t, repo, out.Run.ID, StatusAccepted)
 	if completed.Status != StatusAccepted || completed.Stdout != "ok\n" {
 		t.Fatalf("completed run = %+v", completed)
+	}
+}
+
+func waitForRunStatus(t *testing.T, repo *memoryRepo, runID int64, status string) RunRecord {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		run, err := repo.GetRun(context.Background(), runID)
+		if err != nil {
+			t.Fatalf("GetRun returned error: %v", err)
+		}
+		if run.Status == status {
+			return run
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %d status = %s, want %s", runID, run.Status, status)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

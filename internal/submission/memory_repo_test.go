@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"SOJ/internal/apperror"
@@ -11,6 +12,7 @@ import (
 )
 
 type memoryRepo struct {
+	mu                  sync.RWMutex
 	nextID              int64
 	artifacts           map[int64]ArtifactRecord
 	submissions         map[int64]SubmissionRecord
@@ -410,14 +412,23 @@ func (r *memoryRepo) RecoverDeadJudgeTask(ctx context.Context, id int64, nextRun
 	return row, nil
 }
 func (r *memoryRepo) CreateRun(ctx context.Context, arg RunRecord) (RunRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	arg.ID = r.id()
 	r.runs[arg.ID] = arg
 	return arg, nil
 }
 func (r *memoryRepo) GetRun(ctx context.Context, id int64) (RunRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	return r.runs[id], nil
 }
 func (r *memoryRepo) UpdateRunStatus(ctx context.Context, id int64, result judge.Result) (RunRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	row := r.runs[id]
 	row.Status = dbStatus(result.Verdict)
 	row.Stdout = result.Stdout
@@ -448,6 +459,9 @@ func (r *memoryRepo) ResetStaleJudgeTasks(ctx context.Context, staleBefore time.
 	return rows, nil
 }
 func (r *memoryRepo) MarkStaleRunsSystemError(ctx context.Context, staleBefore time.Time, reason string) ([]RunRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	var rows []RunRecord
 	for id, row := range r.runs {
 		if row.Status == StatusQueued || row.Status == StatusRunning {
