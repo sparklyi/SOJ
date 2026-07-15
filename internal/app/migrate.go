@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func RunMigrate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func RunMigrate(ctx context.Context, args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("soj-migrate", flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	dir := fs.String("dir", "", "migration directory")
@@ -46,7 +46,11 @@ func RunMigrate(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	defer func() {
+		if closeErr := conn.Close(ctx); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close migration database connection: %w", closeErr))
+		}
+	}()
 
 	return migrateUp(ctx, conn, cfg.Migrations.Dir, stdout)
 }
