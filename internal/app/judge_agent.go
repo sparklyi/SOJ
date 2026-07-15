@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -92,7 +93,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	slotLimiter := newJudgeAgentSlotLimiter(parallelism, languageSlots)
 
-	agent, sandboxReady, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, metrics, queueResultPublisher{queue: resultQueue})
+	agent, sandboxReady, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, metrics, logger, queueResultPublisher{queue: resultQueue})
 	if err != nil {
 		return err
 	}
@@ -247,7 +248,7 @@ func judgeAgentMessageLanguageKey(message queue.Message) string {
 	return ""
 }
 
-func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, observer sandbox.SandboxObserver, publisher submission.ResultPublisher) (judgeRequestProcessor, observability.CheckFunc, error) {
+func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, observer sandbox.SandboxObserver, logger *slog.Logger, publisher submission.ResultPublisher) (judgeRequestProcessor, observability.CheckFunc, error) {
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	if backend == sandbox.BackendFake {
 		return submission.NewFakeAsyncAgent(submission.FakeAsyncAgentOptions{
@@ -256,7 +257,7 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 			ResultPublisher: publisher,
 		}), nil, nil
 	}
-	runtimeSandbox, err := newJudgeAgentSandbox(backend, observer)
+	runtimeSandbox, err := newJudgeAgentSandbox(backend, cfg.Judge.CleanupTimeout, observer, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -275,22 +276,24 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 		return sandbox.ValidateProductionCapabilities(cfg.Env, capabilities)
 	}
 	return submission.NewCoreAsyncAgent(submission.CoreAsyncAgentOptions{
-		Core:            judgecore.New(judgecore.Options{Sandbox: runtimeSandbox}),
+		Core:            judgecore.New(judgecore.Options{Sandbox: runtimeSandbox, CleanupTimeout: cfg.Judge.CleanupTimeout}),
 		SourceStore:     sourceStore,
 		ResultPublisher: publisher,
 	}), sandboxReady, nil
 }
 
-func newJudgeAgentSandbox(backend string, observer sandbox.SandboxObserver) (sandbox.Sandbox, error) {
+func newJudgeAgentSandbox(backend string, cleanupTimeout time.Duration, observer sandbox.SandboxObserver, logger *slog.Logger) (sandbox.Sandbox, error) {
 	switch backend {
 	case sandbox.BackendProcess:
 		return sandbox.NewProcessSandbox(), nil
 	case sandbox.BackendDocker:
 		return sandbox.NewDockerSandbox(sandbox.DockerSandboxOptions{
-			Runtime:  envOr("SOJ_DOCKER_RUNNER_RUNTIME", ""),
-			TempDir:  envOr("SOJ_DOCKER_RUNNER_WORKDIR", ""),
-			User:     envOr("SOJ_DOCKER_RUNNER_USER", ""),
-			Observer: observer,
+			Runtime:        envOr("SOJ_DOCKER_RUNNER_RUNTIME", ""),
+			TempDir:        envOr("SOJ_DOCKER_RUNNER_WORKDIR", ""),
+			User:           envOr("SOJ_DOCKER_RUNNER_USER", ""),
+			CleanupTimeout: cleanupTimeout,
+			Observer:       observer,
+			Logger:         logger,
 			Images: map[string]string{
 				"go":    envOr("SOJ_DOCKER_RUNNER_IMAGE_GO", "ghcr.io/sparklyi/soj-runner-go:main"),
 				"cpp17": envOr("SOJ_DOCKER_RUNNER_IMAGE_CPP17", "ghcr.io/sparklyi/soj-runner-cpp17:main"),

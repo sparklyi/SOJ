@@ -15,6 +15,7 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("SOJ_STORAGE_BUCKET", "soj-test")
 	t.Setenv("SOJ_STORAGE_PATH_STYLE", "true")
 	t.Setenv("SOJ_JUDGE_TIMEOUT", "12s")
+	t.Setenv("SOJ_JUDGE_CLEANUP_TIMEOUT", "7s")
 	t.Setenv("SOJ_JWT_SECRET", "test-secret")
 
 	cfg, err := Load()
@@ -43,6 +44,9 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	if cfg.Judge.Timeout != 12*time.Second {
 		t.Fatalf("Judge.Timeout = %v", cfg.Judge.Timeout)
 	}
+	if cfg.Judge.CleanupTimeout != 7*time.Second {
+		t.Fatalf("Judge.CleanupTimeout = %v", cfg.Judge.CleanupTimeout)
+	}
 	if cfg.Auth.JWTSecret != "test-secret" {
 		t.Fatal("Auth.JWTSecret was not loaded from env")
 	}
@@ -54,6 +58,15 @@ func TestLoadRejectsInvalidDuration(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("Load() error = nil, want invalid duration error")
+	}
+}
+
+func TestLoadRejectsInvalidCleanupDuration(t *testing.T) {
+	t.Setenv("SOJ_JUDGE_CLEANUP_TIMEOUT", "not-a-duration")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want invalid cleanup duration error")
 	}
 }
 

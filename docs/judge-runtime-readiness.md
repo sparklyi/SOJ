@@ -68,7 +68,8 @@ Existing judge runtime metrics to keep on dashboards:
 - `soj_judge_agent_slots_capacity{scope,language}`
 - `soj_sandbox_phase_duration_seconds{backend,phase,result}`
 - `soj_sandbox_backend_errors_total{backend,phase,class}`
-- `soj_sandbox_cleanup_failures_total{backend}`
+- `soj_sandbox_cleanup_failures_total{backend,resource}`
+- `soj_sandbox_cleanup_timeouts_total{backend,resource}`
 
 Local Prometheus is available at `http://localhost:9090` when the Compose stack is running.
 
