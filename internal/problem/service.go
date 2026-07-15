@@ -419,7 +419,7 @@ func (s *Service) ArchiveProblem(ctx context.Context, actor auth.Actor, id int64
 }
 
 func (s *Service) CreateStatement(ctx context.Context, actor auth.Actor, problemID int64, input CreateStatementInput) (Statement, error) {
-	if input.MakeCurrent == false {
+	if !input.MakeCurrent {
 		input.MakeCurrent = true
 	}
 	if err := validateStatement(input); err != nil {

@@ -284,7 +284,7 @@ func (h *Handler) UpdateLanguage(c *gin.Context) {
 		httpapi.Error(c, apperror.BadRequest("invalid_request", err.Error()))
 		return
 	}
-	item, err := h.service.UpdateLanguage(c.Request.Context(), actorFromContext(c), id, UpdateLanguageInput{Enabled: req.Enabled, DefaultTimeLimitMS: req.DefaultTimeLimitMS, DefaultMemoryLimitKB: req.DefaultMemoryLimitKB})
+	item, err := h.service.UpdateLanguage(c.Request.Context(), actorFromContext(c), id, UpdateLanguageInput(req))
 	if err != nil {
 		httpapi.Error(c, err)
 		return
