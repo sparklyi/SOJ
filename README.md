@@ -181,6 +181,7 @@ Important variables:
 | `SOJ_JWT_SECRET` | JWT signing secret. Must be changed for real deployments. |
 | `SOJ_JUDGE_ENDPOINT` | Judge endpoint, such as `fake://accepted` or `agent://local`. |
 | `SOJ_JUDGE_TIMEOUT` | Judge timeout, defaults to `30s`. |
+| `SOJ_JUDGE_CLEANUP_TIMEOUT` | Independent timeout for judge workspace and container cleanup, defaults to `5s`. |
 | `SOJ_JUDGE_SANDBOX_BACKEND` | Judge-agent sandbox backend: `fake`, `process`, or `docker`. |
 | `SOJ_JUDGE_PARALLELISM` | Global judge-agent sandbox slots. |
 | `SOJ_JUDGE_LANGUAGE_SLOTS` | Per-language slot limits, such as `go=4,cpp17=4`. |

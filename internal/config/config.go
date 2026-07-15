@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"SOJ/internal/judgecore/sandbox"
 )
 
 type Config struct {
@@ -54,8 +56,9 @@ type StorageConfig struct {
 }
 
 type JudgeConfig struct {
-	Endpoint string
-	Timeout  time.Duration
+	Endpoint       string
+	Timeout        time.Duration
+	CleanupTimeout time.Duration
 }
 
 type AuthConfig struct {
@@ -109,8 +112,9 @@ func Load() (Config, error) {
 			SecretKey: env("SOJ_STORAGE_SECRET_KEY", ""),
 		},
 		Judge: JudgeConfig{
-			Endpoint: env("SOJ_JUDGE_ENDPOINT", "agent://local"),
-			Timeout:  30 * time.Second,
+			Endpoint:       env("SOJ_JUDGE_ENDPOINT", "agent://local"),
+			Timeout:        30 * time.Second,
+			CleanupTimeout: sandbox.DefaultCleanupTimeout,
 		},
 		Auth: AuthConfig{
 			JWTSecret:       env("SOJ_JWT_SECRET", ""),
@@ -150,6 +154,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Judge.Timeout, err = envDuration("SOJ_JUDGE_TIMEOUT", cfg.Judge.Timeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.Judge.CleanupTimeout, err = envDuration("SOJ_JUDGE_CLEANUP_TIMEOUT", cfg.Judge.CleanupTimeout); err != nil {
 		return Config{}, err
 	}
 	if cfg.Auth.AccessTokenTTL, err = envDuration("SOJ_ACCESS_TOKEN_TTL", cfg.Auth.AccessTokenTTL); err != nil {

@@ -1,8 +1,10 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +28,7 @@ func TestDockerSandboxCompileUsesSecureContainerSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
-	defer s.Cleanup(context.Background(), workspace)
+	cleanupDockerWorkspace(t, s, workspace)
 
 	compiled, err := s.Compile(context.Background(), workspace, language.GoProfile())
 	if err != nil {
@@ -78,7 +80,7 @@ func TestDockerSandboxRunMapsVerdicts(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Prepare returned error: %v", err)
 			}
-			defer s.Cleanup(context.Background(), workspace)
+			cleanupDockerWorkspace(t, s, workspace)
 			result, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Stdin: "1 2\n", Limits: Limits{TimeLimit: time.Second}})
 			if err != nil {
 				t.Fatalf("Run returned error: %v", err)
@@ -101,7 +103,7 @@ func TestDockerSandboxObserverRecordsPhaseDuration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
-	defer s.Cleanup(context.Background(), workspace)
+	cleanupDockerWorkspace(t, s, workspace)
 
 	if _, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Stdin: "1 2\n", Limits: Limits{TimeLimit: time.Second}}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -119,13 +121,78 @@ func TestDockerSandboxObserverRecordsContainerCleanupFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
-	defer s.Cleanup(context.Background(), workspace)
+	cleanupDockerWorkspace(t, s, workspace)
 
 	if _, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Limits: Limits{TimeLimit: time.Second}}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	if observer.cleanupFailures != 1 {
 		t.Fatalf("cleanup failures = %d, want 1", observer.cleanupFailures)
+	}
+}
+
+func TestDockerSandboxContainerCleanupUsesDeadline(t *testing.T) {
+	cleanupTimeout := 25 * time.Millisecond
+	client := &recordingDockerClient{runOutput: commandOutput{stdout: "3\n"}, waitForRemoveDeadline: true}
+	observer := &recordingSandboxObserver{}
+	s := NewDockerSandbox(DockerSandboxOptions{
+		Client:         client,
+		CleanupTimeout: cleanupTimeout,
+		Observer:       observer,
+		Images:         map[string]string{"go": "soj-runner-go:test"},
+	})
+	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: language.GoProfile(), Source: []byte("package main\nfunc main() {}\n")})
+	if err != nil {
+		t.Fatalf("Prepare returned error: %v", err)
+	}
+	cleanupDockerWorkspace(t, s, workspace)
+
+	started := time.Now()
+	if _, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Limits: Limits{TimeLimit: time.Second}}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	elapsed := time.Since(started)
+
+	if !client.removeSawDeadline {
+		t.Fatal("RemoveContainer context did not have a deadline")
+	}
+	if elapsed < cleanupTimeout/2 {
+		t.Fatalf("Run returned after %v, want cleanup to wait for its %v deadline", elapsed, cleanupTimeout)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Run returned after %v, cleanup deadline was not enforced", elapsed)
+	}
+	if observer.cleanupFailures != 1 || observer.cleanupTimeouts != 1 {
+		t.Fatalf("cleanup metrics = failures:%d timeouts:%d, want 1 each", observer.cleanupFailures, observer.cleanupTimeouts)
+	}
+	if len(observer.cleanupTimeoutResources) != 1 || observer.cleanupTimeoutResources[0] != cleanupResourceContainer {
+		t.Fatalf("cleanup timeout resources = %v, want %q", observer.cleanupTimeoutResources, cleanupResourceContainer)
+	}
+}
+
+func TestDockerSandboxWorkspaceCleanupRecordsTimeout(t *testing.T) {
+	observer := &recordingSandboxObserver{}
+	var logs bytes.Buffer
+	s := NewDockerSandbox(DockerSandboxOptions{
+		Observer: observer,
+		Logger:   slog.New(slog.NewJSONHandler(&logs, nil)),
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+
+	err := s.Cleanup(ctx, Workspace{Dir: t.TempDir()})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Cleanup error = %v, want context deadline exceeded", err)
+	}
+	if observer.cleanupFailures != 1 || observer.cleanupTimeouts != 1 {
+		t.Fatalf("cleanup metrics = failures:%d timeouts:%d, want 1 each", observer.cleanupFailures, observer.cleanupTimeouts)
+	}
+	if len(observer.cleanupTimeoutResources) != 1 || observer.cleanupTimeoutResources[0] != cleanupResourceWorkspace {
+		t.Fatalf("cleanup timeout resources = %v, want %q", observer.cleanupTimeoutResources, cleanupResourceWorkspace)
+	}
+	if !strings.Contains(logs.String(), `"resource":"workspace"`) || !strings.Contains(logs.String(), `"timeout":true`) {
+		t.Fatalf("cleanup log = %q, want workspace timeout fields", logs.String())
 	}
 }
 
@@ -136,7 +203,7 @@ func TestDockerSandboxCompileMapsCompileError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
-	defer s.Cleanup(context.Background(), workspace)
+	cleanupDockerWorkspace(t, s, workspace)
 
 	compiled, err := s.Compile(context.Background(), workspace, language.Cpp17Profile())
 	if err != nil {
@@ -188,12 +255,23 @@ func TestDockerRunArgsKeepsStdinOpenWhenProvided(t *testing.T) {
 	}
 }
 
+func cleanupDockerWorkspace(t *testing.T, s *DockerSandbox, workspace Workspace) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := s.Cleanup(context.Background(), workspace); err != nil {
+			t.Errorf("Cleanup returned error: %v", err)
+		}
+	})
+}
+
 type recordingDockerClient struct {
-	runs             []DockerRunSpec
-	runOutput        commandOutput
-	runErr           error
-	removeErr        error
-	runtimeAvailable bool
+	runs                  []DockerRunSpec
+	runOutput             commandOutput
+	runErr                error
+	removeErr             error
+	removeSawDeadline     bool
+	waitForRemoveDeadline bool
+	runtimeAvailable      bool
 }
 
 func (c *recordingDockerClient) Run(ctx context.Context, spec DockerRunSpec) (commandOutput, error) {
@@ -202,6 +280,15 @@ func (c *recordingDockerClient) Run(ctx context.Context, spec DockerRunSpec) (co
 }
 
 func (c *recordingDockerClient) RemoveContainer(ctx context.Context, name string) error {
+	if _, ok := ctx.Deadline(); ok {
+		c.removeSawDeadline = true
+	} else if c.waitForRemoveDeadline {
+		return c.removeErr
+	}
+	if c.waitForRemoveDeadline {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return c.removeErr
 }
 
@@ -232,8 +319,11 @@ func int32Ptr(value int32) *int32 {
 }
 
 type recordingSandboxObserver struct {
-	phases          []recordedSandboxPhase
-	cleanupFailures int
+	phases                  []recordedSandboxPhase
+	cleanupFailures         int
+	cleanupTimeouts         int
+	cleanupFailureResources []string
+	cleanupTimeoutResources []string
 }
 
 type recordedSandboxPhase struct {
@@ -248,6 +338,12 @@ func (o *recordingSandboxObserver) ObserveSandboxPhase(backend, phase, result st
 
 func (o *recordingSandboxObserver) RecordSandboxBackendError(backend, phase, class string) {}
 
-func (o *recordingSandboxObserver) RecordSandboxCleanupFailure(backend string) {
+func (o *recordingSandboxObserver) RecordSandboxCleanupFailure(backend, resource string) {
 	o.cleanupFailures++
+	o.cleanupFailureResources = append(o.cleanupFailureResources, resource)
+}
+
+func (o *recordingSandboxObserver) RecordSandboxCleanupTimeout(backend, resource string) {
+	o.cleanupTimeouts++
+	o.cleanupTimeoutResources = append(o.cleanupTimeoutResources, resource)
 }

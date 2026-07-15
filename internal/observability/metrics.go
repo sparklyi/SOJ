@@ -13,26 +13,27 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	httpRequests         *prometheus.CounterVec
-	httpRequestDuration  *prometheus.HistogramVec
-	judgeDispatches      *prometheus.CounterVec
-	judgeTasks           *prometheus.CounterVec
-	judgeTaskDuration    *prometheus.HistogramVec
-	resultConsumer       *prometheus.CounterVec
-	resultConsumerTime   *prometheus.HistogramVec
-	queueDepth           *prometheus.GaugeVec
-	queuePending         *prometheus.GaugeVec
-	queueOldestPending   *prometheus.GaugeVec
-	judgeAgentSlotsUsed  *prometheus.GaugeVec
-	judgeAgentSlotsCap   *prometheus.GaugeVec
-	sandboxPhaseDuration *prometheus.HistogramVec
-	sandboxBackendErrors *prometheus.CounterVec
-	sandboxCleanupFails  *prometheus.CounterVec
-	readinessChecks      *prometheus.CounterVec
-	readinessDuration    *prometheus.HistogramVec
-	taskRecovery         *prometheus.CounterVec
-	reconcilerActions    *prometheus.CounterVec
-	rejudgeBatches       *prometheus.CounterVec
+	httpRequests           *prometheus.CounterVec
+	httpRequestDuration    *prometheus.HistogramVec
+	judgeDispatches        *prometheus.CounterVec
+	judgeTasks             *prometheus.CounterVec
+	judgeTaskDuration      *prometheus.HistogramVec
+	resultConsumer         *prometheus.CounterVec
+	resultConsumerTime     *prometheus.HistogramVec
+	queueDepth             *prometheus.GaugeVec
+	queuePending           *prometheus.GaugeVec
+	queueOldestPending     *prometheus.GaugeVec
+	judgeAgentSlotsUsed    *prometheus.GaugeVec
+	judgeAgentSlotsCap     *prometheus.GaugeVec
+	sandboxPhaseDuration   *prometheus.HistogramVec
+	sandboxBackendErrors   *prometheus.CounterVec
+	sandboxCleanupFails    *prometheus.CounterVec
+	sandboxCleanupTimeouts *prometheus.CounterVec
+	readinessChecks        *prometheus.CounterVec
+	readinessDuration      *prometheus.HistogramVec
+	taskRecovery           *prometheus.CounterVec
+	reconcilerActions      *prometheus.CounterVec
+	rejudgeBatches         *prometheus.CounterVec
 }
 
 func NewMetrics(service string) *Metrics {
@@ -144,9 +145,16 @@ func NewMetrics(service string) *Metrics {
 			Namespace:   "soj",
 			Subsystem:   "sandbox",
 			Name:        "cleanup_failures_total",
-			Help:        "Sandbox workspace or container cleanup failures.",
+			Help:        "Sandbox cleanup failures by resource.",
 			ConstLabels: labels,
-		}, []string{"backend"}),
+		}, []string{"backend", "resource"}),
+		sandboxCleanupTimeouts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "sandbox",
+			Name:        "cleanup_timeouts_total",
+			Help:        "Sandbox cleanup timeouts by resource.",
+			ConstLabels: labels,
+		}, []string{"backend", "resource"}),
 		readinessChecks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace:   "soj",
 			Name:        "readiness_checks_total",
@@ -201,6 +209,7 @@ func NewMetrics(service string) *Metrics {
 		metrics.sandboxPhaseDuration,
 		metrics.sandboxBackendErrors,
 		metrics.sandboxCleanupFails,
+		metrics.sandboxCleanupTimeouts,
 		metrics.readinessChecks,
 		metrics.readinessDuration,
 		metrics.taskRecovery,
@@ -256,8 +265,12 @@ func (m *Metrics) RecordSandboxBackendError(backend, phase, class string) {
 	m.sandboxBackendErrors.WithLabelValues(backend, phase, class).Inc()
 }
 
-func (m *Metrics) RecordSandboxCleanupFailure(backend string) {
-	m.sandboxCleanupFails.WithLabelValues(backend).Inc()
+func (m *Metrics) RecordSandboxCleanupFailure(backend, resource string) {
+	m.sandboxCleanupFails.WithLabelValues(backend, resource).Inc()
+}
+
+func (m *Metrics) RecordSandboxCleanupTimeout(backend, resource string) {
+	m.sandboxCleanupTimeouts.WithLabelValues(backend, resource).Inc()
 }
 
 func (m *Metrics) RecordReadinessCheck(dependency, result string, duration time.Duration) {

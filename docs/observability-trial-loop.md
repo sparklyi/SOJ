@@ -187,15 +187,21 @@ sum by (job, backend, phase, class) (
 
 Use `backend`, `phase`, and bounded `class` labels to identify infrastructure or runtime failures without exposing source code, object keys, or raw error strings.
 
-Sandbox cleanup failures:
+Sandbox cleanup failures and timeouts:
 
 ```promql
-sum by (job, backend) (
+sum by (job, backend, resource) (
   rate(soj_sandbox_cleanup_failures_total[10m])
 )
 ```
 
-Cleanup failures can leave work directories or containers behind. Investigate runner host cleanup before raising capacity.
+```promql
+sum by (job, backend, resource) (
+  rate(soj_sandbox_cleanup_timeouts_total[10m])
+)
+```
+
+Use `resource` to distinguish container deletion from workspace removal. Cleanup failures can leave work directories or containers behind. Investigate runner host cleanup before raising capacity.
 
 ### Readiness
 
