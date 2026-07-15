@@ -16,6 +16,8 @@ import (
 	"SOJ/internal/judgecore/language"
 )
 
+const DefaultCleanupTimeout = 5 * time.Second
+
 type Limits struct {
 	TimeLimit        time.Duration
 	MemoryKB         int64
@@ -146,7 +148,29 @@ func (s *ProcessSandbox) Run(ctx context.Context, workspace Workspace, profile l
 }
 
 func (s *ProcessSandbox) Cleanup(ctx context.Context, workspace Workspace) error {
-	return os.RemoveAll(workspace.Dir)
+	return removeWorkspace(ctx, workspace.Dir)
+}
+
+func removeWorkspace(ctx context.Context, dir string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// os.RemoveAll does not accept a context, so keep the caller's cleanup deadline enforceable.
+	result := make(chan error, 1)
+	go func() {
+		result <- os.RemoveAll(dir)
+	}()
+
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type commandOutput struct {

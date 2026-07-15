@@ -9,6 +9,7 @@ import (
 	"SOJ/internal/judge"
 	"SOJ/internal/judgecore/checker"
 	"SOJ/internal/judgecore/language"
+	"SOJ/internal/judgecore/sandbox"
 )
 
 const normalCaseTimeLimit = 10 * time.Second
@@ -87,6 +88,37 @@ func main() { for i := 0; i < 4096; i++ { fmt.Print("x") } }
 	}
 }
 
+func TestCoreCleanupUsesConfiguredDeadline(t *testing.T) {
+	cleanupTimeout := 25 * time.Millisecond
+	backend := &cleanupDeadlineSandbox{}
+	core := New(Options{Sandbox: backend, CleanupTimeout: cleanupTimeout})
+
+	started := time.Now()
+	result, err := core.Judge(context.Background(), Request{
+		LanguageID: language.GoID,
+		Source:     []byte("package main\nfunc main() {}\n"),
+		Cases:      []Case{{Input: "", ExpectedOutput: ""}},
+		Policy:     checker.PolicyExact,
+	})
+	elapsed := time.Since(started)
+
+	if err != nil {
+		t.Fatalf("Judge returned error: %v", err)
+	}
+	if result.Verdict != judge.VerdictCompileError {
+		t.Fatalf("verdict = %q, want compile_error", result.Verdict)
+	}
+	if !backend.cleanupSawDeadline {
+		t.Fatal("Cleanup context did not have a deadline")
+	}
+	if elapsed < cleanupTimeout/2 {
+		t.Fatalf("Judge returned after %v, want cleanup to wait for its %v deadline", elapsed, cleanupTimeout)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Judge returned after %v, cleanup deadline was not enforced", elapsed)
+	}
+}
+
 func TestCoreJudgesCpp17AcceptedWhenCompilerExists(t *testing.T) {
 	if _, err := exec.LookPath("g++"); err != nil {
 		t.Skip("g++ is not available")
@@ -121,4 +153,37 @@ func judgeGo(t *testing.T, source string, cases []Case) judge.Result {
 		t.Fatalf("Judge returned error: %v", err)
 	}
 	return result
+}
+
+type cleanupDeadlineSandbox struct {
+	cleanupSawDeadline bool
+}
+
+func (s *cleanupDeadlineSandbox) Name() string { return "cleanup-deadline" }
+
+func (s *cleanupDeadlineSandbox) Profile() string { return "test" }
+
+func (s *cleanupDeadlineSandbox) Probe(context.Context) (sandbox.Capabilities, error) {
+	return sandbox.Capabilities{}, nil
+}
+
+func (s *cleanupDeadlineSandbox) Prepare(context.Context, sandbox.PrepareRequest) (sandbox.Workspace, error) {
+	return sandbox.Workspace{}, nil
+}
+
+func (s *cleanupDeadlineSandbox) Compile(context.Context, sandbox.Workspace, language.Profile) (sandbox.CompileResult, error) {
+	return sandbox.CompileResult{Verdict: judge.VerdictCompileError}, nil
+}
+
+func (s *cleanupDeadlineSandbox) Run(context.Context, sandbox.Workspace, language.Profile, sandbox.RunRequest) (sandbox.RunResult, error) {
+	return sandbox.RunResult{}, nil
+}
+
+func (s *cleanupDeadlineSandbox) Cleanup(ctx context.Context, _ sandbox.Workspace) error {
+	if _, ok := ctx.Deadline(); !ok {
+		return nil
+	}
+	s.cleanupSawDeadline = true
+	<-ctx.Done()
+	return ctx.Err()
 }

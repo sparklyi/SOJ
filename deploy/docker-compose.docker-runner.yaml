@@ -11,6 +11,7 @@ services:
     environment:
       SOJ_ENV: ${SOJ_ENV:-local}
       SOJ_JUDGE_ENDPOINT: agent://local
+      SOJ_JUDGE_CLEANUP_TIMEOUT: ${SOJ_JUDGE_CLEANUP_TIMEOUT:-5s}
       SOJ_JUDGE_SANDBOX_BACKEND: docker
       SOJ_DOCKER_RUNNER_RUNTIME: ${SOJ_DOCKER_RUNNER_RUNTIME:-}
       SOJ_DOCKER_RUNNER_IMAGE_GO: ${SOJ_DOCKER_RUNNER_IMAGE_GO:-ghcr.io/sparklyi/soj-runner-go:main}

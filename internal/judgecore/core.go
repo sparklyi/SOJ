@@ -14,17 +14,19 @@ import (
 const Version = "soj-judgecore-mvp"
 
 type Core struct {
-	languages *language.Registry
-	sandbox   sandbox.Sandbox
-	checker   checker.Checker
-	now       func() time.Time
+	languages      *language.Registry
+	sandbox        sandbox.Sandbox
+	checker        checker.Checker
+	now            func() time.Time
+	cleanupTimeout time.Duration
 }
 
 type Options struct {
-	Languages *language.Registry
-	Sandbox   sandbox.Sandbox
-	Checker   checker.Checker
-	Now       func() time.Time
+	Languages      *language.Registry
+	Sandbox        sandbox.Sandbox
+	Checker        checker.Checker
+	Now            func() time.Time
+	CleanupTimeout time.Duration
 }
 
 type Request struct {
@@ -63,7 +65,11 @@ func New(options Options) *Core {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Core{languages: registry, sandbox: sandboxBackend, checker: outputChecker, now: now}
+	cleanupTimeout := options.CleanupTimeout
+	if cleanupTimeout <= 0 {
+		cleanupTimeout = sandbox.DefaultCleanupTimeout
+	}
+	return &Core{languages: registry, sandbox: sandboxBackend, checker: outputChecker, now: now, cleanupTimeout: cleanupTimeout}
 }
 
 func (c *Core) Judge(ctx context.Context, request Request) (judge.Result, error) {
@@ -82,7 +88,11 @@ func (c *Core) Judge(ctx context.Context, request Request) (judge.Result, error)
 	if err != nil {
 		return judge.Result{}, err
 	}
-	defer c.sandbox.Cleanup(context.Background(), workspace)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), c.cleanupTimeout)
+		defer cancel()
+		_ = c.sandbox.Cleanup(cleanupCtx, workspace)
+	}()
 
 	compiled, err := c.sandbox.Compile(ctx, workspace, profile)
 	if err != nil {
