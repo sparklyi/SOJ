@@ -7,6 +7,7 @@ import (
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -61,8 +62,15 @@ func (s *ObjectSourceStore) Get(ctx context.Context, storageKey string) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	defer body.Close()
-	return io.ReadAll(body)
+	return readAllAndClose(body)
+}
+
+func readAllAndClose(reader io.ReadCloser) ([]byte, error) {
+	data, err := io.ReadAll(reader)
+	if closeErr := reader.Close(); closeErr != nil {
+		return nil, errors.Join(err, closeErr)
+	}
+	return data, err
 }
 
 type TestcaseSnapshotResolver struct {
@@ -105,8 +113,7 @@ func (r *TestcaseSnapshotResolver) testcaseSetFromRow(ctx context.Context, id, p
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
-	defer body.Close()
-	data, err := io.ReadAll(body)
+	data, err := readAllAndClose(body)
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
@@ -180,8 +187,7 @@ func readSnapshotZipFile(file *zip.File) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open testcase file %s: %w", file.Name, err)
 	}
-	defer reader.Close()
-	data, err := io.ReadAll(reader)
+	data, err := readAllAndClose(reader)
 	if err != nil {
 		return "", fmt.Errorf("read testcase file %s: %w", file.Name, err)
 	}

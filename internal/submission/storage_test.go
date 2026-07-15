@@ -3,9 +3,25 @@ package submission
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"errors"
+	"io"
+	"strings"
 	"testing"
 	"time"
+
+	"SOJ/internal/storage"
 )
+
+func TestObjectSourceStoreGetReturnsCloseError(t *testing.T) {
+	closeErr := errors.New("close source object")
+	store := &recordingObjectStorage{body: &closeErrorReadCloser{Reader: strings.NewReader("source"), err: closeErr}}
+
+	_, err := NewObjectSourceStore(store).Get(context.Background(), "submissions/1/source")
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("Get error = %v, want close error %v", err, closeErr)
+	}
+}
 
 func TestParseSnapshotTestcaseCasesAppliesProblemLimits(t *testing.T) {
 	archive := snapshotZipArchive(t, map[string]string{
@@ -42,4 +58,33 @@ func snapshotZipArchive(t *testing.T, files map[string]string) []byte {
 		t.Fatalf("close zip: %v", err)
 	}
 	return buf.Bytes()
+}
+
+type closeErrorReadCloser struct {
+	io.Reader
+	err error
+}
+
+func (r *closeErrorReadCloser) Close() error {
+	return r.err
+}
+
+type recordingObjectStorage struct {
+	body io.ReadCloser
+}
+
+func (s *recordingObjectStorage) Put(context.Context, storage.Object) (storage.ObjectInfo, error) {
+	return storage.ObjectInfo{}, nil
+}
+
+func (s *recordingObjectStorage) Get(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	return s.body, storage.ObjectInfo{}, nil
+}
+
+func (s *recordingObjectStorage) Delete(context.Context, string) error {
+	return nil
+}
+
+func (s *recordingObjectStorage) Stat(context.Context, string) (storage.ObjectInfo, error) {
+	return storage.ObjectInfo{}, nil
 }
