@@ -667,7 +667,8 @@ func assertFindingCodes(t *testing.T, findings []ProblemCheckFinding, want []str
 }
 
 type fakeRepository struct {
-	mu                    sync.Mutex
+	txMu                  sync.Mutex
+	mu                    sync.RWMutex
 	problems              map[int64]ProblemRecord
 	statements            map[int64]Statement
 	currentStatement      map[int64]int64
@@ -701,12 +702,15 @@ func newFakeRepository() *fakeRepository {
 }
 
 func (r *fakeRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
 	return fn(ctx, r)
 }
 
 func (r *fakeRepository) CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.nextProblemID++
 	p := ProblemRecord{
 		ID:            r.nextProblemID,
@@ -724,6 +728,9 @@ func (r *fakeRepository) CreateProblem(ctx context.Context, ownerUserID int64, i
 }
 
 func (r *fakeRepository) GetProblem(ctx context.Context, id int64) (ProblemRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	p, ok := r.problems[id]
 	if !ok {
 		return ProblemRecord{}, apperror.NotFound("problem.not_found", "problem not found")
@@ -732,6 +739,9 @@ func (r *fakeRepository) GetProblem(ctx context.Context, id int64) (ProblemRecor
 }
 
 func (r *fakeRepository) ListProblems(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.lastListFilter = filter
 	items := make([]ProblemRecord, 0)
 	for _, problem := range r.problems {
@@ -760,6 +770,8 @@ func (r *fakeRepository) UpdateProblem(ctx context.Context, id int64, input Upda
 	if input.Status != nil {
 		p.Status = *input.Status
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.problems[id] = p
 	return p, nil
 }
@@ -770,6 +782,8 @@ func (r *fakeRepository) ArchiveProblem(ctx context.Context, id int64) (ProblemR
 		return ProblemRecord{}, err
 	}
 	p.Status = StatusArchived
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.problems[id] = p
 	return p, nil
 }
@@ -779,6 +793,9 @@ func (r *fakeRepository) LockProblemForUpdate(ctx context.Context, id int64) (Pr
 }
 
 func (r *fakeRepository) NextProblemStatementVersion(ctx context.Context, problemID int64) (int32, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	var max int32
 	for _, statement := range r.statements {
 		if statement.ProblemID == problemID && statement.Version > max {
@@ -789,6 +806,9 @@ func (r *fakeRepository) NextProblemStatementVersion(ctx context.Context, proble
 }
 
 func (r *fakeRepository) ClearCurrentProblemStatement(ctx context.Context, problemID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	for id, statement := range r.statements {
 		if statement.ProblemID == problemID {
 			statement.IsCurrent = false
@@ -800,6 +820,9 @@ func (r *fakeRepository) ClearCurrentProblemStatement(ctx context.Context, probl
 }
 
 func (r *fakeRepository) CreateProblemStatement(ctx context.Context, problemID int64, version int32, input CreateStatementInput) (Statement, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.nextStatementID++
 	statement := Statement{ID: r.nextStatementID, ProblemID: problemID, Version: version, Title: input.Title, Description: input.Description, IsCurrent: input.MakeCurrent}
 	r.statements[statement.ID] = statement
@@ -813,6 +836,9 @@ func (r *fakeRepository) CreateProblemStatement(ctx context.Context, problemID i
 }
 
 func (r *fakeRepository) GetCurrentProblemStatement(ctx context.Context, problemID int64) (Statement, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	id := r.currentStatement[problemID]
 	if id == 0 {
 		return Statement{}, apperror.NotFound("problem.not_found", "problem not found")
@@ -821,6 +847,9 @@ func (r *fakeRepository) GetCurrentProblemStatement(ctx context.Context, problem
 }
 
 func (r *fakeRepository) ReplaceProblemTags(ctx context.Context, problemID int64, tags []TagInput) ([]Tag, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	replaced := make([]Tag, 0, len(tags))
 	for _, input := range tags {
 		r.nextTagID++
@@ -831,10 +860,16 @@ func (r *fakeRepository) ReplaceProblemTags(ctx context.Context, problemID int64
 }
 
 func (r *fakeRepository) ListProblemTags(ctx context.Context, problemID int64) ([]Tag, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	return append([]Tag(nil), r.tags[problemID]...), nil
 }
 
 func (r *fakeRepository) NextTestcaseSetVersion(ctx context.Context, problemID int64) (int32, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	var max int32
 	for _, set := range r.testcaseSets {
 		if set.ProblemID == problemID && set.Version > max {
@@ -845,6 +880,9 @@ func (r *fakeRepository) NextTestcaseSetVersion(ctx context.Context, problemID i
 }
 
 func (r *fakeRepository) ClearCurrentTestcaseSet(ctx context.Context, problemID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	for id, set := range r.testcaseSets {
 		if set.ProblemID == problemID {
 			set.IsCurrent = false
@@ -856,6 +894,9 @@ func (r *fakeRepository) ClearCurrentTestcaseSet(ctx context.Context, problemID 
 }
 
 func (r *fakeRepository) CreateTestcaseSet(ctx context.Context, problemID int64, version int32, storageKey, checksum string, sizeBytes int64, caseCount int32, createdBy int64) (TestcaseSetRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if r.failCreateTestcaseSet {
 		return TestcaseSetRecord{}, errors.New("create testcase set failed")
 	}
@@ -871,6 +912,9 @@ func (r *fakeRepository) CreateTestcaseSet(ctx context.Context, problemID int64,
 }
 
 func (r *fakeRepository) GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	id := r.currentTestcase[problemID]
 	if id == 0 {
 		return TestcaseSetRecord{}, apperror.NotFound("problem.not_found", "problem not found")
@@ -883,6 +927,9 @@ func (r *fakeRepository) GetCurrentReadyTestcaseSet(ctx context.Context, problem
 }
 
 func (r *fakeRepository) CreateProblemCheckRun(ctx context.Context, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.nextCheckRunID++
 	now := time.Now()
 	status := input.Status
@@ -905,6 +952,9 @@ func (r *fakeRepository) CreateProblemCheckRun(ctx context.Context, input Create
 }
 
 func (r *fakeRepository) GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	run, ok := r.checkRuns[id]
 	if !ok {
 		return ProblemCheckRunRecord{}, apperror.NotFound("problem.not_found", "problem not found")
@@ -913,6 +963,9 @@ func (r *fakeRepository) GetProblemCheckRun(ctx context.Context, id int64) (Prob
 }
 
 func (r *fakeRepository) GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	var latest ProblemCheckRunRecord
 	for _, run := range r.checkRuns {
 		if run.ProblemID != problemID || run.StatementID != statementID || run.TestcaseSetID != testcaseSetID || run.Status != ProblemCheckStatusCompleted {
@@ -929,6 +982,9 @@ func (r *fakeRepository) GetLatestCompletedProblemCheckRun(ctx context.Context, 
 }
 
 func (r *fakeRepository) ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	runs := make([]ProblemCheckRunRecord, 0)
 	for _, run := range r.checkRuns {
 		if run.ProblemID == filter.ProblemID {
@@ -956,6 +1012,9 @@ func (r *fakeRepository) ListProblemCheckRuns(ctx context.Context, filter ListPr
 }
 
 func (r *fakeRepository) CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	run, ok := r.checkRuns[input.ID]
 	if !ok || (run.Status != ProblemCheckStatusQueued && run.Status != ProblemCheckStatusRunning) {
 		return ProblemCheckRunRecord{}, apperror.NotFound("problem.not_found", "problem not found")
@@ -975,6 +1034,9 @@ func (r *fakeRepository) CompleteProblemCheckRun(ctx context.Context, input Comp
 }
 
 func (r *fakeRepository) FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	run, ok := r.checkRuns[input.ID]
 	if !ok || (run.Status != ProblemCheckStatusQueued && run.Status != ProblemCheckStatusRunning) {
 		return ProblemCheckRunRecord{}, apperror.NotFound("problem.not_found", "problem not found")
@@ -994,6 +1056,9 @@ func (r *fakeRepository) FailProblemCheckRun(ctx context.Context, input FailProb
 }
 
 func (r *fakeRepository) CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.nextCheckFindingID++
 	finding := ProblemCheckFindingRecord{
 		ID:          r.nextCheckFindingID,
@@ -1011,6 +1076,9 @@ func (r *fakeRepository) CreateProblemCheckFinding(ctx context.Context, input Cr
 }
 
 func (r *fakeRepository) GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	for _, findings := range r.checkFindings {
 		for _, finding := range findings {
 			if finding.ID == id {
@@ -1022,6 +1090,9 @@ func (r *fakeRepository) GetProblemCheckFinding(ctx context.Context, id int64) (
 }
 
 func (r *fakeRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	findings := append([]ProblemCheckFindingRecord(nil), r.checkFindings[runID]...)
 	sort.Slice(findings, func(i, j int) bool {
 		return findings[i].ID < findings[j].ID
@@ -1030,6 +1101,9 @@ func (r *fakeRepository) ListProblemCheckFindings(ctx context.Context, runID int
 }
 
 func (r *fakeRepository) CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.nextArtifactID++
 	artifact.ID = r.nextArtifactID
 	return artifact, nil
