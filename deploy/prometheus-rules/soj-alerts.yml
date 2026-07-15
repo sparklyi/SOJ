@@ -92,13 +92,22 @@ groups:
           description: "{{ $labels.job }} sandbox backend {{ $labels.backend }} phase {{ $labels.phase }} reported {{ $labels.class }} errors."
 
       - alert: SOJSandboxCleanupFailures
-        expr: sum by (job, backend) (increase(soj_sandbox_cleanup_failures_total[10m])) > 0
+        expr: sum by (job, backend, resource) (increase(soj_sandbox_cleanup_failures_total[10m])) > 0
         for: 1m
         labels:
           severity: warning
         annotations:
           summary: "SOJ sandbox cleanup failures detected"
-          description: "{{ $labels.job }} sandbox backend {{ $labels.backend }} failed cleanup."
+          description: "{{ $labels.job }} sandbox backend {{ $labels.backend }} failed {{ $labels.resource }} cleanup."
+
+      - alert: SOJSandboxCleanupTimeouts
+        expr: sum by (job, backend, resource) (increase(soj_sandbox_cleanup_timeouts_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SOJ sandbox cleanup timed out"
+          description: "{{ $labels.job }} sandbox backend {{ $labels.backend }} timed out while cleaning {{ $labels.resource }} resources."
 
       - alert: SOJQueueBacklogHigh
         expr: soj_queue_depth{queue=~"request|result"} > 100

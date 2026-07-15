@@ -16,7 +16,8 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 	metrics.RecordResultConsumerProcess("result", "error", 10*time.Millisecond)
 	metrics.ObserveSandboxPhase("docker", "run", "accepted", 120*time.Millisecond)
 	metrics.RecordSandboxBackendError("docker", "probe", "runtime_unavailable")
-	metrics.RecordSandboxCleanupFailure("docker")
+	metrics.RecordSandboxCleanupFailure("docker", "container")
+	metrics.RecordSandboxCleanupTimeout("docker", "workspace")
 	metrics.RecordReadinessCheck("redis.request_stream", "success", 10*time.Millisecond)
 	metrics.RecordJudgeTaskRecovery("recover_dead_task", "success")
 	metrics.RecordReconcilerAction("reset_stale_tasks", "success", 2)
@@ -36,7 +37,8 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 		"soj_worker_result_consumer_duration_seconds",
 		"soj_sandbox_phase_duration_seconds",
 		"soj_sandbox_backend_errors_total",
-		"soj_sandbox_cleanup_failures_total",
+		`soj_sandbox_cleanup_failures_total{backend="docker",resource="container",service="test"} 1`,
+		`soj_sandbox_cleanup_timeouts_total{backend="docker",resource="workspace",service="test"} 1`,
 		"soj_readiness_checks_total",
 		"soj_readiness_check_duration_seconds",
 		"soj_worker_judge_task_recovery_total",

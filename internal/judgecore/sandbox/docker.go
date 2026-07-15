@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +19,11 @@ import (
 )
 
 const (
-	defaultDockerRunnerUser = "1000:1000"
-	defaultDockerPidsLimit  = 128
-	defaultDockerTmpfs      = "/tmp:rw,nosuid,nodev,noexec,size=128m"
+	defaultDockerRunnerUser  = "1000:1000"
+	defaultDockerPidsLimit   = 128
+	defaultDockerTmpfs       = "/tmp:rw,nosuid,nodev,noexec,size=128m"
+	cleanupResourceContainer = "container"
+	cleanupResourceWorkspace = "workspace"
 )
 
 type DockerClient interface {
@@ -30,12 +33,14 @@ type DockerClient interface {
 }
 
 type DockerSandboxOptions struct {
-	Client   DockerClient
-	Runtime  string
-	Images   map[string]string
-	TempDir  string
-	User     string
-	Observer SandboxObserver
+	Client         DockerClient
+	Runtime        string
+	Images         map[string]string
+	TempDir        string
+	User           string
+	CleanupTimeout time.Duration
+	Observer       SandboxObserver
+	Logger         *slog.Logger
 }
 
 type DockerRunSpec struct {
@@ -67,18 +72,21 @@ type DockerMount struct {
 }
 
 type DockerSandbox struct {
-	client   DockerClient
-	runtime  string
-	images   map[string]string
-	tempDir  string
-	user     string
-	observer SandboxObserver
+	client         DockerClient
+	runtime        string
+	images         map[string]string
+	tempDir        string
+	user           string
+	cleanupTimeout time.Duration
+	observer       SandboxObserver
+	logger         *slog.Logger
 }
 
 type SandboxObserver interface {
 	ObserveSandboxPhase(backend, phase, result string, duration time.Duration)
 	RecordSandboxBackendError(backend, phase, class string)
-	RecordSandboxCleanupFailure(backend string)
+	RecordSandboxCleanupFailure(backend, resource string)
+	RecordSandboxCleanupTimeout(backend, resource string)
 }
 
 func NewDockerSandbox(options DockerSandboxOptions) *DockerSandbox {
@@ -99,7 +107,20 @@ func NewDockerSandbox(options DockerSandboxOptions) *DockerSandbox {
 	if user == "" {
 		user = defaultDockerRunnerUser
 	}
-	return &DockerSandbox{client: client, runtime: strings.TrimSpace(options.Runtime), images: images, tempDir: options.TempDir, user: user, observer: options.Observer}
+	cleanupTimeout := options.CleanupTimeout
+	if cleanupTimeout <= 0 {
+		cleanupTimeout = DefaultCleanupTimeout
+	}
+	return &DockerSandbox{
+		client:         client,
+		runtime:        strings.TrimSpace(options.Runtime),
+		images:         images,
+		tempDir:        options.TempDir,
+		user:           user,
+		cleanupTimeout: cleanupTimeout,
+		observer:       options.Observer,
+		logger:         options.Logger,
+	}
 }
 
 func (s *DockerSandbox) Name() string {
@@ -206,13 +227,41 @@ func (s *DockerSandbox) Run(ctx context.Context, workspace Workspace, profile la
 }
 
 func (s *DockerSandbox) Cleanup(ctx context.Context, workspace Workspace) error {
-	if err := os.RemoveAll(workspace.Dir); err != nil {
-		if s.observer != nil {
-			s.observer.RecordSandboxCleanupFailure(BackendDocker)
-		}
+	cleanupCtx, cancel := s.cleanupContext(ctx)
+	defer cancel()
+	if err := removeWorkspace(cleanupCtx, workspace.Dir); err != nil {
+		s.recordCleanupFailure(cleanupCtx, cleanupResourceWorkspace, err)
 		return err
 	}
 	return nil
+}
+
+func (s *DockerSandbox) cleanupContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, s.cleanupTimeout)
+}
+
+func (s *DockerSandbox) cleanupContainer(name string) {
+	cleanupCtx, cancel := s.cleanupContext(context.Background())
+	defer cancel()
+	if err := s.client.RemoveContainer(cleanupCtx, name); err != nil {
+		s.recordCleanupFailure(cleanupCtx, cleanupResourceContainer, err)
+	}
+}
+
+func (s *DockerSandbox) recordCleanupFailure(ctx context.Context, resource string, err error) {
+	timedOut := errors.Is(err, context.DeadlineExceeded)
+	if s.observer != nil {
+		s.observer.RecordSandboxCleanupFailure(BackendDocker, resource)
+		if timedOut {
+			s.observer.RecordSandboxCleanupTimeout(BackendDocker, resource)
+		}
+	}
+	if s.logger != nil {
+		s.logger.ErrorContext(ctx, "sandbox cleanup failed", "backend", BackendDocker, "resource", resource, "timeout", timedOut, "error", err)
+	}
 }
 
 func (s *DockerSandbox) runContainer(ctx context.Context, workspace Workspace, profile language.Profile, phase, mountMode, stdin string, limits Limits, command []string) (commandOutput, error) {
@@ -223,11 +272,7 @@ func (s *DockerSandbox) runContainer(ctx context.Context, workspace Workspace, p
 		}
 		return commandOutput{}, err
 	}
-	defer func() {
-		if err := s.client.RemoveContainer(context.Background(), spec.Name); err != nil && s.observer != nil {
-			s.observer.RecordSandboxCleanupFailure(BackendDocker)
-		}
-	}()
+	defer s.cleanupContainer(spec.Name)
 	started := time.Now()
 	output, err := s.client.Run(ctx, spec)
 	result := "success"
@@ -306,11 +351,7 @@ func (s *DockerSandbox) probeNoopContainer(ctx context.Context) error {
 			"soj.phase":   "probe",
 		},
 	}
-	defer func() {
-		if err := s.client.RemoveContainer(context.Background(), spec.Name); err != nil && s.observer != nil {
-			s.observer.RecordSandboxCleanupFailure(BackendDocker)
-		}
-	}()
+	defer s.cleanupContainer(spec.Name)
 	_, err := s.client.Run(ctx, spec)
 	return err
 }
@@ -343,10 +384,16 @@ func (c dockerCLIClient) RemoveContainer(ctx context.Context, name string) error
 	if strings.TrimSpace(name) == "" {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, c.binary, "rm", "-f", name)
 	output, err := cmd.CombinedOutput()
 	if err == nil || strings.Contains(string(output), "No such container") {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return err
 }

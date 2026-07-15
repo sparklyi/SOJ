@@ -26,6 +26,7 @@ judge:
   endpoint: "agent://local"
   sandbox_backend: "fake"
   timeout: "30s"
+  cleanup_timeout: "5s"
 
 auth:
   jwt_secret: "replace-with-env-secret"
