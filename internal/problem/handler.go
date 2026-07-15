@@ -187,24 +187,6 @@ func (h *Handler) currentStatement(c *gin.Context) {
 	httpapi.OK(c, statement)
 }
 
-func (h *Handler) assignTags(c *gin.Context) {
-	id, ok := problemIDParam(c)
-	if !ok {
-		return
-	}
-	var req AssignTagsInput
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpapi.Error(c, apperror.BadRequest("request.invalid", "invalid request body"))
-		return
-	}
-	tags, err := h.service.AssignTags(c.Request.Context(), actorFromContext(c), id, req)
-	if err != nil {
-		httpapi.Error(c, err)
-		return
-	}
-	httpapi.OK(c, tags)
-}
-
 func (h *Handler) uploadTestcases(c *gin.Context) {
 	h.uploadTestcasesWithRequestLimit(c, defaultMaxTestcaseUploadRequestBytes)
 }
