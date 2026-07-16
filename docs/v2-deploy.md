@@ -30,6 +30,8 @@ The worker process has two production loops: a dispatcher that claims `judge_tas
 
 `soj-judge-agent` consumes requests from `SOJ_JUDGE_REQUEST_STREAM` and publishes results to `SOJ_JUDGE_RESULT_STREAM`. The agent does not receive business database credentials. The result consumer group is created from Redis stream ID `0` so already-published result events are not skipped during first startup or recovery.
 
+Every request and result `XADD` uses approximate `MAXLEN` retention. `SOJ_REDIS_STREAM_MAX_LEN` defaults to `100000` entries per stream and `SOJ_REDIS_DEAD_STREAM_MAX_LEN` defaults to `10000` entries per dead-letter stream; both must be positive. Size these limits above the expected outage backlog and recovery window, then use the queue depth and pending-age metrics to alert before trimming is reached. PostgreSQL remains the source of truth for task recovery.
+
 ## Files
 
 - `Dockerfile.v2`: multi-stage image for `soj-api`, `soj-worker`, `soj-judge-agent`, and `soj-migrate`.

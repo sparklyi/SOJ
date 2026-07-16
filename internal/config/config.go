@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"SOJ/internal/judgecore/sandbox"
+	"SOJ/internal/queue"
 )
 
 type Config struct {
@@ -39,11 +40,13 @@ type DatabaseConfig struct {
 }
 
 type RedisConfig struct {
-	Addr      string
-	Stream    string
-	Group     string
-	BatchSize int
-	Block     time.Duration
+	Addr             string
+	Stream           string
+	Group            string
+	BatchSize        int
+	Block            time.Duration
+	StreamMaxLen     int64
+	DeadStreamMaxLen int64
 }
 
 type StorageConfig struct {
@@ -98,11 +101,13 @@ func Load() (Config, error) {
 			DSN: env("SOJ_DATABASE_DSN", ""),
 		},
 		Redis: RedisConfig{
-			Addr:      env("SOJ_REDIS_ADDR", "localhost:6379"),
-			Stream:    env("SOJ_REDIS_STREAM", "soj:judge:tasks"),
-			Group:     env("SOJ_REDIS_GROUP", "judge-workers"),
-			BatchSize: 16,
-			Block:     5 * time.Second,
+			Addr:             env("SOJ_REDIS_ADDR", "localhost:6379"),
+			Stream:           env("SOJ_REDIS_STREAM", "soj:judge:tasks"),
+			Group:            env("SOJ_REDIS_GROUP", "judge-workers"),
+			BatchSize:        16,
+			Block:            5 * time.Second,
+			StreamMaxLen:     queue.DefaultStreamMaxLen,
+			DeadStreamMaxLen: queue.DefaultDeadStreamMaxLen,
 		},
 		Storage: StorageConfig{
 			Endpoint:  env("SOJ_STORAGE_ENDPOINT", "http://localhost:9000"),
@@ -148,6 +153,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Redis.Block, err = envDuration("SOJ_REDIS_BLOCK", cfg.Redis.Block); err != nil {
+		return Config{}, err
+	}
+	if cfg.Redis.StreamMaxLen, err = envPositiveInt64("SOJ_REDIS_STREAM_MAX_LEN", cfg.Redis.StreamMaxLen); err != nil {
+		return Config{}, err
+	}
+	if cfg.Redis.DeadStreamMaxLen, err = envPositiveInt64("SOJ_REDIS_DEAD_STREAM_MAX_LEN", cfg.Redis.DeadStreamMaxLen); err != nil {
 		return Config{}, err
 	}
 	if cfg.Storage.UsePathStyle, err = envBool("SOJ_STORAGE_PATH_STYLE", false); err != nil {
@@ -206,6 +217,21 @@ func envInt(key string, fallback int) (int, error) {
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func envPositiveInt64(key string, fallback int64) (int64, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("%s: must be greater than zero", key)
 	}
 	return parsed, nil
 }
