@@ -62,15 +62,19 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}()
 
 	requestQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
-		Stream:   envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream),
-		Group:    envOr("SOJ_JUDGE_AGENT_GROUP", "judge-agents"),
-		Consumer: judgeAgentConsumerName(),
+		Stream:     envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream),
+		Group:      envOr("SOJ_JUDGE_AGENT_GROUP", "judge-agents"),
+		Consumer:   judgeAgentConsumerName(),
+		MaxLen:     cfg.Redis.StreamMaxLen,
+		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
 	})
 	resultQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
-		Stream:   envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
-		Group:    envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
-		Consumer: judgeAgentConsumerName(),
-		StartID:  "0",
+		Stream:     envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
+		Group:      envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
+		Consumer:   judgeAgentConsumerName(),
+		StartID:    "0",
+		MaxLen:     cfg.Redis.StreamMaxLen,
+		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
 	})
 	if err := requestQueue.Ensure(ctx); err != nil {
 		return err

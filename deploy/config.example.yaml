@@ -13,6 +13,8 @@ redis:
   addr: "redis:6379"
   stream: "soj:judge:tasks"
   group: "judge-workers"
+  stream_max_len: 100000
+  dead_stream_max_len: 10000
 
 storage:
   endpoint: "http://minio:9000"

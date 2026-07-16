@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"SOJ/internal/queue"
 )
 
 func TestLoadUsesEnvironmentOverrides(t *testing.T) {
@@ -77,6 +79,67 @@ func TestLoadDefaultsJudgeEndpointToAgentProtocol(t *testing.T) {
 	}
 	if cfg.Judge.Endpoint != "agent://local" {
 		t.Fatalf("Judge.Endpoint = %q, want agent://local", cfg.Judge.Endpoint)
+	}
+}
+
+func TestLoadDefaultsRedisRetentionLimits(t *testing.T) {
+	t.Setenv("SOJ_REDIS_STREAM_MAX_LEN", "")
+	t.Setenv("SOJ_REDIS_DEAD_STREAM_MAX_LEN", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Redis.StreamMaxLen != queue.DefaultStreamMaxLen {
+		t.Fatalf("Redis.StreamMaxLen = %d, want %d", cfg.Redis.StreamMaxLen, queue.DefaultStreamMaxLen)
+	}
+	if cfg.Redis.DeadStreamMaxLen != queue.DefaultDeadStreamMaxLen {
+		t.Fatalf("Redis.DeadStreamMaxLen = %d, want %d", cfg.Redis.DeadStreamMaxLen, queue.DefaultDeadStreamMaxLen)
+	}
+}
+
+func TestLoadParsesRedisRetentionLimits(t *testing.T) {
+	t.Setenv("SOJ_REDIS_STREAM_MAX_LEN", "1234")
+	t.Setenv("SOJ_REDIS_DEAD_STREAM_MAX_LEN", "56")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Redis.StreamMaxLen != 1234 {
+		t.Fatalf("Redis.StreamMaxLen = %d, want 1234", cfg.Redis.StreamMaxLen)
+	}
+	if cfg.Redis.DeadStreamMaxLen != 56 {
+		t.Fatalf("Redis.DeadStreamMaxLen = %d, want 56", cfg.Redis.DeadStreamMaxLen)
+	}
+}
+
+func TestLoadRejectsNonPositiveRedisRetentionLimits(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "zero stream limit", key: "SOJ_REDIS_STREAM_MAX_LEN", value: "0"},
+		{name: "negative stream limit", key: "SOJ_REDIS_STREAM_MAX_LEN", value: "-1"},
+		{name: "zero dead stream limit", key: "SOJ_REDIS_DEAD_STREAM_MAX_LEN", value: "0"},
+		{name: "negative dead stream limit", key: "SOJ_REDIS_DEAD_STREAM_MAX_LEN", value: "-1"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("SOJ_REDIS_STREAM_MAX_LEN", "")
+			t.Setenv("SOJ_REDIS_DEAD_STREAM_MAX_LEN", "")
+			t.Setenv(test.key, test.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() error = nil, want non-positive %s rejection", test.key)
+			}
+			if !strings.HasPrefix(err.Error(), test.key) {
+				t.Fatalf("Load() error = %v, want %s prefix", err, test.key)
+			}
+		})
 	}
 }
 

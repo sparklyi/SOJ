@@ -174,6 +174,8 @@ Important variables:
 | `SOJ_REDIS_ADDR` | Redis address. |
 | `SOJ_REDIS_STREAM` | Judge request stream, defaults to `soj:judge:tasks`. |
 | `SOJ_REDIS_GROUP` | Worker consumer group, defaults to `judge-workers`. |
+| `SOJ_REDIS_STREAM_MAX_LEN` | Approximate maximum retained entries for each request or result stream, defaults to `100000`. |
+| `SOJ_REDIS_DEAD_STREAM_MAX_LEN` | Approximate maximum retained entries for each dead-letter stream, defaults to `10000`. |
 | `SOJ_STORAGE_ENDPOINT` | S3-compatible object storage endpoint. |
 | `SOJ_STORAGE_BUCKET` | Object storage bucket. |
 | `SOJ_STORAGE_ACCESS_KEY` | Object storage access key. |
