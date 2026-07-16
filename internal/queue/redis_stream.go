@@ -11,11 +11,20 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	// DefaultStreamMaxLen bounds retained request and result stream history.
+	DefaultStreamMaxLen int64 = 100_000
+	// DefaultDeadStreamMaxLen bounds retained dead-letter stream history.
+	DefaultDeadStreamMaxLen int64 = 10_000
+)
+
 type RedisStreamConfig struct {
-	Stream   string
-	Group    string
-	Consumer string
-	StartID  string
+	Stream     string
+	Group      string
+	Consumer   string
+	StartID    string
+	MaxLen     int64
+	DeadMaxLen int64
 }
 
 type RedisStreamQueue struct {
@@ -35,6 +44,12 @@ func NewRedisStreamQueue(client redis.UniversalClient, cfg RedisStreamConfig) *R
 	}
 	if cfg.StartID == "" {
 		cfg.StartID = "$"
+	}
+	if cfg.MaxLen <= 0 {
+		cfg.MaxLen = DefaultStreamMaxLen
+	}
+	if cfg.DeadMaxLen <= 0 {
+		cfg.DeadMaxLen = DefaultDeadStreamMaxLen
 	}
 	return &RedisStreamQueue{client: client, cfg: cfg}
 }
@@ -67,6 +82,8 @@ func (q *RedisStreamQueue) Stats(ctx context.Context) (QueueStats, error) {
 func (q *RedisStreamQueue) Publish(ctx context.Context, taskID int64, payload []byte) (string, error) {
 	id, err := q.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: q.cfg.Stream,
+		MaxLen: q.cfg.MaxLen,
+		Approx: true,
 		Values: map[string]any{
 			"task_id": strconv.FormatInt(taskID, 10),
 			"payload": string(payload),
@@ -126,6 +143,8 @@ func (q *RedisStreamQueue) Ack(ctx context.Context, messageID string) error {
 func (q *RedisStreamQueue) DeadLetter(ctx context.Context, message Message, reason string) error {
 	_, err := q.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: q.cfg.Stream + ":dead",
+		MaxLen: q.cfg.DeadMaxLen,
+		Approx: true,
 		Values: map[string]any{
 			"original_id": message.ID,
 			"task_id":     strconv.FormatInt(message.TaskID, 10),

@@ -74,18 +74,22 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	problemService := problem.NewService(problem.NewPostgresRepository(pool), objectStore)
 	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStore)
 	taskQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
-		Stream:   cfg.Redis.Stream,
-		Group:    cfg.Redis.Group,
-		Consumer: workerConsumerName(),
+		Stream:     cfg.Redis.Stream,
+		Group:      cfg.Redis.Group,
+		Consumer:   workerConsumerName(),
+		MaxLen:     cfg.Redis.StreamMaxLen,
+		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
 	})
 	if err := taskQueue.Ensure(ctx); err != nil {
 		return err
 	}
 	resultQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
-		Stream:   envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
-		Group:    envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
-		Consumer: workerConsumerName(),
-		StartID:  "0",
+		Stream:     envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
+		Group:      envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
+		Consumer:   workerConsumerName(),
+		StartID:    "0",
+		MaxLen:     cfg.Redis.StreamMaxLen,
+		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
 	})
 	if err := resultQueue.Ensure(ctx); err != nil {
 		return err
