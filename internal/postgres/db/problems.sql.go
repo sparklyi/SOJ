@@ -769,16 +769,16 @@ func (q *Queries) GetProblemCheckRunByID(ctx context.Context, id int64) (Problem
 const getProblemStats = `-- name: GetProblemStats :one
 SELECT
     p.id AS problem_id,
-    count(s.id)::bigint AS total_submissions,
-    count(s.id) FILTER (WHERE s.status = 'accepted')::bigint AS accepted_submissions,
-    coalesce(jsonb_object_agg(s.status, status_counts.count) FILTER (WHERE s.status IS NOT NULL), '{}'::jsonb) AS status_counts
+    coalesce(sum(status_counts.count), 0)::bigint AS total_submissions,
+    coalesce(sum(status_counts.count) FILTER (WHERE status_counts.status = 'accepted'), 0)::bigint AS accepted_submissions,
+    coalesce(jsonb_object_agg(status_counts.status, status_counts.count) FILTER (WHERE status_counts.status IS NOT NULL), '{}'::jsonb) AS status_counts
 FROM problems p
-LEFT JOIN submissions s ON s.problem_id = p.id
 LEFT JOIN (
-    SELECT problem_id, status, count(*)::bigint AS count
-    FROM submissions
-    GROUP BY problem_id, status
-) status_counts ON status_counts.problem_id = s.problem_id AND status_counts.status = s.status
+    SELECT s.status, count(*)::bigint AS count
+    FROM submissions s
+    WHERE s.problem_id = $1
+    GROUP BY s.status
+) status_counts ON true
 WHERE p.id = $1
 GROUP BY p.id
 `
