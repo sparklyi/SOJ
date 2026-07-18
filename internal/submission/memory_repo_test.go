@@ -12,21 +12,25 @@ import (
 )
 
 type memoryRepo struct {
-	mu                  sync.RWMutex
-	nextID              int64
-	artifacts           map[int64]ArtifactRecord
-	submissions         map[int64]SubmissionRecord
-	runs                map[int64]RunRecord
-	tasks               map[int64]JudgeTaskRecord
-	languages           map[int64]LanguageRecord
-	attempts            map[int64]JudgeAttemptRecord
-	attemptKeys         map[string]int64
-	cases               map[int64][]JudgeCaseResultRecord
-	results             map[int64]SubmissionResultRecord
-	processedEvents     map[string]bool
-	submissionUpdates   int
-	events              []string
-	failCreateJudgeTask error
+	mu                      sync.RWMutex
+	nextID                  int64
+	artifacts               map[int64]ArtifactRecord
+	submissions             map[int64]SubmissionRecord
+	runs                    map[int64]RunRecord
+	tasks                   map[int64]JudgeTaskRecord
+	languages               map[int64]LanguageRecord
+	attempts                map[int64]JudgeAttemptRecord
+	attemptKeys             map[string]int64
+	cases                   map[int64][]JudgeCaseResultRecord
+	results                 map[int64]SubmissionResultRecord
+	processedEvents         map[string]bool
+	submissionUpdates       int
+	submissionSummaryLoads  int
+	submissionResultReads   int
+	latestJudgeAttemptReads int
+	judgeCaseResultReads    int
+	events                  []string
+	failCreateJudgeTask     error
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -101,6 +105,35 @@ func (r *memoryRepo) ListSubmissions(ctx context.Context, input ListSubmissionsI
 		rows = append(rows, row)
 	}
 	return rows, int64(len(rows)), nil
+}
+func (r *memoryRepo) ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error) {
+	r.submissionSummaryLoads++
+	summaries := make(map[int64]SubmissionListSummary, len(submissionIDs))
+	for _, submissionID := range submissionIDs {
+		if result, ok := r.results[submissionID]; ok {
+			summary := summaries[submissionID]
+			summary.Result = &result
+			summaries[submissionID] = summary
+		}
+		if !includeAttempts {
+			continue
+		}
+		var latest JudgeAttemptRecord
+		for _, attempt := range r.attempts {
+			if attempt.SubmissionID == nil || *attempt.SubmissionID != submissionID {
+				continue
+			}
+			if latest.ID == 0 || attempt.AttemptNo > latest.AttemptNo || (attempt.AttemptNo == latest.AttemptNo && attempt.ID > latest.ID) {
+				latest = attempt
+			}
+		}
+		if latest.ID != 0 {
+			summary := summaries[submissionID]
+			summary.LatestAttempt = &latest
+			summaries[submissionID] = summary
+		}
+	}
+	return summaries, nil
 }
 func (r *memoryRepo) MarkSubmissionRunning(ctx context.Context, id int64) (SubmissionRecord, error) {
 	row := r.submissions[id]
@@ -206,6 +239,7 @@ func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64,
 	return row, nil
 }
 func (r *memoryRepo) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID int64) (JudgeAttemptRecord, error) {
+	r.latestJudgeAttemptReads++
 	var latest JudgeAttemptRecord
 	for _, attempt := range r.attempts {
 		if attempt.SubmissionID == nil || *attempt.SubmissionID != submissionID {
@@ -221,9 +255,11 @@ func (r *memoryRepo) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, su
 	return latest, nil
 }
 func (r *memoryRepo) ListJudgeCaseResults(ctx context.Context, attemptID int64) ([]JudgeCaseResultRecord, error) {
+	r.judgeCaseResultReads++
 	return append([]JudgeCaseResultRecord(nil), r.cases[attemptID]...), nil
 }
 func (r *memoryRepo) GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error) {
+	r.submissionResultReads++
 	row, ok := r.results[submissionID]
 	if !ok {
 		return SubmissionResultRecord{}, apperror.NotFound("submission_result.not_found", "submission result not found")

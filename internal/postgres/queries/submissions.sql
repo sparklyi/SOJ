@@ -124,6 +124,12 @@ WHERE submission_id = $1
 ORDER BY attempt_no DESC, id DESC
 LIMIT 1;
 
+-- name: ListLatestJudgeAttemptsBySubmissionIDs :many
+SELECT DISTINCT ON (submission_id) *
+FROM judge_attempts
+WHERE submission_id = ANY(sqlc.arg('submission_ids')::bigint[])
+ORDER BY submission_id, attempt_no DESC, id DESC;
+
 -- name: GetLatestJudgeAttemptByRunID :one
 SELECT *
 FROM judge_attempts
@@ -248,6 +254,11 @@ RETURNING *;
 SELECT *
 FROM submission_results
 WHERE submission_id = $1;
+
+-- name: ListSubmissionResultsBySubmissionIDs :many
+SELECT *
+FROM submission_results
+WHERE submission_id = ANY(sqlc.arg('submission_ids')::bigint[]);
 
 -- name: GetReadyTestcaseSetByID :one
 SELECT *

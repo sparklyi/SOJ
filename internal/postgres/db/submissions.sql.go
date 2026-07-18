@@ -1755,6 +1755,71 @@ func (q *Queries) ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID
 	return items, nil
 }
 
+const listLatestJudgeAttemptsBySubmissionIDs = `-- name: ListLatestJudgeAttemptsBySubmissionIDs :many
+SELECT DISTINCT ON (submission_id) id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+FROM judge_attempts
+WHERE submission_id = ANY($1::bigint[])
+ORDER BY submission_id, attempt_no DESC, id DESC
+`
+
+func (q *Queries) ListLatestJudgeAttemptsBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]JudgeAttempt, error) {
+	rows, err := q.db.Query(ctx, listLatestJudgeAttemptsBySubmissionIDs, submissionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JudgeAttempt
+	for rows.Next() {
+		var i JudgeAttempt
+		if err := rows.Scan(
+			&i.ID,
+			&i.SubmissionID,
+			&i.RunID,
+			&i.TaskID,
+			&i.RejudgeBatchID,
+			&i.AttemptNo,
+			&i.ProtocolVersion,
+			&i.JudgeCoreVersion,
+			&i.JudgeEngine,
+			&i.JudgeAgentID,
+			&i.LanguageID,
+			&i.LanguageRuntime,
+			&i.SandboxBackend,
+			&i.SandboxProfile,
+			&i.TestcaseSetID,
+			&i.TestcaseSetHash,
+			&i.CheckerHash,
+			&i.ValidatorHash,
+			&i.Status,
+			&i.Verdict,
+			&i.Score,
+			&i.TimeMs,
+			&i.MemoryKb,
+			&i.FirstFailedCaseIndex,
+			&i.FirstFailedGroup,
+			&i.CompileOutputSummary,
+			&i.StderrSummary,
+			&i.CheckerMessage,
+			&i.ErrorClass,
+			&i.ErrorMessage,
+			&i.Manifest,
+			&i.Metrics,
+			&i.TraceID,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRejudgeBatchItems = `-- name: ListRejudgeBatchItems :many
 SELECT id, batch_id, submission_id, task_id, attempt_id, status, error_message, started_at, finished_at, created_at, updated_at
 FROM rejudge_batch_items
@@ -1845,6 +1910,45 @@ func (q *Queries) ListRejudgeBatches(ctx context.Context, arg ListRejudgeBatches
 			&i.ErrorMessage,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSubmissionResultsBySubmissionIDs = `-- name: ListSubmissionResultsBySubmissionIDs :many
+SELECT submission_id, attempt_id, status, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, error_class, safe_summary, created_at, updated_at
+FROM submission_results
+WHERE submission_id = ANY($1::bigint[])
+`
+
+func (q *Queries) ListSubmissionResultsBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]SubmissionResult, error) {
+	rows, err := q.db.Query(ctx, listSubmissionResultsBySubmissionIDs, submissionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SubmissionResult
+	for rows.Next() {
+		var i SubmissionResult
+		if err := rows.Scan(
+			&i.SubmissionID,
+			&i.AttemptID,
+			&i.Status,
+			&i.Score,
+			&i.TimeMs,
+			&i.MemoryKb,
+			&i.FirstFailedCaseIndex,
+			&i.FirstFailedGroup,
+			&i.ErrorClass,
+			&i.SafeSummary,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

@@ -198,6 +198,28 @@ func TestJudgeResultQueriesExposeAttemptsCasesAndProjection(t *testing.T) {
 	}
 }
 
+func TestSubmissionListSummaryQueriesAreBatchedWithoutCases(t *testing.T) {
+	for name, query := range map[string]string{
+		"ListSubmissionResultsBySubmissionIDs":   listSubmissionResultsBySubmissionIDs,
+		"ListLatestJudgeAttemptsBySubmissionIDs": listLatestJudgeAttemptsBySubmissionIDs,
+	} {
+		if !strings.Contains(query, "WHERE submission_id = ANY($1::bigint[])") {
+			t.Fatalf("%s does not batch by submission ID:\n%s", name, query)
+		}
+		if strings.Contains(query, "judge_case_results") {
+			t.Fatalf("%s must not fetch case details:\n%s", name, query)
+		}
+	}
+	for _, want := range []string{
+		"SELECT DISTINCT ON (submission_id)",
+		"ORDER BY submission_id, attempt_no DESC, id DESC",
+	} {
+		if !strings.Contains(listLatestJudgeAttemptsBySubmissionIDs, want) {
+			t.Fatalf("ListLatestJudgeAttemptsBySubmissionIDs missing %q:\n%s", want, listLatestJudgeAttemptsBySubmissionIDs)
+		}
+	}
+}
+
 func TestProblemCheckSchemaAndQueriesExposeRunsAndFindings(t *testing.T) {
 	schema := readInitialSchema(t)
 	for _, want := range []string{

@@ -197,6 +197,54 @@ func TestSubmissionResultVisibilityUsesContestFreezePolicy(t *testing.T) {
 	}
 }
 
+func TestSubmissionResultVisibilitiesCachesContestAccessPerContest(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	repo := newMemoryRepository()
+	repo.contests[1] = ContestRecord{
+		ID:          1,
+		OwnerUserID: 10,
+		Title:       "Public",
+		Visibility:  VisibilityPublic,
+		Status:      StatusPublished,
+		StartAt:     start,
+		EndAt:       start.Add(3 * time.Hour),
+		FreezeAt:    start.Add(2 * time.Hour),
+	}
+	repo.contests[2] = ContestRecord{
+		ID:          2,
+		OwnerUserID: 10,
+		Title:       "Private",
+		Visibility:  VisibilityPrivate,
+		Status:      StatusPublished,
+		StartAt:     start,
+		EndAt:       start.Add(3 * time.Hour),
+		FreezeAt:    start.Add(2 * time.Hour),
+	}
+	repo.registrations[2] = []ContestRegistration{{ContestID: 2, UserID: 20, Status: RegistrationActive}}
+	service := NewService(repo, WithNow(func() time.Time { return start.Add(time.Hour) }))
+
+	visibilities, err := service.SubmissionResultVisibilities(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, []submission.ContestSubmissionVisibility{
+		{ID: 1, UserID: 20, ProblemID: 101, ContestID: 1, SubmittedAt: start.Add(time.Minute)},
+		{ID: 2, UserID: 20, ProblemID: 102, ContestID: 1, SubmittedAt: start.Add(2 * time.Minute)},
+		{ID: 3, UserID: 20, ProblemID: 101, ContestID: 2, SubmittedAt: start.Add(3 * time.Minute)},
+		{ID: 4, UserID: 20, ProblemID: 102, ContestID: 2, SubmittedAt: start.Add(4 * time.Minute)},
+	})
+	if err != nil {
+		t.Fatalf("SubmissionResultVisibilities returned error: %v", err)
+	}
+	if len(visibilities) != 4 {
+		t.Fatalf("visibility count=%d, want 4", len(visibilities))
+	}
+	for submissionID, visibility := range visibilities {
+		if visibility.Visibility != "visible" || !visibility.ShowResult || !visibility.ShowCases {
+			t.Fatalf("submission %d visibility=%+v, want visible result and cases", submissionID, visibility)
+		}
+	}
+	if repo.contestReads != 2 || repo.registrationReads != 1 {
+		t.Fatalf("contest access reads: contests=%d registrations=%d, want 2/1", repo.contestReads, repo.registrationReads)
+	}
+}
+
 func TestFinalScoreboardFallsBackToProblemResultsWhenSnapshotMissing(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	repo := newMemoryRepository()
