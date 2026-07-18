@@ -575,6 +575,143 @@ func TestHandlerListsSubmissions(t *testing.T) {
 	}
 }
 
+func TestListSubmissionsBuildsBatchedSummariesWithoutCaseDetails(t *testing.T) {
+	repo := newMemoryRepo()
+	policy := &batchedSubmissionVisibilityPolicy{}
+	seedSubmissionListSummaries(repo, 5, 7)
+	service := NewService(ServiceOptions{Repository: repo, ContestPolicy: policy})
+
+	views, total, err := service.ListSubmissions(t.Context(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, ListSubmissionsInput{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListSubmissions returned error: %v", err)
+	}
+	if total != 2 || len(views) != 2 {
+		t.Fatalf("ListSubmissions returned total=%d views=%d, want 2", total, len(views))
+	}
+	for _, view := range views {
+		if view.Result == nil {
+			t.Fatalf("submission %d is missing its summary result", view.Submission.ID)
+		}
+		if len(view.Cases) != 0 {
+			t.Fatalf("submission %d includes %d case details in a list summary", view.Submission.ID, len(view.Cases))
+		}
+		if view.AdminDiagnostics == nil {
+			t.Fatalf("submission %d is missing admin diagnostics", view.Submission.ID)
+		}
+	}
+	if repo.submissionSummaryLoads != 1 || repo.submissionResultReads != 0 || repo.latestJudgeAttemptReads != 0 || repo.judgeCaseResultReads != 0 {
+		t.Fatalf("list detail reads: summaries=%d results=%d attempts=%d cases=%d, want 1/0/0/0", repo.submissionSummaryLoads, repo.submissionResultReads, repo.latestJudgeAttemptReads, repo.judgeCaseResultReads)
+	}
+	if policy.batchCalls != 1 || policy.singleCalls != 0 {
+		t.Fatalf("contest visibility calls: batch=%d single=%d, want 1/0", policy.batchCalls, policy.singleCalls)
+	}
+}
+
+func TestHandlerListsSubmissionSummariesWithoutCaseDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newMemoryRepo()
+	seedSubmissionListSummaries(repo, 5, 7)
+	handler := NewHandler(NewService(ServiceOptions{Repository: repo, ContestPolicy: &batchedSubmissionVisibilityPolicy{}}))
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions", nil)
+	req.Header.Set("X-User-ID", "5")
+	req.Header.Set("X-User-Role", "user")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Items []struct {
+				ID     int64           `json:"id"`
+				Result json.RawMessage `json:"result"`
+				Cases  json.RawMessage `json:"cases"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(envelope.Data.Items) != 2 {
+		t.Fatalf("items=%d, want 2", len(envelope.Data.Items))
+	}
+	for _, item := range envelope.Data.Items {
+		if len(item.Result) == 0 || string(item.Result) == "null" {
+			t.Fatalf("submission %d is missing its summary result", item.ID)
+		}
+		if len(item.Cases) != 0 && string(item.Cases) != "null" {
+			t.Fatalf("submission %d returned case details: %s", item.ID, item.Cases)
+		}
+	}
+}
+
+func TestListSubmissionsIncludesDiagnosticsAllowedForNonAdmin(t *testing.T) {
+	repo := newMemoryRepo()
+	policy := &batchedSubmissionVisibilityPolicy{showAdminDiagnostics: true}
+	seedSubmissionListSummaries(repo, 5, 7)
+	service := NewService(ServiceOptions{Repository: repo, ContestPolicy: policy})
+
+	views, _, err := service.ListSubmissions(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, ListSubmissionsInput{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListSubmissions returned error: %v", err)
+	}
+	for _, view := range views {
+		if view.AdminDiagnostics == nil {
+			t.Fatalf("submission %d is missing diagnostics allowed by its visibility policy", view.Submission.ID)
+		}
+	}
+	if repo.submissionSummaryLoads != 1 || repo.latestJudgeAttemptReads != 0 || repo.judgeCaseResultReads != 0 {
+		t.Fatalf("list detail reads: summaries=%d attempts=%d cases=%d, want 1/0/0", repo.submissionSummaryLoads, repo.latestJudgeAttemptReads, repo.judgeCaseResultReads)
+	}
+}
+
+func seedSubmissionListSummaries(repo *memoryRepo, userID, contestID int64) {
+	for _, id := range []int64{1, 2} {
+		submissionID := id
+		attemptID := id + 100
+		repo.submissions[submissionID] = SubmissionRecord{
+			ID:          submissionID,
+			UserID:      userID,
+			ProblemID:   11,
+			ContestID:   &contestID,
+			LanguageID:  71,
+			Status:      StatusAccepted,
+			Score:       100,
+			SubmittedAt: time.Unix(id, 0).UTC(),
+		}
+		repo.results[submissionID] = SubmissionResultRecord{SubmissionID: submissionID, AttemptID: attemptID, Status: StatusAccepted, Score: 100}
+		repo.attempts[attemptID] = JudgeAttemptRecord{ID: attemptID, SubmissionID: &submissionID, AttemptNo: 1, Status: StatusAccepted}
+		repo.cases[attemptID] = []JudgeCaseResultRecord{{ID: attemptID + 100, AttemptID: attemptID, CaseIndex: 1, Status: StatusAccepted, Score: 100}}
+	}
+}
+
+type batchedSubmissionVisibilityPolicy struct {
+	singleCalls          int
+	batchCalls           int
+	showAdminDiagnostics bool
+}
+
+func (p *batchedSubmissionVisibilityPolicy) ValidateSubmission(ctx context.Context, actor auth.Actor, problemID, contestID int64) error {
+	return nil
+}
+
+func (p *batchedSubmissionVisibilityPolicy) SubmissionResultVisibility(ctx context.Context, actor auth.Actor, sub ContestSubmissionVisibility) (SubmissionResultVisibility, error) {
+	p.singleCalls++
+	return SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: p.showAdminDiagnostics, Visibility: "visible"}, nil
+}
+
+func (p *batchedSubmissionVisibilityPolicy) SubmissionResultVisibilities(ctx context.Context, actor auth.Actor, submissions []ContestSubmissionVisibility) (map[int64]SubmissionResultVisibility, error) {
+	p.batchCalls++
+	visibilities := make(map[int64]SubmissionResultVisibility, len(submissions))
+	for _, sub := range submissions {
+		visibilities[sub.ID] = SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: p.showAdminDiagnostics, Visibility: "visible"}
+	}
+	return visibilities, nil
+}
+
 func TestHandlerSubmissionDetailProjectsSafeResultForOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()

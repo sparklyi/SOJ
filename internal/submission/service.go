@@ -109,6 +109,10 @@ type ContestResultVisibilityPolicy interface {
 	SubmissionResultVisibility(ctx context.Context, actor auth.Actor, submission ContestSubmissionVisibility) (SubmissionResultVisibility, error)
 }
 
+type ContestResultVisibilityBatchPolicy interface {
+	SubmissionResultVisibilities(ctx context.Context, actor auth.Actor, submissions []ContestSubmissionVisibility) (map[int64]SubmissionResultVisibility, error)
+}
+
 type ContestSubmissionVisibility struct {
 	ID          int64
 	UserID      int64
@@ -356,11 +360,34 @@ func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input L
 	if err != nil {
 		return nil, 0, err
 	}
+	visibilities, err := s.submissionListVisibilities(ctx, actor, records)
+	if err != nil {
+		return nil, 0, err
+	}
+	submissionIDs := make([]int64, 0, len(records))
+	includeAttempts := false
+	for _, record := range records {
+		visibility := visibilities[record.ID]
+		if visibility.ShowResult && terminalStatus(record.Status) {
+			submissionIDs = append(submissionIDs, record.ID)
+			includeAttempts = includeAttempts || visibility.ShowAdminDiagnostics
+		}
+	}
+	summaries, err := s.repo.ListSubmissionSummaries(ctx, submissionIDs, includeAttempts)
+	if err != nil {
+		return nil, 0, err
+	}
 	views := make([]SubmissionView, 0, len(records))
 	for _, record := range records {
-		view, err := s.submissionView(ctx, actor, record)
-		if err != nil {
-			return nil, 0, err
+		visibility := visibilities[record.ID]
+		view := SubmissionView{Submission: record, Visibility: visibility.Visibility}
+		if visibility.ShowResult && terminalStatus(record.Status) {
+			if summary, ok := summaries[record.ID]; ok && summary.Result != nil {
+				view.Result = summary.Result
+				if visibility.ShowAdminDiagnostics && summary.LatestAttempt != nil {
+					view.AdminDiagnostics = summary.LatestAttempt
+				}
+			}
 		}
 		views = append(views, view)
 	}
@@ -415,28 +442,9 @@ func (s *Service) CompleteSubmission(ctx context.Context, submissionID int64, re
 }
 
 func (s *Service) submissionView(ctx context.Context, actor auth.Actor, record SubmissionRecord) (SubmissionView, error) {
-	visibility := SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: actor.Admin(), Visibility: "visible"}
-	if record.ContestID != nil {
-		visibility = SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: actor.Admin(), Visibility: "visible"}
-		if policy, ok := s.contestPolicy.(ContestResultVisibilityPolicy); ok {
-			policyVisibility, err := policy.SubmissionResultVisibility(ctx, actor, ContestSubmissionVisibility{
-				ID:          record.ID,
-				UserID:      record.UserID,
-				ProblemID:   record.ProblemID,
-				ContestID:   *record.ContestID,
-				SubmittedAt: record.SubmittedAt,
-				JudgedAt:    record.JudgedAt,
-			})
-			if err != nil {
-				return SubmissionView{}, err
-			}
-			visibility = policyVisibility
-			if actor.Admin() {
-				visibility.ShowAdminDiagnostics = true
-			}
-		} else if !actor.Admin() {
-			visibility.ShowCases = false
-		}
+	visibility, err := s.submissionVisibility(ctx, actor, record)
+	if err != nil {
+		return SubmissionView{}, err
 	}
 
 	view := SubmissionView{Submission: record, Visibility: visibility.Visibility}
@@ -470,6 +478,81 @@ func (s *Service) submissionView(ctx context.Context, actor auth.Actor, record S
 		view.Cases = cases
 	}
 	return view, nil
+}
+
+func (s *Service) submissionListVisibilities(ctx context.Context, actor auth.Actor, records []SubmissionRecord) (map[int64]SubmissionResultVisibility, error) {
+	visibilities := make(map[int64]SubmissionResultVisibility, len(records))
+	contestSubmissions := make([]ContestSubmissionVisibility, 0, len(records))
+	for _, record := range records {
+		visibilities[record.ID] = SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: actor.Admin(), Visibility: "visible"}
+		if record.ContestID == nil {
+			continue
+		}
+		contestSubmissions = append(contestSubmissions, contestSubmissionVisibility(record))
+	}
+	if len(contestSubmissions) == 0 {
+		return visibilities, nil
+	}
+	if policy, ok := s.contestPolicy.(ContestResultVisibilityBatchPolicy); ok {
+		batchVisibilities, err := policy.SubmissionResultVisibilities(ctx, actor, contestSubmissions)
+		if err != nil {
+			return nil, err
+		}
+		for _, submission := range contestSubmissions {
+			visibility, ok := batchVisibilities[submission.ID]
+			if !ok {
+				return nil, fmt.Errorf("contest visibility policy did not return submission %d", submission.ID)
+			}
+			if actor.Admin() {
+				visibility.ShowAdminDiagnostics = true
+			}
+			visibilities[submission.ID] = visibility
+		}
+		return visibilities, nil
+	}
+	for _, record := range records {
+		if record.ContestID == nil {
+			continue
+		}
+		visibility, err := s.submissionVisibility(ctx, actor, record)
+		if err != nil {
+			return nil, err
+		}
+		visibilities[record.ID] = visibility
+	}
+	return visibilities, nil
+}
+
+func (s *Service) submissionVisibility(ctx context.Context, actor auth.Actor, record SubmissionRecord) (SubmissionResultVisibility, error) {
+	visibility := SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: actor.Admin(), Visibility: "visible"}
+	if record.ContestID == nil {
+		return visibility, nil
+	}
+	if policy, ok := s.contestPolicy.(ContestResultVisibilityPolicy); ok {
+		policyVisibility, err := policy.SubmissionResultVisibility(ctx, actor, contestSubmissionVisibility(record))
+		if err != nil {
+			return SubmissionResultVisibility{}, err
+		}
+		if actor.Admin() {
+			policyVisibility.ShowAdminDiagnostics = true
+		}
+		return policyVisibility, nil
+	}
+	if !actor.Admin() {
+		visibility.ShowCases = false
+	}
+	return visibility, nil
+}
+
+func contestSubmissionVisibility(record SubmissionRecord) ContestSubmissionVisibility {
+	return ContestSubmissionVisibility{
+		ID:          record.ID,
+		UserID:      record.UserID,
+		ProblemID:   record.ProblemID,
+		ContestID:   *record.ContestID,
+		SubmittedAt: record.SubmittedAt,
+		JudgedAt:    record.JudgedAt,
+	}
 }
 
 func (s *Service) CompleteRun(ctx context.Context, runID int64, result judge.Result) (RunRecord, error) {

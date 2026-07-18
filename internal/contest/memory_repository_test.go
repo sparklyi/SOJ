@@ -9,13 +9,15 @@ import (
 )
 
 type memoryRepository struct {
-	nextID        int64
-	contests      map[int64]ContestRecord
-	problems      map[int64][]ContestProblem
-	registrations map[int64][]ContestRegistration
-	results       map[int64][]ContestProblemResult
-	submissions   map[int64][]ContestSubmissionResult
-	snapshots     map[int64][]ScoreboardSnapshot
+	nextID            int64
+	contestReads      int
+	registrationReads int
+	contests          map[int64]ContestRecord
+	problems          map[int64][]ContestProblem
+	registrations     map[int64][]ContestRegistration
+	results           map[int64][]ContestProblemResult
+	submissions       map[int64][]ContestSubmissionResult
+	snapshots         map[int64][]ScoreboardSnapshot
 }
 
 func newMemoryRepository() *memoryRepository {
@@ -48,6 +50,7 @@ func (r *memoryRepository) CreateContest(ctx context.Context, input ContestRecor
 }
 
 func (r *memoryRepository) GetContest(ctx context.Context, id int64) (ContestRecord, error) {
+	r.contestReads++
 	row, ok := r.contests[id]
 	if !ok {
 		return ContestRecord{}, apperror.NotFound("contest.not_found", "contest not found")
@@ -155,6 +158,7 @@ func (r *memoryRepository) CreateRegistration(ctx context.Context, input Contest
 }
 
 func (r *memoryRepository) GetRegistration(ctx context.Context, contestID, userID int64) (ContestRegistration, error) {
+	r.registrationReads++
 	for _, row := range r.registrations[contestID] {
 		if row.UserID == userID {
 			return row, nil

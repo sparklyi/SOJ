@@ -417,14 +417,40 @@ func (s *Service) SubmissionResultVisibility(ctx context.Context, actor auth.Act
 	if err := s.canReadContest(ctx, actor, contest); err != nil {
 		return submission.SubmissionResultVisibility{}, err
 	}
+	return submissionResultVisibility(contest, actor, sub, s.now()), nil
+}
+
+func (s *Service) SubmissionResultVisibilities(ctx context.Context, actor auth.Actor, submissions []submission.ContestSubmissionVisibility) (map[int64]submission.SubmissionResultVisibility, error) {
+	visibilities := make(map[int64]submission.SubmissionResultVisibility, len(submissions))
+	contests := make(map[int64]ContestRecord)
+	now := s.now()
+	for _, sub := range submissions {
+		contest, ok := contests[sub.ContestID]
+		if !ok {
+			var err error
+			contest, err = s.repo.GetContest(ctx, sub.ContestID)
+			if err != nil {
+				return nil, err
+			}
+			if err := s.canReadContest(ctx, actor, contest); err != nil {
+				return nil, err
+			}
+			contests[sub.ContestID] = contest
+		}
+		visibilities[sub.ID] = submissionResultVisibility(contest, actor, sub, now)
+	}
+	return visibilities, nil
+}
+
+func submissionResultVisibility(contest ContestRecord, actor auth.Actor, sub submission.ContestSubmissionVisibility, now time.Time) submission.SubmissionResultVisibility {
 	if actor.Admin() || actor.UserID == contest.OwnerUserID {
-		return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: true, Visibility: "visible"}, nil
+		return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: true, Visibility: "visible"}
 	}
-	visible := submissionVisibleInFrozenWindow(contest, sub, s.now())
+	visible := submissionVisibleInFrozenWindow(contest, sub, now)
 	if !visible {
-		return submission.SubmissionResultVisibility{Visibility: "frozen"}, nil
+		return submission.SubmissionResultVisibility{Visibility: "frozen"}
 	}
-	return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, Visibility: "visible"}, nil
+	return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, Visibility: "visible"}
 }
 
 func submissionVisibleInFrozenWindow(contest ContestRecord, sub submission.ContestSubmissionVisibility, now time.Time) bool {
