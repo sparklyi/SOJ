@@ -171,6 +171,11 @@ type ListSubmissionsInput struct {
 	Limit     int32
 }
 
+type SubmissionListSummary struct {
+	Result        *SubmissionResultRecord
+	LatestAttempt *JudgeAttemptRecord
+}
+
 type Repository interface {
 	CreateArtifact(ctx context.Context, arg ArtifactRecord) (ArtifactRecord, error)
 	GetArtifact(ctx context.Context, id int64) (ArtifactRecord, error)
@@ -178,6 +183,7 @@ type Repository interface {
 	CreateSubmissionWithTask(ctx context.Context, arg SubmissionRecord, nextRunAt time.Time) (SubmissionRecord, JudgeTaskRecord, error)
 	GetSubmission(ctx context.Context, id int64) (SubmissionRecord, error)
 	ListSubmissions(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, int64, error)
+	ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error)
 	MarkSubmissionRunning(ctx context.Context, id int64) (SubmissionRecord, error)
 	MarkSubmissionQueued(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
 	MarkSubmissionSystemError(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
@@ -455,6 +461,40 @@ func (r *SQLRepository) ListSubmissions(ctx context.Context, input ListSubmissio
 		out = append(out, submissionRecord(row))
 	}
 	return out, total, nil
+}
+
+func (r *SQLRepository) ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error) {
+	summaries := make(map[int64]SubmissionListSummary, len(submissionIDs))
+	if len(submissionIDs) == 0 {
+		return summaries, nil
+	}
+	resultRows, err := r.q.ListSubmissionResultsBySubmissionIDs(ctx, submissionIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range resultRows {
+		result := submissionResultRecord(row)
+		summary := summaries[result.SubmissionID]
+		summary.Result = &result
+		summaries[result.SubmissionID] = summary
+	}
+	if !includeAttempts {
+		return summaries, nil
+	}
+	attemptRows, err := r.q.ListLatestJudgeAttemptsBySubmissionIDs(ctx, submissionIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range attemptRows {
+		attempt := judgeAttemptRecord(row)
+		if attempt.SubmissionID == nil {
+			continue
+		}
+		summary := summaries[*attempt.SubmissionID]
+		summary.LatestAttempt = &attempt
+		summaries[*attempt.SubmissionID] = summary
+	}
+	return summaries, nil
 }
 
 func (r *SQLRepository) MarkSubmissionRunning(ctx context.Context, id int64) (SubmissionRecord, error) {
