@@ -28,8 +28,10 @@ const (
 	StatusSystemErr   = "system_error"
 	StatusCanceled    = "canceled"
 
-	defaultRunShortWait = 3 * time.Second
-	defaultRunTimeout   = 2 * time.Minute
+	defaultRunShortWait       = 3 * time.Second
+	defaultRunTimeout         = 2 * time.Minute
+	defaultRunParallelism     = 1
+	defaultRunFinalizeTimeout = 5 * time.Second
 )
 
 type SourceObject struct {
@@ -85,6 +87,14 @@ type Service struct {
 	now           func() time.Time
 	runWait       time.Duration
 	runTimeout    time.Duration
+	runCtx        context.Context
+	runCancel     context.CancelFunc
+	runSlots      chan struct{}
+	runMu         sync.Mutex
+	runClosing    bool
+	runWG         sync.WaitGroup
+	runCloseOnce  sync.Once
+	runDone       chan struct{}
 }
 
 type ServiceOptions struct {
@@ -99,6 +109,8 @@ type ServiceOptions struct {
 	Now              func() time.Time
 	RunWait          time.Duration
 	RunTimeout       time.Duration
+	RunContext       context.Context
+	RunParallelism   int
 }
 
 type ContestSubmissionPolicy interface {
@@ -156,7 +168,42 @@ func NewService(options ServiceOptions) *Service {
 	if runTimeout <= 0 {
 		runTimeout = defaultRunTimeout
 	}
-	return &Service{repo: options.Repository, problems: options.ProblemReader, testcases: options.TestcaseResolver, queue: options.Queue, store: options.SourceStore, judge: options.Judge, contestPolicy: options.ContestPolicy, terminalHook: options.TerminalHook, now: now, runWait: runWait, runTimeout: runTimeout}
+	runParallelism := options.RunParallelism
+	if runParallelism <= 0 {
+		runParallelism = defaultRunParallelism
+	}
+	runParentCtx := options.RunContext
+	if runParentCtx == nil {
+		runParentCtx = context.Background()
+	}
+	runCtx, runCancel := context.WithCancel(runParentCtx)
+	service := &Service{
+		repo:          options.Repository,
+		problems:      options.ProblemReader,
+		testcases:     options.TestcaseResolver,
+		queue:         options.Queue,
+		store:         options.SourceStore,
+		judge:         options.Judge,
+		contestPolicy: options.ContestPolicy,
+		terminalHook:  options.TerminalHook,
+		now:           now,
+		runWait:       runWait,
+		runTimeout:    runTimeout,
+		runCtx:        runCtx,
+		runCancel:     runCancel,
+		runSlots:      make(chan struct{}, runParallelism),
+		runDone:       make(chan struct{}),
+	}
+	if done := runParentCtx.Done(); done != nil {
+		go func() {
+			select {
+			case <-done:
+				service.beginRunShutdown()
+			case <-service.runDone:
+			}
+		}()
+	}
+	return service
 }
 
 type CreateSubmissionInput struct {
@@ -259,6 +306,18 @@ func (s *Service) CreateRun(ctx context.Context, actor auth.Actor, input CreateR
 	if err != nil {
 		return CreateRunOutput{}, err
 	}
+	reservedExecution := false
+	if s.judge != nil {
+		if err := s.reserveRunExecution(); err != nil {
+			return CreateRunOutput{}, err
+		}
+		reservedExecution = true
+		defer func() {
+			if reservedExecution {
+				s.releaseRunExecution()
+			}
+		}()
+	}
 	object, err := s.store.Put(ctx, "run", actor.UserID, input.Source)
 	if err != nil {
 		return CreateRunOutput{}, err
@@ -296,6 +355,7 @@ func (s *Service) CreateRun(ctx context.Context, actor auth.Actor, input CreateR
 
 	done := make(chan RunRecord, 1)
 	go s.completeRunAsync(run.ID, language, input.Source, input.Stdin, done)
+	reservedExecution = false
 
 	timer := time.NewTimer(s.runWait)
 	defer timer.Stop()
@@ -310,7 +370,9 @@ func (s *Service) CreateRun(ctx context.Context, actor auth.Actor, input CreateR
 }
 
 func (s *Service) completeRunAsync(runID int64, language LanguageRecord, source []byte, stdin string, done chan<- RunRecord) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.runTimeout)
+	defer s.releaseRunExecution()
+
+	ctx, cancel := context.WithTimeout(s.runCtx, s.runTimeout)
 	defer cancel()
 
 	result, err := s.judge.Judge(ctx, judge.Request{
@@ -322,7 +384,9 @@ func (s *Service) completeRunAsync(runID int64, language LanguageRecord, source 
 	if err != nil {
 		result = judge.Result{Verdict: judge.VerdictSystemError, ErrorMessage: err.Error(), JudgedAt: s.now()}
 	}
-	run, err := s.repo.UpdateRunStatus(ctx, runID, result)
+	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), defaultRunFinalizeTimeout)
+	defer finalizeCancel()
+	run, err := s.repo.UpdateRunStatus(finalizeCtx, runID, result)
 	if err != nil {
 		return
 	}
@@ -330,6 +394,50 @@ func (s *Service) completeRunAsync(runID int64, language LanguageRecord, source 
 	case done <- run:
 	default:
 	}
+}
+
+// Close stops accepting direct run executions and waits for admitted runs to finish.
+func (s *Service) Close(ctx context.Context) error {
+	s.beginRunShutdown()
+	select {
+	case <-s.runDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Service) beginRunShutdown() {
+	s.runCloseOnce.Do(func() {
+		s.runMu.Lock()
+		s.runClosing = true
+		s.runCancel()
+		s.runMu.Unlock()
+		go func() {
+			s.runWG.Wait()
+			close(s.runDone)
+		}()
+	})
+}
+
+func (s *Service) reserveRunExecution() error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if s.runClosing || s.runCtx.Err() != nil {
+		return apperror.ServiceUnavailable("run execution is shutting down")
+	}
+	select {
+	case s.runSlots <- struct{}{}:
+		s.runWG.Add(1)
+		return nil
+	default:
+		return apperror.ServiceUnavailable("run execution capacity exhausted")
+	}
+}
+
+func (s *Service) releaseRunExecution() {
+	<-s.runSlots
+	s.runWG.Done()
 }
 
 func (s *Service) GetSubmission(ctx context.Context, actor auth.Actor, id int64) (SubmissionView, error) {

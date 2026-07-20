@@ -84,6 +84,9 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		Judge:            newJudgeEngine(cfg.Judge),
 		ContestPolicy:    contestService,
 		TerminalHook:     contestService,
+		RunContext:       ctx,
+		RunParallelism:   cfg.Judge.RunParallelism,
+		RunTimeout:       cfg.Judge.Timeout,
 	})
 	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemService, contests: contestService}, nil, metrics)
 
@@ -110,7 +113,16 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		ReadTimeout:  cfg.HTTP.ReadTimeout,
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
-	return runHTTPServer(ctx, server, cfg.Worker.ShutdownTimeout)
+	runErr := runHTTPServer(ctx, server, cfg.Worker.ShutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Worker.ShutdownTimeout)
+	defer cancel()
+	if closeErr := submissionService.Close(shutdownCtx); closeErr != nil {
+		if runErr == nil {
+			return closeErr
+		}
+		logger.ErrorContext(context.Background(), "shutdown submission run executions", "error", closeErr)
+	}
+	return runErr
 }
 
 type rejudgeAuthorizationPolicy struct {

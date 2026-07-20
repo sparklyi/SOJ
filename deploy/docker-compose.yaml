@@ -173,6 +173,7 @@ services:
       SOJ_STORAGE_PATH_STYLE: "true"
       SOJ_JWT_SECRET: local-dev-secret-change-me
       SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
+      SOJ_JUDGE_RUN_PARALLELISM: ${SOJ_JUDGE_RUN_PARALLELISM:-1}
     depends_on:
       migrate:
         condition: service_completed_successfully
