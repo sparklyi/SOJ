@@ -171,6 +171,11 @@ type ListSubmissionsInput struct {
 	Limit     int32
 }
 
+type SubmissionCursor struct {
+	SubmittedAt time.Time
+	ID          int64
+}
+
 type SubmissionListSummary struct {
 	Result        *SubmissionResultRecord
 	LatestAttempt *JudgeAttemptRecord
@@ -183,6 +188,7 @@ type Repository interface {
 	CreateSubmissionWithTask(ctx context.Context, arg SubmissionRecord, nextRunAt time.Time) (SubmissionRecord, JudgeTaskRecord, error)
 	GetSubmission(ctx context.Context, id int64) (SubmissionRecord, error)
 	ListSubmissions(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, int64, error)
+	ListSubmissionsByUserBefore(ctx context.Context, userID int64, cursor SubmissionCursor, limit int32) ([]SubmissionRecord, error)
 	ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error)
 	MarkSubmissionRunning(ctx context.Context, id int64) (SubmissionRecord, error)
 	MarkSubmissionQueued(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
@@ -461,6 +467,23 @@ func (r *SQLRepository) ListSubmissions(ctx context.Context, input ListSubmissio
 		out = append(out, submissionRecord(row))
 	}
 	return out, total, nil
+}
+
+func (r *SQLRepository) ListSubmissionsByUserBefore(ctx context.Context, userID int64, cursor SubmissionCursor, limit int32) ([]SubmissionRecord, error) {
+	rows, err := r.q.ListSubmissionsByUserBefore(ctx, db.ListSubmissionsByUserBeforeParams{
+		UserID:            userID,
+		BeforeSubmittedAt: pgtype.Timestamptz{Time: cursor.SubmittedAt, Valid: true},
+		BeforeID:          cursor.ID,
+		Limit:             limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SubmissionRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, submissionRecord(row))
+	}
+	return out, nil
 }
 
 func (r *SQLRepository) ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error) {

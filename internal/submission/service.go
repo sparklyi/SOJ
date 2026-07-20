@@ -227,6 +227,16 @@ type SubmissionView struct {
 	Visibility       string
 }
 
+type ListOwnSubmissionsCursorInput struct {
+	Cursor *SubmissionCursor
+	Limit  int32
+}
+
+type SubmissionCursorPage struct {
+	Items      []SubmissionView
+	NextCursor *SubmissionCursor
+}
+
 func (s *Service) CreateSubmission(ctx context.Context, actor auth.Actor, input CreateSubmissionInput) (CreateSubmissionOutput, error) {
 	if !actor.Authenticated() {
 		return CreateSubmissionOutput{}, apperror.Unauthorized("auth_required", "authentication required")
@@ -468,9 +478,54 @@ func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input L
 	if err != nil {
 		return nil, 0, err
 	}
-	visibilities, err := s.submissionListVisibilities(ctx, actor, records)
+	views, err := s.submissionListViews(ctx, actor, records)
 	if err != nil {
 		return nil, 0, err
+	}
+	return views, total, nil
+}
+
+func (s *Service) ListOwnSubmissionsByCursor(ctx context.Context, actor auth.Actor, input ListOwnSubmissionsCursorInput) (SubmissionCursorPage, error) {
+	if !actor.Authenticated() {
+		return SubmissionCursorPage{}, apperror.Unauthorized("auth_required", "authentication required")
+	}
+	if input.Limit <= 0 || input.Limit > 100 {
+		input.Limit = 20
+	}
+	cursor := SubmissionCursor{
+		SubmittedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC),
+		ID:          1<<63 - 1,
+	}
+	if input.Cursor != nil {
+		if input.Cursor.ID <= 0 || input.Cursor.SubmittedAt.IsZero() {
+			return SubmissionCursorPage{}, apperror.BadRequest("invalid_cursor", "invalid submission cursor")
+		}
+		cursor = SubmissionCursor{SubmittedAt: input.Cursor.SubmittedAt.UTC(), ID: input.Cursor.ID}
+	}
+	records, err := s.repo.ListSubmissionsByUserBefore(ctx, actor.UserID, cursor, input.Limit+1)
+	if err != nil {
+		return SubmissionCursorPage{}, err
+	}
+	hasMore := len(records) > int(input.Limit)
+	if hasMore {
+		records = records[:input.Limit]
+	}
+	views, err := s.submissionListViews(ctx, actor, records)
+	if err != nil {
+		return SubmissionCursorPage{}, err
+	}
+	page := SubmissionCursorPage{Items: views}
+	if hasMore {
+		last := records[len(records)-1]
+		page.NextCursor = &SubmissionCursor{SubmittedAt: last.SubmittedAt, ID: last.ID}
+	}
+	return page, nil
+}
+
+func (s *Service) submissionListViews(ctx context.Context, actor auth.Actor, records []SubmissionRecord) ([]SubmissionView, error) {
+	visibilities, err := s.submissionListVisibilities(ctx, actor, records)
+	if err != nil {
+		return nil, err
 	}
 	submissionIDs := make([]int64, 0, len(records))
 	includeAttempts := false
@@ -483,7 +538,7 @@ func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input L
 	}
 	summaries, err := s.repo.ListSubmissionSummaries(ctx, submissionIDs, includeAttempts)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	views := make([]SubmissionView, 0, len(records))
 	for _, record := range records {
@@ -499,7 +554,7 @@ func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input L
 		}
 		views = append(views, view)
 	}
-	return views, total, nil
+	return views, nil
 }
 
 func (s *Service) GetRun(ctx context.Context, actor auth.Actor, id int64) (RunRecord, error) {

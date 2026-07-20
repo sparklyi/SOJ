@@ -790,8 +790,8 @@ type GetProblemStatsRow struct {
 	StatusCounts        interface{} `db:"status_counts" json:"status_counts"`
 }
 
-func (q *Queries) GetProblemStats(ctx context.Context, id int64) (GetProblemStatsRow, error) {
-	row := q.db.QueryRow(ctx, getProblemStats, id)
+func (q *Queries) GetProblemStats(ctx context.Context, problemID int64) (GetProblemStatsRow, error) {
+	row := q.db.QueryRow(ctx, getProblemStats, problemID)
 	var i GetProblemStatsRow
 	err := row.Scan(
 		&i.ProblemID,

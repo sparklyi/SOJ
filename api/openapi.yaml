@@ -486,6 +486,29 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/submissions/mine:
+    get:
+      tags: [Submissions]
+      operationId: listOwnSubmissionsByCursor
+      summary: List the caller's submissions with a cursor
+      x-owner: WP4 Submission/Run
+      x-auth: user
+      parameters:
+        - $ref: "#/components/parameters/PageSize"
+        - name: cursor
+          in: query
+          description: Opaque cursor returned as next_cursor by the previous response.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cursor page of the caller's submissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionCursorPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/submissions/{id}:
     get:
       tags: [Submissions]
@@ -1786,6 +1809,14 @@ components:
           required: [items]
           properties:
             items: { type: array, items: { $ref: "#/components/schemas/SubmissionResponse" } }
+    SubmissionCursorPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/SubmissionResponse" } }
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page. Omitted when no more items remain.
     ContestPage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -1836,6 +1867,9 @@ components:
     SubmissionPageEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/SubmissionPage" } }
+    SubmissionCursorPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/SubmissionCursorPage" } }
     RejudgeBatchEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/RejudgeBatch" } }

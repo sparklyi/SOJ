@@ -2025,6 +2025,66 @@ func (q *Queries) ListSubmissions(ctx context.Context, arg ListSubmissionsParams
 	return items, nil
 }
 
+const listSubmissionsByUserBefore = `-- name: ListSubmissionsByUserBefore :many
+SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at
+FROM submissions
+WHERE user_id = $1
+  AND (submitted_at, id) < (
+      $2::timestamptz,
+      $3::bigint
+  )
+ORDER BY submitted_at DESC, id DESC
+LIMIT $4
+`
+
+type ListSubmissionsByUserBeforeParams struct {
+	UserID            int64              `db:"user_id" json:"user_id"`
+	BeforeSubmittedAt pgtype.Timestamptz `db:"before_submitted_at" json:"before_submitted_at"`
+	BeforeID          int64              `db:"before_id" json:"before_id"`
+	Limit             int32              `db:"limit" json:"limit"`
+}
+
+func (q *Queries) ListSubmissionsByUserBefore(ctx context.Context, arg ListSubmissionsByUserBeforeParams) ([]Submission, error) {
+	rows, err := q.db.Query(ctx, listSubmissionsByUserBefore,
+		arg.UserID,
+		arg.BeforeSubmittedAt,
+		arg.BeforeID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Submission
+	for rows.Next() {
+		var i Submission
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ProblemID,
+			&i.ContestID,
+			&i.LanguageID,
+			&i.TestcaseSetID,
+			&i.Status,
+			&i.SourceArtifactID,
+			&i.TimeMs,
+			&i.MemoryKb,
+			&i.Score,
+			&i.ErrorMessage,
+			&i.SubmittedAt,
+			&i.JudgedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockContestProblemResultProjection = `-- name: LockContestProblemResultProjection :one
 SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
 FROM contest_problem_results
