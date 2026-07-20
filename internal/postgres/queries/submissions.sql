@@ -285,6 +285,17 @@ WHERE (sqlc.narg('user_id')::bigint IS NULL OR user_id = sqlc.narg('user_id')::b
   AND (sqlc.narg('contest_id')::bigint IS NULL OR contest_id = sqlc.narg('contest_id')::bigint)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
 
+-- name: ListSubmissionsByUserBefore :many
+SELECT *
+FROM submissions
+WHERE user_id = sqlc.arg('user_id')
+  AND (submitted_at, id) < (
+      sqlc.arg('before_submitted_at')::timestamptz,
+      sqlc.arg('before_id')::bigint
+  )
+ORDER BY submitted_at DESC, id DESC
+LIMIT sqlc.arg('limit');
+
 -- name: EnsureContestProblemResultProjection :exec
 INSERT INTO contest_problem_results (
     contest_id,

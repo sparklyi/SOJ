@@ -13,6 +13,8 @@ func NewModule(handler *Handler) *Module {
 func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	group.POST("/submissions", m.handler.CreateSubmission)
 	group.GET("/submissions", m.handler.ListSubmissions)
+	// Register static routes before the submission ID parameter route.
+	group.GET("/submissions/mine", m.handler.ListOwnSubmissionsByCursor)
 	group.GET("/submissions/:id", m.handler.GetSubmission)
 	group.POST("/runs", m.handler.CreateRun)
 	group.GET("/runs/:id", m.handler.GetRun)
