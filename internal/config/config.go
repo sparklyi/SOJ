@@ -62,6 +62,7 @@ type JudgeConfig struct {
 	Endpoint       string
 	Timeout        time.Duration
 	CleanupTimeout time.Duration
+	RunParallelism int
 }
 
 type AuthConfig struct {
@@ -120,6 +121,7 @@ func Load() (Config, error) {
 			Endpoint:       env("SOJ_JUDGE_ENDPOINT", "agent://local"),
 			Timeout:        30 * time.Second,
 			CleanupTimeout: sandbox.DefaultCleanupTimeout,
+			RunParallelism: 1,
 		},
 		Auth: AuthConfig{
 			JWTSecret:       env("SOJ_JWT_SECRET", ""),
@@ -168,6 +170,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Judge.CleanupTimeout, err = envDuration("SOJ_JUDGE_CLEANUP_TIMEOUT", cfg.Judge.CleanupTimeout); err != nil {
+		return Config{}, err
+	}
+	if cfg.Judge.RunParallelism, err = envPositiveInt("SOJ_JUDGE_RUN_PARALLELISM", cfg.Judge.RunParallelism); err != nil {
 		return Config{}, err
 	}
 	if cfg.Auth.AccessTokenTTL, err = envDuration("SOJ_ACCESS_TOKEN_TTL", cfg.Auth.AccessTokenTTL); err != nil {
@@ -227,6 +232,21 @@ func envPositiveInt64(key string, fallback int64) (int64, error) {
 		return fallback, nil
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("%s: must be greater than zero", key)
+	}
+	return parsed, nil
+}
+
+func envPositiveInt(key string, fallback int) (int, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}

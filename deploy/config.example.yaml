@@ -29,6 +29,7 @@ judge:
   sandbox_backend: "fake"
   timeout: "30s"
   cleanup_timeout: "5s"
+  run_parallelism: 1
 
 auth:
   jwt_secret: "replace-with-env-secret"

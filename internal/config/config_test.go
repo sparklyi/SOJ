@@ -18,6 +18,7 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("SOJ_STORAGE_PATH_STYLE", "true")
 	t.Setenv("SOJ_JUDGE_TIMEOUT", "12s")
 	t.Setenv("SOJ_JUDGE_CLEANUP_TIMEOUT", "7s")
+	t.Setenv("SOJ_JUDGE_RUN_PARALLELISM", "3")
 	t.Setenv("SOJ_JWT_SECRET", "test-secret")
 
 	cfg, err := Load()
@@ -49,6 +50,9 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	if cfg.Judge.CleanupTimeout != 7*time.Second {
 		t.Fatalf("Judge.CleanupTimeout = %v", cfg.Judge.CleanupTimeout)
 	}
+	if cfg.Judge.RunParallelism != 3 {
+		t.Fatalf("Judge.RunParallelism = %d, want 3", cfg.Judge.RunParallelism)
+	}
 	if cfg.Auth.JWTSecret != "test-secret" {
 		t.Fatal("Auth.JWTSecret was not loaded from env")
 	}
@@ -79,6 +83,34 @@ func TestLoadDefaultsJudgeEndpointToAgentProtocol(t *testing.T) {
 	}
 	if cfg.Judge.Endpoint != "agent://local" {
 		t.Fatalf("Judge.Endpoint = %q, want agent://local", cfg.Judge.Endpoint)
+	}
+}
+
+func TestLoadDefaultsJudgeRunParallelism(t *testing.T) {
+	t.Setenv("SOJ_JUDGE_RUN_PARALLELISM", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Judge.RunParallelism != 1 {
+		t.Fatalf("Judge.RunParallelism = %d, want 1", cfg.Judge.RunParallelism)
+	}
+}
+
+func TestLoadRejectsInvalidJudgeRunParallelism(t *testing.T) {
+	for _, value := range []string{"0", "-1", "not-a-number"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("SOJ_JUDGE_RUN_PARALLELISM", value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want invalid parallelism error")
+			}
+			if !strings.HasPrefix(err.Error(), "SOJ_JUDGE_RUN_PARALLELISM") {
+				t.Fatalf("Load() error = %v, want SOJ_JUDGE_RUN_PARALLELISM prefix", err)
+			}
+		})
 	}
 }
 
