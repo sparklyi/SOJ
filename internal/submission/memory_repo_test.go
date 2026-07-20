@@ -3,6 +3,7 @@ package submission
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -12,25 +13,27 @@ import (
 )
 
 type memoryRepo struct {
-	mu                      sync.RWMutex
-	nextID                  int64
-	artifacts               map[int64]ArtifactRecord
-	submissions             map[int64]SubmissionRecord
-	runs                    map[int64]RunRecord
-	tasks                   map[int64]JudgeTaskRecord
-	languages               map[int64]LanguageRecord
-	attempts                map[int64]JudgeAttemptRecord
-	attemptKeys             map[string]int64
-	cases                   map[int64][]JudgeCaseResultRecord
-	results                 map[int64]SubmissionResultRecord
-	processedEvents         map[string]bool
-	submissionUpdates       int
-	submissionSummaryLoads  int
-	submissionResultReads   int
-	latestJudgeAttemptReads int
-	judgeCaseResultReads    int
-	events                  []string
-	failCreateJudgeTask     error
+	mu                        sync.RWMutex
+	nextID                    int64
+	artifacts                 map[int64]ArtifactRecord
+	submissions               map[int64]SubmissionRecord
+	runs                      map[int64]RunRecord
+	tasks                     map[int64]JudgeTaskRecord
+	languages                 map[int64]LanguageRecord
+	attempts                  map[int64]JudgeAttemptRecord
+	attemptKeys               map[string]int64
+	cases                     map[int64][]JudgeCaseResultRecord
+	results                   map[int64]SubmissionResultRecord
+	processedEvents           map[string]bool
+	submissionUpdates         int
+	submissionSummaryLoads    int
+	submissionResultReads     int
+	latestJudgeAttemptReads   int
+	judgeCaseResultReads      int
+	listSubmissionCalls       int
+	cursorSubmissionListCalls int
+	events                    []string
+	failCreateJudgeTask       error
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -86,6 +89,7 @@ func (r *memoryRepo) GetSubmission(ctx context.Context, id int64) (SubmissionRec
 	return r.submissions[id], nil
 }
 func (r *memoryRepo) ListSubmissions(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, int64, error) {
+	r.listSubmissionCalls++
 	var rows []SubmissionRecord
 	for _, row := range r.submissions {
 		if input.UserID != nil && row.UserID != *input.UserID {
@@ -105,6 +109,30 @@ func (r *memoryRepo) ListSubmissions(ctx context.Context, input ListSubmissionsI
 		rows = append(rows, row)
 	}
 	return rows, int64(len(rows)), nil
+}
+
+func (r *memoryRepo) ListSubmissionsByUserBefore(ctx context.Context, userID int64, cursor SubmissionCursor, limit int32) ([]SubmissionRecord, error) {
+	r.cursorSubmissionListCalls++
+	rows := make([]SubmissionRecord, 0)
+	for _, row := range r.submissions {
+		if row.UserID != userID {
+			continue
+		}
+		if row.SubmittedAt.After(cursor.SubmittedAt) || (row.SubmittedAt.Equal(cursor.SubmittedAt) && row.ID >= cursor.ID) {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].SubmittedAt.Equal(rows[j].SubmittedAt) {
+			return rows[i].ID > rows[j].ID
+		}
+		return rows[i].SubmittedAt.After(rows[j].SubmittedAt)
+	})
+	if len(rows) > int(limit) {
+		rows = rows[:limit]
+	}
+	return rows, nil
 }
 func (r *memoryRepo) ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error) {
 	r.submissionSummaryLoads++

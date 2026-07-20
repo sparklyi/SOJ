@@ -1,7 +1,9 @@
 package submission
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -163,6 +165,37 @@ func (h *Handler) ListSubmissions(c *gin.Context) {
 		return
 	}
 	httpapi.OK(c, gin.H{"items": submissionResponses(items), "total": total, "page": page, "page_size": pageSize})
+}
+
+func (h *Handler) ListOwnSubmissionsByCursor(c *gin.Context) {
+	pageSize, ok := pageSizeQuery(c)
+	if !ok {
+		return
+	}
+	input := ListOwnSubmissionsCursorInput{Limit: pageSize}
+	if raw := c.Query("cursor"); raw != "" {
+		cursor, err := decodeSubmissionCursor(raw)
+		if err != nil {
+			httpapi.Error(c, apperror.BadRequest("invalid_cursor", "cursor is invalid"))
+			return
+		}
+		input.Cursor = &cursor
+	}
+	page, err := h.service.ListOwnSubmissionsByCursor(c.Request.Context(), actorFromContext(c), input)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	data := gin.H{"items": submissionResponses(page.Items)}
+	if page.NextCursor != nil {
+		token, err := encodeSubmissionCursor(*page.NextCursor)
+		if err != nil {
+			httpapi.Error(c, apperror.Internal())
+			return
+		}
+		data["next_cursor"] = token
+	}
+	httpapi.OK(c, data)
 }
 
 func (h *Handler) GetSubmission(c *gin.Context) {
@@ -520,16 +553,52 @@ func pageQuery(c *gin.Context) (int32, int32, bool) {
 		}
 		page = int32(parsed)
 	}
+	pageSize, ok := pageSizeQuery(c)
+	if !ok {
+		return 0, 0, false
+	}
+	return page, pageSize, true
+}
+
+func pageSizeQuery(c *gin.Context) (int32, bool) {
 	pageSize := int32(20)
 	if raw := c.Query("page_size"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 || parsed > 100 {
 			httpapi.Error(c, apperror.BadRequest("invalid_page_size", "page_size must be between 1 and 100"))
-			return 0, 0, false
+			return 0, false
 		}
 		pageSize = int32(parsed)
 	}
-	return page, pageSize, true
+	return pageSize, true
+}
+
+type submissionCursorPayload struct {
+	SubmittedAt time.Time `json:"submitted_at"`
+	ID          int64     `json:"id"`
+}
+
+func encodeSubmissionCursor(cursor SubmissionCursor) (string, error) {
+	payload, err := json.Marshal(submissionCursorPayload{SubmittedAt: cursor.SubmittedAt.UTC(), ID: cursor.ID})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeSubmissionCursor(raw string) (SubmissionCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return SubmissionCursor{}, err
+	}
+	var decoded submissionCursorPayload
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return SubmissionCursor{}, err
+	}
+	if decoded.ID <= 0 || decoded.SubmittedAt.IsZero() {
+		return SubmissionCursor{}, errors.New("invalid submission cursor")
+	}
+	return SubmissionCursor{SubmittedAt: decoded.SubmittedAt.UTC(), ID: decoded.ID}, nil
 }
 
 func actorFromContext(c *gin.Context) auth.Actor {
