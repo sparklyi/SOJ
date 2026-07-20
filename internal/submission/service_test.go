@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
+	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
 	"SOJ/internal/httpapi"
 	"SOJ/internal/judge"
@@ -322,6 +324,152 @@ func TestCreateRunReturnsRunningWhenShortWaitExpiresAndCompletesAsync(t *testing
 	}
 }
 
+func TestCreateRunRejectsWhenExecutionCapacityIsExhausted(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	engine := newBlockingRunJudge()
+	defer engine.unblock()
+	service := NewService(ServiceOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   NewMemorySourceStore(),
+		Judge:         engine,
+		RunWait:       time.Millisecond,
+		RunTimeout:    time.Second,
+	})
+
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	if err != nil {
+		t.Fatalf("first CreateRun returned error: %v", err)
+	}
+	if first.Run.Status != StatusRunning {
+		t.Fatalf("first run status=%s, want %s", first.Run.Status, StatusRunning)
+	}
+	engine.waitStarted(t)
+
+	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	appErr, ok := apperror.From(err)
+	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("second CreateRun error=%v, want service unavailable", err)
+	}
+	if len(repo.runs) != 1 || len(repo.artifacts) != 1 {
+		t.Fatalf("capacity rejection created runs=%d artifacts=%d, want 1/1", len(repo.runs), len(repo.artifacts))
+	}
+
+	engine.unblock()
+	waitForRunStatus(t, repo, first.Run.ID, StatusAccepted)
+}
+
+func TestHandlerCreateRunReturnsServiceUnavailableWhenExecutionCapacityIsExhausted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newMemoryRepo()
+	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	engine := newBlockingRunJudge()
+	defer engine.unblock()
+	service := NewService(ServiceOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   NewMemorySourceStore(),
+		Judge:         engine,
+		RunWait:       time.Millisecond,
+		RunTimeout:    time.Second,
+	})
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	if err != nil {
+		t.Fatalf("first CreateRun returned error: %v", err)
+	}
+	engine.waitStarted(t)
+
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(service))}})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runs", bytes.NewBufferString(`{"problem_id":1,"language_id":71,"source_code":"package main"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", "5")
+	req.Header.Set("X-User-Role", "user")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s, want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
+	}
+	if len(repo.runs) != 1 || len(repo.artifacts) != 1 {
+		t.Fatalf("capacity rejection created runs=%d artifacts=%d, want 1/1", len(repo.runs), len(repo.artifacts))
+	}
+
+	engine.unblock()
+	waitForRunStatus(t, repo, first.Run.ID, StatusAccepted)
+}
+
+func TestServiceCloseCancelsActiveRunAndRejectsNewRuns(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	engine := newBlockingRunJudge()
+	defer engine.unblock()
+	service := NewService(ServiceOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   NewMemorySourceStore(),
+		Judge:         engine,
+		RunWait:       time.Millisecond,
+		RunTimeout:    time.Minute,
+	})
+
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	if err != nil {
+		t.Fatalf("first CreateRun returned error: %v", err)
+	}
+	engine.waitStarted(t)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := service.Close(shutdownCtx); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	completed := waitForRunStatus(t, repo, first.Run.ID, StatusSystemErr)
+	if completed.ErrorMessage == nil || *completed.ErrorMessage != context.Canceled.Error() {
+		t.Fatalf("completed error message=%v, want %q", completed.ErrorMessage, context.Canceled.Error())
+	}
+	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	appErr, ok := apperror.From(err)
+	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("CreateRun after Close error=%v, want service unavailable", err)
+	}
+	if len(repo.runs) != 1 || len(repo.artifacts) != 1 {
+		t.Fatalf("closed service created runs=%d artifacts=%d, want 1/1", len(repo.runs), len(repo.artifacts))
+	}
+}
+
+func TestCreateRunRejectsWhenRunContextIsCanceled(t *testing.T) {
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	repo := newMemoryRepo()
+	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	service := NewService(ServiceOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   NewMemorySourceStore(),
+		Judge:         judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted}),
+		RunContext:    runCtx,
+	})
+
+	cancelRun()
+	_, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	appErr, ok := apperror.From(err)
+	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
+		t.Fatalf("CreateRun after run context cancellation error=%v, want service unavailable", err)
+	}
+	if len(repo.runs) != 0 || len(repo.artifacts) != 0 {
+		t.Fatalf("canceled run context created runs=%d artifacts=%d, want 0/0", len(repo.runs), len(repo.artifacts))
+	}
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
+	defer cancelShutdown()
+	if err := service.Close(shutdownCtx); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+}
+
 func waitForRunStatus(t *testing.T, repo *memoryRepo, runID int64, status string) RunRecord {
 	t.Helper()
 
@@ -339,6 +487,46 @@ func waitForRunStatus(t *testing.T, repo *memoryRepo, runID int64, status string
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+type blockingRunJudge struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingRunJudge() *blockingRunJudge {
+	return &blockingRunJudge{started: make(chan struct{}, 2), release: make(chan struct{})}
+}
+
+func (e *blockingRunJudge) Judge(ctx context.Context, request judge.Request) (judge.Result, error) {
+	select {
+	case e.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-e.release:
+		return judge.Result{Verdict: judge.VerdictAccepted}, nil
+	case <-ctx.Done():
+		return judge.Result{}, ctx.Err()
+	}
+}
+
+func (e *blockingRunJudge) Languages(ctx context.Context) ([]judge.Language, error) {
+	return nil, nil
+}
+
+func (e *blockingRunJudge) waitStarted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-e.started:
+	case <-time.After(time.Second):
+		t.Fatal("judge did not start")
+	}
+}
+
+func (e *blockingRunJudge) unblock() {
+	e.once.Do(func() { close(e.release) })
 }
 
 func TestReconcilerResetsStaleJudgeTasks(t *testing.T) {
