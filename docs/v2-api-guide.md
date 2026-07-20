@@ -97,9 +97,12 @@ Submissions and runs:
 
 - `POST /api/v1/submissions`
 - `GET /api/v1/submissions`
+- `GET /api/v1/submissions/mine`
 - `GET /api/v1/submissions/{id}`
 - `POST /api/v1/runs`
 - `GET /api/v1/runs/{id}`
+
+`GET /api/v1/submissions/mine` uses opaque cursor pagination for a caller's own history. Send the optional `cursor` returned as `next_cursor` with a `page_size` of at most 100. Its response contains `items` and an optional `next_cursor`, rather than a page number or `total`; use it for long histories to avoid deep offsets and a separate count query.
 
 Languages:
 

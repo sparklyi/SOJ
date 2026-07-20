@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -793,6 +794,141 @@ func TestListSubmissionsBuildsBatchedSummariesWithoutCaseDetails(t *testing.T) {
 	if policy.batchCalls != 1 || policy.singleCalls != 0 {
 		t.Fatalf("contest visibility calls: batch=%d single=%d, want 1/0", policy.batchCalls, policy.singleCalls)
 	}
+}
+
+func TestListOwnSubmissionsByCursorUsesKeysetPagination(t *testing.T) {
+	repo := newMemoryRepo()
+	newest := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	older := newest.Add(-time.Minute)
+	repo.submissions[4] = SubmissionRecord{ID: 4, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest}
+	repo.submissions[3] = SubmissionRecord{ID: 3, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest}
+	repo.submissions[2] = SubmissionRecord{ID: 2, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: older}
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 6, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest.Add(time.Minute)}
+	service := NewService(ServiceOptions{Repository: repo})
+	actor := auth.Actor{UserID: 5, Role: auth.RoleUser}
+
+	first, err := service.ListOwnSubmissionsByCursor(t.Context(), actor, ListOwnSubmissionsCursorInput{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListOwnSubmissionsByCursor first page: %v", err)
+	}
+	if got := submissionViewIDs(first.Items); !slices.Equal(got, []int64{4, 3}) {
+		t.Fatalf("first cursor page IDs=%v, want [4 3]", got)
+	}
+	if first.NextCursor == nil || !first.NextCursor.SubmittedAt.Equal(newest) || first.NextCursor.ID != 3 {
+		t.Fatalf("first next cursor=%+v, want newest submission ID 3", first.NextCursor)
+	}
+	if repo.listSubmissionCalls != 0 || repo.cursorSubmissionListCalls != 1 {
+		t.Fatalf("list calls page=%d cursor=%d, want 0/1", repo.listSubmissionCalls, repo.cursorSubmissionListCalls)
+	}
+
+	second, err := service.ListOwnSubmissionsByCursor(t.Context(), actor, ListOwnSubmissionsCursorInput{Cursor: first.NextCursor, Limit: 2})
+	if err != nil {
+		t.Fatalf("ListOwnSubmissionsByCursor second page: %v", err)
+	}
+	if got := submissionViewIDs(second.Items); !slices.Equal(got, []int64{2}) {
+		t.Fatalf("second cursor page IDs=%v, want [2]", got)
+	}
+	if second.NextCursor != nil {
+		t.Fatalf("second next cursor=%+v, want nil", second.NextCursor)
+	}
+}
+
+func TestHandlerListsOwnSubmissionsByCursor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newMemoryRepo()
+	newest := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	repo.submissions[3] = SubmissionRecord{ID: 3, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest}
+	repo.submissions[2] = SubmissionRecord{ID: 2, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest.Add(-time.Minute)}
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest.Add(-2 * time.Minute)}
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Repository: repo})))}})
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/mine?page_size=2", nil)
+	firstReq.Header.Set("X-User-ID", "5")
+	firstReq.Header.Set("X-User-Role", "user")
+	firstRec := httptest.NewRecorder()
+	router.ServeHTTP(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("first cursor status=%d body=%s", firstRec.Code, firstRec.Body.String())
+	}
+	var first struct {
+		Data struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+			NextCursor string          `json:"next_cursor"`
+			Total      json.RawMessage `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(firstRec.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first cursor page: %v", err)
+	}
+	if len(first.Data.Items) != 2 {
+		t.Fatalf("first cursor item count=%d, want 2", len(first.Data.Items))
+	}
+	if got := []int64{first.Data.Items[0].ID, first.Data.Items[1].ID}; !slices.Equal(got, []int64{3, 2}) {
+		t.Fatalf("first cursor page IDs=%v, want [3 2]", got)
+	}
+	if first.Data.NextCursor == "" {
+		t.Fatal("first cursor page missing next_cursor")
+	}
+	if len(first.Data.Total) != 0 {
+		t.Fatalf("cursor page unexpectedly includes total=%s", first.Data.Total)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/mine?cursor="+first.Data.NextCursor, nil)
+	secondReq.Header.Set("X-User-ID", "5")
+	secondReq.Header.Set("X-User-Role", "user")
+	secondRec := httptest.NewRecorder()
+	router.ServeHTTP(secondRec, secondReq)
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("second cursor status=%d body=%s", secondRec.Code, secondRec.Body.String())
+	}
+	var second struct {
+		Data struct {
+			Items []struct {
+				ID int64 `json:"id"`
+			} `json:"items"`
+			NextCursor string `json:"next_cursor"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(secondRec.Body.Bytes(), &second); err != nil {
+		t.Fatalf("decode second cursor page: %v", err)
+	}
+	if len(second.Data.Items) != 1 {
+		t.Fatalf("second cursor item count=%d, want 1", len(second.Data.Items))
+	}
+	if got := []int64{second.Data.Items[0].ID}; !slices.Equal(got, []int64{1}) {
+		t.Fatalf("second cursor page IDs=%v, want [1]", got)
+	}
+	if second.Data.NextCursor != "" {
+		t.Fatalf("second cursor next=%q, want empty", second.Data.NextCursor)
+	}
+	if repo.listSubmissionCalls != 0 || repo.cursorSubmissionListCalls != 2 {
+		t.Fatalf("list calls page=%d cursor=%d, want 0/2", repo.listSubmissionCalls, repo.cursorSubmissionListCalls)
+	}
+}
+
+func TestHandlerRejectsInvalidOwnSubmissionCursor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Repository: newMemoryRepo()})))}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/mine?cursor=invalid", nil)
+	req.Header.Set("X-User-ID", "5")
+	req.Header.Set("X-User-Role", "user")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cursor status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func submissionViewIDs(views []SubmissionView) []int64 {
+	ids := make([]int64, 0, len(views))
+	for _, view := range views {
+		ids = append(ids, view.Submission.ID)
+	}
+	return ids
 }
 
 func TestHandlerListsSubmissionSummariesWithoutCaseDetails(t *testing.T) {
