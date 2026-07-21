@@ -89,6 +89,51 @@ func (h *Handler) listProblems(c *gin.Context) {
 	httpapi.OK(c, list)
 }
 
+func (h *Handler) listProblemsByCursor(c *gin.Context) {
+	pageSize, ok := int32Query(c, "page_size", 20)
+	if !ok || pageSize <= 0 || pageSize > 100 {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "page_size must be between 1 and 100"))
+		return
+	}
+	mine, ok := boolQuery(c, "mine", false)
+	if !ok {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "mine must be a boolean"))
+		return
+	}
+	filter := ListProblemsFilter{
+		Difficulty: c.Query("difficulty"),
+		Status:     c.Query("status"),
+		Visibility: c.Query("visibility"),
+		Tag:        c.Query("tag"),
+		Keyword:    c.Query("keyword"),
+		PageSize:   pageSize,
+		Mine:       mine,
+	}
+	if raw, ok := c.GetQuery("cursor"); ok {
+		var cursor ProblemCursor
+		if err := httpapi.DecodeCursor(raw, &cursor); err != nil {
+			httpapi.Error(c, apperror.BadRequest("invalid_cursor", "cursor is invalid"))
+			return
+		}
+		filter.Cursor = &cursor
+	}
+	page, err := h.service.ListProblemsByCursor(c.Request.Context(), actorFromContext(c), filter)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	data := gin.H{"items": page.Items}
+	if page.NextCursor != nil {
+		token, err := httpapi.EncodeCursor(page.NextCursor)
+		if err != nil {
+			httpapi.Error(c, apperror.Internal())
+			return
+		}
+		data["next_cursor"] = token
+	}
+	httpapi.OK(c, data)
+}
+
 func (h *Handler) getProblemAuthoringState(c *gin.Context) {
 	id, ok := problemIDParam(c)
 	if !ok {

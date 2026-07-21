@@ -21,6 +21,7 @@ type Repository interface {
 	CreateContest(ctx context.Context, input ContestRecord) (ContestRecord, error)
 	GetContest(ctx context.Context, id int64) (ContestRecord, error)
 	ListContests(ctx context.Context, filter ListContestFilter) ([]ContestRecord, int64, error)
+	ListContestsByCursor(ctx context.Context, filter ListContestFilter) ([]ContestRecord, error)
 	UpdateContest(ctx context.Context, id int64, input ContestUpdateInput) (ContestRecord, error)
 	ArchiveContest(ctx context.Context, id int64) (ContestRecord, error)
 	ReplaceContestProblems(ctx context.Context, contestID int64, problems []ContestProblem) error
@@ -62,6 +63,10 @@ func (r *PostgresRepository) GetContest(ctx context.Context, id int64) (ContestR
 
 func (r *PostgresRepository) ListContests(ctx context.Context, filter ListContestFilter) ([]ContestRecord, int64, error) {
 	return listContests(ctx, r.queries, filter)
+}
+
+func (r *PostgresRepository) ListContestsByCursor(ctx context.Context, filter ListContestFilter) ([]ContestRecord, error) {
+	return listContestsByCursor(ctx, r.queries, filter)
 }
 
 func (r *PostgresRepository) UpdateContest(ctx context.Context, id int64, input ContestUpdateInput) (ContestRecord, error) {
@@ -137,6 +142,10 @@ func (r *txRepository) GetContest(ctx context.Context, id int64) (ContestRecord,
 
 func (r *txRepository) ListContests(ctx context.Context, filter ListContestFilter) ([]ContestRecord, int64, error) {
 	return listContests(ctx, r.queries, filter)
+}
+
+func (r *txRepository) ListContestsByCursor(ctx context.Context, filter ListContestFilter) ([]ContestRecord, error) {
+	return listContestsByCursor(ctx, r.queries, filter)
 }
 
 func (r *txRepository) UpdateContest(ctx context.Context, id int64, input ContestUpdateInput) (ContestRecord, error) {
@@ -236,6 +245,31 @@ func listContests(ctx context.Context, q *db.Queries, filter ListContestFilter) 
 		out = append(out, contestFromDB(row))
 	}
 	return out, total, nil
+}
+
+func listContestsByCursor(ctx context.Context, q *db.Queries, filter ListContestFilter) ([]ContestRecord, error) {
+	cursor := filter.Cursor
+	if cursor == nil {
+		cursor = &ContestCursor{StartAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
+	}
+	rows, err := q.ListContestsByCursor(ctx, db.ListContestsByCursorParams{
+		Status:          textValuePtr(filter.Status),
+		Visibility:      textValuePtr(filter.Visibility),
+		Keyword:         textValuePtr(filter.Keyword),
+		IncludePrivate:  filter.IncludePrivate,
+		VisibleToUserID: int8ValuePtr(filter.VisibleToUserID),
+		BeforeStartAt:   timestamptz(cursor.StartAt.UTC()),
+		BeforeID:        cursor.ID,
+		Limit:           filter.Limit,
+	})
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	out := make([]ContestRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, contestFromDB(row))
+	}
+	return out, nil
 }
 
 func updateContest(ctx context.Context, q *db.Queries, id int64, input ContestUpdateInput) (ContestRecord, error) {

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
@@ -17,13 +19,14 @@ import (
 )
 
 type fakeService struct {
-	register   func(context.Context, auth.Actor, RegisterInput) (AuthSession, error)
-	login      func(context.Context, auth.Actor, LoginInput) (AuthSession, error)
-	refresh    func(context.Context, auth.Actor, RefreshInput) (AuthSession, error)
-	logout     func(context.Context, auth.Actor, LogoutInput) error
-	me         func(context.Context, auth.Actor) (User, error)
-	listUsers  func(context.Context, auth.Actor, ListUsersInput) (UserList, error)
-	updateUser func(context.Context, auth.Actor, int64, UpdateUserInput) (User, error)
+	register          func(context.Context, auth.Actor, RegisterInput) (AuthSession, error)
+	login             func(context.Context, auth.Actor, LoginInput) (AuthSession, error)
+	refresh           func(context.Context, auth.Actor, RefreshInput) (AuthSession, error)
+	logout            func(context.Context, auth.Actor, LogoutInput) error
+	me                func(context.Context, auth.Actor) (User, error)
+	listUsers         func(context.Context, auth.Actor, ListUsersInput) (UserList, error)
+	listUsersByCursor func(context.Context, auth.Actor, ListUsersInput) (UserCursorPage, error)
+	updateUser        func(context.Context, auth.Actor, int64, UpdateUserInput) (User, error)
 }
 
 func (f fakeService) Register(ctx context.Context, actor auth.Actor, input RegisterInput) (AuthSession, error) {
@@ -57,6 +60,13 @@ func (f fakeService) ListUsers(ctx context.Context, actor auth.Actor, input List
 		return UserList{}, errors.New("not implemented")
 	}
 	return f.listUsers(ctx, actor, input)
+}
+
+func (f fakeService) ListUsersByCursor(ctx context.Context, actor auth.Actor, input ListUsersInput) (UserCursorPage, error) {
+	if f.listUsersByCursor == nil {
+		return UserCursorPage{}, errors.New("not implemented")
+	}
+	return f.listUsersByCursor(ctx, actor, input)
 }
 
 func (f fakeService) UpdateUser(ctx context.Context, actor auth.Actor, id int64, input UpdateUserInput) (User, error) {
@@ -200,6 +210,30 @@ func TestHandlerListUsersUsesPagePagination(t *testing.T) {
 	}
 	if gotInput.Page != 2 || gotInput.PageSize != 30 {
 		t.Fatalf("pagination = page %d page_size %d, want 2/30", gotInput.Page, gotInput.PageSize)
+	}
+}
+
+func TestHandlerListUsersByCursorUsesSeekPagination(t *testing.T) {
+	var gotInput ListUsersInput
+	router := testRouter(fakeService{
+		listUsersByCursor: func(_ context.Context, _ auth.Actor, input ListUsersInput) (UserCursorPage, error) {
+			gotInput = input
+			return UserCursorPage{Items: []User{{ID: 7}}, NextCursor: &UserCursor{CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC), ID: 7}}, nil
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/users/cursor?page_size=2", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotInput.PageSize != 2 {
+		t.Fatalf("page size = %d, want 2", gotInput.PageSize)
+	}
+	if !strings.Contains(rec.Body.String(), `"next_cursor"`) {
+		t.Fatalf("body missing next_cursor: %s", rec.Body.String())
 	}
 }
 

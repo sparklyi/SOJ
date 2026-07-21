@@ -15,6 +15,7 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	group.GET("/submissions", m.handler.ListSubmissions)
 	// Register static routes before the submission ID parameter route.
 	group.GET("/submissions/mine", m.handler.ListOwnSubmissionsByCursor)
+	group.GET("/submissions/cursor", m.handler.ListSubmissionsByCursor)
 	group.GET("/submissions/:id", m.handler.GetSubmission)
 	group.POST("/runs", m.handler.CreateRun)
 	group.GET("/runs/:id", m.handler.GetRun)

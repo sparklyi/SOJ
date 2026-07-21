@@ -167,13 +167,68 @@ func (h *Handler) ListSubmissions(c *gin.Context) {
 	httpapi.OK(c, gin.H{"items": submissionResponses(items), "total": total, "page": page, "page_size": pageSize})
 }
 
+func (h *Handler) ListSubmissionsByCursor(c *gin.Context) {
+	pageSize, ok := pageSizeQuery(c)
+	if !ok {
+		return
+	}
+	input := ListSubmissionsInput{Limit: pageSize}
+	if raw := c.Query("user_id"); raw != "" {
+		value, ok := int64Query(c, raw, "invalid_user_id")
+		if !ok {
+			return
+		}
+		input.UserID = &value
+	}
+	if raw := c.Query("problem_id"); raw != "" {
+		value, ok := int64Query(c, raw, "invalid_problem_id")
+		if !ok {
+			return
+		}
+		input.ProblemID = &value
+	}
+	if raw := c.Query("contest_id"); raw != "" {
+		value, ok := int64Query(c, raw, "invalid_contest_id")
+		if !ok {
+			return
+		}
+		input.ContestID = &value
+	}
+	if raw := c.Query("status"); raw != "" {
+		input.Status = &raw
+	}
+	if raw, ok := c.GetQuery("cursor"); ok {
+		cursor, err := decodeSubmissionCursor(raw)
+		if err != nil {
+			httpapi.Error(c, apperror.BadRequest("invalid_cursor", "cursor is invalid"))
+			return
+		}
+		input.Cursor = &cursor
+	}
+	page, err := h.service.ListSubmissionsByCursor(c.Request.Context(), actorFromContext(c), input)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	data := gin.H{"items": submissionResponses(page.Items)}
+	if page.NextCursor != nil {
+		token, err := encodeSubmissionCursor(*page.NextCursor)
+		if err != nil {
+			httpapi.Error(c, apperror.Internal())
+			return
+		}
+		data["next_cursor"] = token
+	}
+	httpapi.OK(c, data)
+}
+
 func (h *Handler) ListOwnSubmissionsByCursor(c *gin.Context) {
 	pageSize, ok := pageSizeQuery(c)
 	if !ok {
 		return
 	}
 	input := ListOwnSubmissionsCursorInput{Limit: pageSize}
-	if raw := c.Query("cursor"); raw != "" {
+	if raw, ok := c.GetQuery("cursor"); ok {
 		cursor, err := decodeSubmissionCursor(raw)
 		if err != nil {
 			httpapi.Error(c, apperror.BadRequest("invalid_cursor", "cursor is invalid"))

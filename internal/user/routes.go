@@ -17,5 +17,6 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	group.POST("/auth/logout", m.handler.Logout)
 	group.GET("/me", m.handler.Me)
 	group.GET("/admin/users", m.handler.ListUsers)
+	group.GET("/admin/users/cursor", m.handler.ListUsersByCursor)
 	group.PATCH("/admin/users/:id", m.handler.UpdateUser)
 }

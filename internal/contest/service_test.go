@@ -397,6 +397,33 @@ func TestListContestsAppliesVisibilityRules(t *testing.T) {
 	}
 }
 
+func TestListContestsByCursorReturnsNextCursor(t *testing.T) {
+	start := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+	repo := newMemoryRepository()
+	repo.contests[2] = ContestRecord{ID: 2, Title: "Second", Visibility: VisibilityPublic, Status: StatusPublished, StartAt: start.Add(-time.Minute), EndAt: start, FreezeAt: start}
+	repo.contests[1] = ContestRecord{ID: 1, Title: "First", Visibility: VisibilityPublic, Status: StatusPublished, StartAt: start.Add(-2 * time.Minute), EndAt: start, FreezeAt: start}
+	service := NewService(repo)
+
+	page, err := service.ListContestsByCursor(context.Background(), auth.Anonymous("req"), ListContestFilter{PageSize: 1})
+	if err != nil {
+		t.Fatalf("ListContestsByCursor returned error: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != 2 {
+		t.Fatalf("items = %+v, want contest 2", page.Items)
+	}
+	if page.NextCursor == nil || page.NextCursor.ID != 2 || !page.NextCursor.StartAt.Equal(repo.contests[2].StartAt) {
+		t.Fatalf("next cursor = %+v, want contest 2 cursor", page.NextCursor)
+	}
+
+	second, err := service.ListContestsByCursor(context.Background(), auth.Anonymous("req"), ListContestFilter{PageSize: 1, Cursor: page.NextCursor})
+	if err != nil {
+		t.Fatalf("second cursor page: %v", err)
+	}
+	if len(second.Items) != 1 || second.Items[0].ID != 1 || second.NextCursor != nil {
+		t.Fatalf("second cursor page = %+v, want only contest 1 without next cursor", second)
+	}
+}
+
 func TestContestResponsesIncludeFrontendContractFields(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	repo := newMemoryRepository()
