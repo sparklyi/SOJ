@@ -57,6 +57,43 @@ func (h *Handler) listContests(c *gin.Context) {
 	httpapi.OK(c, list)
 }
 
+func (h *Handler) listContestsByCursor(c *gin.Context) {
+	pageSize, ok := int32Query(c, "page_size", 20)
+	if !ok || pageSize <= 0 || pageSize > 100 {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "page_size must be between 1 and 100"))
+		return
+	}
+	filter := ListContestFilter{
+		Status:     c.Query("status"),
+		Visibility: c.Query("visibility"),
+		Keyword:    c.Query("keyword"),
+		PageSize:   pageSize,
+	}
+	if raw, ok := c.GetQuery("cursor"); ok {
+		var cursor ContestCursor
+		if err := httpapi.DecodeCursor(raw, &cursor); err != nil {
+			httpapi.Error(c, apperror.BadRequest("invalid_cursor", "cursor is invalid"))
+			return
+		}
+		filter.Cursor = &cursor
+	}
+	page, err := h.service.ListContestsByCursor(c.Request.Context(), actorFromContext(c), filter)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	data := gin.H{"items": page.Items}
+	if page.NextCursor != nil {
+		token, err := httpapi.EncodeCursor(page.NextCursor)
+		if err != nil {
+			httpapi.Error(c, apperror.Internal())
+			return
+		}
+		data["next_cursor"] = token
+	}
+	httpapi.OK(c, data)
+}
+
 func (h *Handler) getContest(c *gin.Context) {
 	id, ok := contestIDParam(c)
 	if !ok {

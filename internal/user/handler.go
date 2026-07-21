@@ -21,6 +21,7 @@ type HandlerService interface {
 	Logout(context.Context, auth.Actor, LogoutInput) error
 	Me(context.Context, auth.Actor) (User, error)
 	ListUsers(context.Context, auth.Actor, ListUsersInput) (UserList, error)
+	ListUsersByCursor(context.Context, auth.Actor, ListUsersInput) (UserCursorPage, error)
 	UpdateUser(context.Context, auth.Actor, int64, UpdateUserInput) (User, error)
 }
 
@@ -109,6 +110,43 @@ func (h *Handler) ListUsers(c *gin.Context) {
 		return
 	}
 	httpapi.OK(c, users)
+}
+
+func (h *Handler) ListUsersByCursor(c *gin.Context) {
+	pageSize, err := strconv.ParseInt(c.DefaultQuery("page_size", "20"), 10, 32)
+	if err != nil || pageSize <= 0 || pageSize > 100 {
+		httpapi.Error(c, apperror.BadRequest("invalid_page_size", "page_size must be between 1 and 100"))
+		return
+	}
+	input := ListUsersInput{
+		Role:     c.Query("role"),
+		Status:   c.Query("status"),
+		Keyword:  c.Query("keyword"),
+		PageSize: int32(pageSize),
+	}
+	if raw, ok := c.GetQuery("cursor"); ok {
+		var cursor UserCursor
+		if err := httpapi.DecodeCursor(raw, &cursor); err != nil {
+			httpapi.Error(c, apperror.BadRequest("invalid_cursor", "cursor is invalid"))
+			return
+		}
+		input.Cursor = &cursor
+	}
+	page, err := h.service.ListUsersByCursor(c.Request.Context(), actorFromGin(c), input)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	data := gin.H{"items": page.Items}
+	if page.NextCursor != nil {
+		token, err := httpapi.EncodeCursor(page.NextCursor)
+		if err != nil {
+			httpapi.Error(c, apperror.Internal())
+			return
+		}
+		data["next_cursor"] = token
+	}
+	httpapi.OK(c, data)
 }
 
 func (h *Handler) UpdateUser(c *gin.Context) {

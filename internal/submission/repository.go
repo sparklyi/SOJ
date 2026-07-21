@@ -169,6 +169,7 @@ type ListSubmissionsInput struct {
 	Status    *string
 	Offset    int32
 	Limit     int32
+	Cursor    *SubmissionCursor
 }
 
 type SubmissionCursor struct {
@@ -188,6 +189,7 @@ type Repository interface {
 	CreateSubmissionWithTask(ctx context.Context, arg SubmissionRecord, nextRunAt time.Time) (SubmissionRecord, JudgeTaskRecord, error)
 	GetSubmission(ctx context.Context, id int64) (SubmissionRecord, error)
 	ListSubmissions(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, int64, error)
+	ListSubmissionsByCursor(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, error)
 	ListSubmissionsByUserBefore(ctx context.Context, userID int64, cursor SubmissionCursor, limit int32) ([]SubmissionRecord, error)
 	ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error)
 	MarkSubmissionRunning(ctx context.Context, id int64) (SubmissionRecord, error)
@@ -467,6 +469,30 @@ func (r *SQLRepository) ListSubmissions(ctx context.Context, input ListSubmissio
 		out = append(out, submissionRecord(row))
 	}
 	return out, total, nil
+}
+
+func (r *SQLRepository) ListSubmissionsByCursor(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, error) {
+	cursor := input.Cursor
+	if cursor == nil {
+		cursor = &SubmissionCursor{SubmittedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
+	}
+	rows, err := r.q.ListSubmissionsByCursor(ctx, db.ListSubmissionsByCursorParams{
+		UserID:            int8Ptr(input.UserID),
+		ProblemID:         int8Ptr(input.ProblemID),
+		ContestID:         int8Ptr(input.ContestID),
+		Status:            textPtr(input.Status),
+		BeforeSubmittedAt: pgtype.Timestamptz{Time: cursor.SubmittedAt.UTC(), Valid: true},
+		BeforeID:          cursor.ID,
+		Limit:             input.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SubmissionRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, submissionRecord(row))
+	}
+	return out, nil
 }
 
 func (r *SQLRepository) ListSubmissionsByUserBefore(ctx context.Context, userID int64, cursor SubmissionCursor, limit int32) ([]SubmissionRecord, error) {

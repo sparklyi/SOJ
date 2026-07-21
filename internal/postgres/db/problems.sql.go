@@ -1045,6 +1045,127 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]L
 	return items, nil
 }
 
+const listProblemsByCursor = `-- name: ListProblemsByCursor :many
+SELECT
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    coalesce(ps.id, 0)::bigint AS current_statement_id,
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
+    coalesce(ts.status, '')::text AS current_testcase_status
+FROM problems p
+LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
+LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
+WHERE ($1::text IS NULL OR p.difficulty = $1::text)
+  AND ($2::text IS NULL OR p.status = $2::text)
+  AND ($3::text IS NULL OR p.visibility = $3::text)
+  AND (
+      $4::text IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM problem_tag_links ptl
+          JOIN problem_tags pt ON pt.id = ptl.tag_id
+          WHERE ptl.problem_id = p.id
+            AND pt.slug = $4::text
+      )
+  )
+  AND (
+      $5::text IS NULL
+      OR p.title ILIKE '%' || $5::text || '%'
+      OR p.slug ILIKE '%' || $5::text || '%'
+  )
+  AND ($6::bigint = 0 OR p.owner_user_id = $6::bigint)
+  AND (
+      $7::boolean
+      OR (p.status = 'published' AND p.visibility = 'public')
+      OR ($8::bigint > 0 AND p.owner_user_id = $8::bigint)
+  )
+  AND (p.created_at, p.id) < (
+      $9::timestamptz,
+      $10::bigint
+  )
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT $11
+`
+
+type ListProblemsByCursorParams struct {
+	Difficulty      pgtype.Text        `db:"difficulty" json:"difficulty"`
+	Status          pgtype.Text        `db:"status" json:"status"`
+	Visibility      pgtype.Text        `db:"visibility" json:"visibility"`
+	Tag             pgtype.Text        `db:"tag" json:"tag"`
+	Keyword         pgtype.Text        `db:"keyword" json:"keyword"`
+	OwnerUserID     int64              `db:"owner_user_id" json:"owner_user_id"`
+	IncludeAll      bool               `db:"include_all" json:"include_all"`
+	ViewerUserID    int64              `db:"viewer_user_id" json:"viewer_user_id"`
+	BeforeCreatedAt pgtype.Timestamptz `db:"before_created_at" json:"before_created_at"`
+	BeforeID        int64              `db:"before_id" json:"before_id"`
+	Limit           int32              `db:"limit" json:"limit"`
+}
+
+type ListProblemsByCursorRow struct {
+	ID                    int64              `db:"id" json:"id"`
+	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                 string             `db:"title" json:"title"`
+	Slug                  string             `db:"slug" json:"slug"`
+	Difficulty            string             `db:"difficulty" json:"difficulty"`
+	Visibility            string             `db:"visibility" json:"visibility"`
+	Status                string             `db:"status" json:"status"`
+	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
+	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+}
+
+func (q *Queries) ListProblemsByCursor(ctx context.Context, arg ListProblemsByCursorParams) ([]ListProblemsByCursorRow, error) {
+	rows, err := q.db.Query(ctx, listProblemsByCursor,
+		arg.Difficulty,
+		arg.Status,
+		arg.Visibility,
+		arg.Tag,
+		arg.Keyword,
+		arg.OwnerUserID,
+		arg.IncludeAll,
+		arg.ViewerUserID,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProblemsByCursorRow
+	for rows.Next() {
+		var i ListProblemsByCursorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerUserID,
+			&i.Title,
+			&i.Slug,
+			&i.Difficulty,
+			&i.Visibility,
+			&i.Status,
+			&i.TimeLimitMs,
+			&i.MemoryLimitKb,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PublishedAt,
+			&i.CurrentStatementID,
+			&i.CurrentTestcaseSetID,
+			&i.CurrentTestcaseStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockProblemForUpdate = `-- name: LockProblemForUpdate :one
 SELECT
     p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
