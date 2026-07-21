@@ -277,6 +277,20 @@ WHERE (sqlc.narg('user_id')::bigint IS NULL OR user_id = sqlc.narg('user_id')::b
 ORDER BY submitted_at DESC, id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
+-- name: ListSubmissionsByCursor :many
+SELECT *
+FROM submissions
+WHERE (sqlc.narg('user_id')::bigint IS NULL OR user_id = sqlc.narg('user_id')::bigint)
+  AND (sqlc.narg('problem_id')::bigint IS NULL OR problem_id = sqlc.narg('problem_id')::bigint)
+  AND (sqlc.narg('contest_id')::bigint IS NULL OR contest_id = sqlc.narg('contest_id')::bigint)
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+  AND (submitted_at, id) < (
+      sqlc.arg('before_submitted_at')::timestamptz,
+      sqlc.arg('before_id')::bigint
+  )
+ORDER BY submitted_at DESC, id DESC
+LIMIT sqlc.arg('limit');
+
 -- name: CountSubmissions :one
 SELECT count(*)::bigint
 FROM submissions

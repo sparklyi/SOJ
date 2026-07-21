@@ -18,6 +18,8 @@ CREATE TABLE users (
 CREATE UNIQUE INDEX users_email_lower_uidx ON users (lower(email));
 CREATE INDEX users_status_idx ON users (status);
 CREATE INDEX users_role_idx ON users (role);
+CREATE INDEX users_recent_idx
+    ON users (created_at DESC, id DESC);
 CREATE INDEX users_email_trgm_idx
     ON users USING gin (email gin_trgm_ops);
 CREATE INDEX users_username_trgm_idx
@@ -62,6 +64,8 @@ CREATE INDEX problems_difficulty_idx ON problems (difficulty);
 CREATE INDEX problems_public_catalog_recent_idx
     ON problems (created_at DESC, id DESC)
     WHERE status = 'published' AND visibility = 'public';
+CREATE INDEX problems_recent_idx
+    ON problems (created_at DESC, id DESC);
 CREATE INDEX problems_owner_recent_idx
     ON problems (owner_user_id, created_at DESC, id DESC);
 CREATE INDEX problems_title_trgm_idx
@@ -196,6 +200,8 @@ CREATE INDEX contests_visibility_idx ON contests (visibility);
 CREATE INDEX contests_public_recent_idx
     ON contests (start_at DESC, id DESC)
     WHERE visibility = 'public';
+CREATE INDEX contests_recent_idx
+    ON contests (start_at DESC, id DESC);
 CREATE INDEX contests_title_trgm_idx
     ON contests USING gin (title gin_trgm_ops);
 
@@ -267,6 +273,8 @@ CREATE INDEX submissions_problem_submitted_id_idx
     ON submissions (problem_id, submitted_at DESC, id DESC);
 CREATE INDEX submissions_contest_submitted_id_idx
     ON submissions (contest_id, submitted_at DESC, id DESC);
+CREATE INDEX submissions_recent_idx
+    ON submissions (submitted_at DESC, id DESC);
 CREATE INDEX submissions_status_updated_idx ON submissions (status, updated_at);
 CREATE INDEX submissions_language_id_idx ON submissions (language_id);
 

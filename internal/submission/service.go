@@ -485,6 +485,49 @@ func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input L
 	return views, total, nil
 }
 
+func (s *Service) ListSubmissionsByCursor(ctx context.Context, actor auth.Actor, input ListSubmissionsInput) (SubmissionCursorPage, error) {
+	if !actor.Authenticated() {
+		return SubmissionCursorPage{}, apperror.Unauthorized("auth_required", "authentication required")
+	}
+	if !actor.Admin() {
+		input.UserID = &actor.UserID
+	}
+	if input.Limit <= 0 || input.Limit > 100 {
+		input.Limit = 20
+	}
+	limit := input.Limit
+	cursor := SubmissionCursor{
+		SubmittedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC),
+		ID:          1<<63 - 1,
+	}
+	if input.Cursor != nil {
+		if input.Cursor.ID <= 0 || input.Cursor.SubmittedAt.IsZero() {
+			return SubmissionCursorPage{}, apperror.BadRequest("invalid_cursor", "cursor is invalid")
+		}
+		cursor = SubmissionCursor{SubmittedAt: input.Cursor.SubmittedAt.UTC(), ID: input.Cursor.ID}
+	}
+	input.Cursor = &cursor
+	input.Limit++
+	records, err := s.repo.ListSubmissionsByCursor(ctx, input)
+	if err != nil {
+		return SubmissionCursorPage{}, err
+	}
+	hasMore := len(records) > int(limit)
+	if hasMore {
+		records = records[:limit]
+	}
+	views, err := s.submissionListViews(ctx, actor, records)
+	if err != nil {
+		return SubmissionCursorPage{}, err
+	}
+	page := SubmissionCursorPage{Items: views}
+	if hasMore {
+		last := records[len(records)-1]
+		page.NextCursor = &SubmissionCursor{SubmittedAt: last.SubmittedAt, ID: last.ID}
+	}
+	return page, nil
+}
+
 func (s *Service) ListOwnSubmissionsByCursor(ctx context.Context, actor auth.Actor, input ListOwnSubmissionsCursorInput) (SubmissionCursorPage, error) {
 	if !actor.Authenticated() {
 		return SubmissionCursorPage{}, apperror.Unauthorized("auth_required", "authentication required")

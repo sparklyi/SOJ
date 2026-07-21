@@ -111,6 +111,43 @@ func (r *memoryRepo) ListSubmissions(ctx context.Context, input ListSubmissionsI
 	return rows, int64(len(rows)), nil
 }
 
+func (r *memoryRepo) ListSubmissionsByCursor(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, error) {
+	r.cursorSubmissionListCalls++
+	cursor := input.Cursor
+	if cursor == nil {
+		cursor = &SubmissionCursor{SubmittedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
+	}
+	filtered := make([]SubmissionRecord, 0, len(r.submissions))
+	for _, row := range r.submissions {
+		if input.UserID != nil && row.UserID != *input.UserID {
+			continue
+		}
+		if input.ProblemID != nil && row.ProblemID != *input.ProblemID {
+			continue
+		}
+		if input.ContestID != nil && (row.ContestID == nil || *row.ContestID != *input.ContestID) {
+			continue
+		}
+		if input.Status != nil && row.Status != *input.Status {
+			continue
+		}
+		if row.SubmittedAt.After(cursor.SubmittedAt) || (row.SubmittedAt.Equal(cursor.SubmittedAt) && row.ID >= cursor.ID) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].SubmittedAt.Equal(filtered[j].SubmittedAt) {
+			return filtered[i].ID > filtered[j].ID
+		}
+		return filtered[i].SubmittedAt.After(filtered[j].SubmittedAt)
+	})
+	if len(filtered) > int(input.Limit) {
+		filtered = filtered[:input.Limit]
+	}
+	return filtered, nil
+}
+
 func (r *memoryRepo) ListSubmissionsByUserBefore(ctx context.Context, userID int64, cursor SubmissionCursor, limit int32) ([]SubmissionRecord, error) {
 	r.cursorSubmissionListCalls++
 	rows := make([]SubmissionRecord, 0)

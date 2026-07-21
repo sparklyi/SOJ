@@ -14,6 +14,7 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	contests := group.Group("/contests")
 	contests.POST("", m.handler.createContest)
 	contests.GET("", m.handler.listContests)
+	contests.GET("/cursor", m.handler.listContestsByCursor)
 	contests.GET("/:id", m.handler.getContest)
 	contests.PATCH("/:id", m.handler.updateContest)
 	contests.DELETE("/:id", m.handler.deleteContest)

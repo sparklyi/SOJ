@@ -176,6 +176,12 @@ type ListProblemsFilter struct {
 	OwnerUserID  int64
 	IncludeAll   bool
 	Mine         bool
+	Cursor       *ProblemCursor
+}
+
+type ProblemCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        int64     `json:"id"`
 }
 
 type ProblemList struct {
@@ -183,6 +189,11 @@ type ProblemList struct {
 	Total    int64             `json:"total"`
 	Page     int32             `json:"page"`
 	PageSize int32             `json:"page_size"`
+}
+
+type ProblemCursorPage struct {
+	Items      []ProblemResponse `json:"items"`
+	NextCursor *ProblemCursor    `json:"next_cursor,omitempty"`
 }
 
 type CreateStatementInput struct {
@@ -340,6 +351,49 @@ func (s *Service) ListProblems(ctx context.Context, actor auth.Actor, filter Lis
 		responses = append(responses, response)
 	}
 	return ProblemList{Items: responses, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
+}
+
+func (s *Service) ListProblemsByCursor(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemCursorPage, error) {
+	if filter.Mine && !actor.Authenticated() {
+		return ProblemCursorPage{}, requireAuthenticated(actor)
+	}
+	filter = normalizeListFilter(actor, filter)
+	limit := filter.PageSize
+	cursor := ProblemCursor{
+		CreatedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC),
+		ID:        1<<63 - 1,
+	}
+	if filter.Cursor != nil {
+		if filter.Cursor.ID <= 0 || filter.Cursor.CreatedAt.IsZero() {
+			return ProblemCursorPage{}, apperror.BadRequest("invalid_cursor", "cursor is invalid")
+		}
+		cursor = ProblemCursor{CreatedAt: filter.Cursor.CreatedAt.UTC(), ID: filter.Cursor.ID}
+	}
+	filter.Cursor = &cursor
+	filter.Limit = limit + 1
+	filter.Offset = 0
+	items, err := s.repo.ListProblemsByCursor(ctx, filter)
+	if err != nil {
+		return ProblemCursorPage{}, err
+	}
+	hasMore := len(items) > int(limit)
+	if hasMore {
+		items = items[:limit]
+	}
+	responses := make([]ProblemResponse, 0, len(items))
+	for _, item := range items {
+		response, err := s.ProblemResponse(ctx, item)
+		if err != nil {
+			return ProblemCursorPage{}, err
+		}
+		responses = append(responses, response)
+	}
+	page := ProblemCursorPage{Items: responses}
+	if hasMore {
+		last := items[len(items)-1]
+		page.NextCursor = &ProblemCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+	return page, nil
 }
 
 func (s *Service) GetProblemAuthoringState(ctx context.Context, actor auth.Actor, id int64) (ProblemAuthoringState, error) {

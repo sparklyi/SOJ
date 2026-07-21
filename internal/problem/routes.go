@@ -14,6 +14,7 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	problems := group.Group("/problems")
 	problems.POST("", m.handler.createProblem)
 	problems.GET("", m.handler.listProblems)
+	problems.GET("/cursor", m.handler.listProblemsByCursor)
 	problems.GET("/:id", m.handler.getProblem)
 	problems.GET("/:id/authoring", m.handler.getProblemAuthoringState)
 	problems.PATCH("/:id", m.handler.updateProblem)

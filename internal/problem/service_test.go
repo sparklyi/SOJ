@@ -230,6 +230,33 @@ func TestNormalizeListFilterScopesMineToActor(t *testing.T) {
 	}
 }
 
+func TestListProblemsByCursorReturnsNextCursor(t *testing.T) {
+	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+	repo := newFakeRepository()
+	repo.problems[2] = ProblemRecord{ID: 2, Title: "Second", Slug: "second", Status: StatusPublished, Visibility: VisibilityPublic, CreatedAt: now.Add(-time.Minute)}
+	repo.problems[1] = ProblemRecord{ID: 1, Title: "First", Slug: "first", Status: StatusPublished, Visibility: VisibilityPublic, CreatedAt: now.Add(-2 * time.Minute)}
+	service := NewService(repo, &fakeStorage{})
+
+	page, err := service.ListProblemsByCursor(context.Background(), auth.Anonymous("req"), ListProblemsFilter{PageSize: 1})
+	if err != nil {
+		t.Fatalf("ListProblemsByCursor returned error: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != 2 {
+		t.Fatalf("items = %+v, want problem 2", page.Items)
+	}
+	if page.NextCursor == nil || page.NextCursor.ID != 2 || !page.NextCursor.CreatedAt.Equal(repo.problems[2].CreatedAt) {
+		t.Fatalf("next cursor = %+v, want problem 2 cursor", page.NextCursor)
+	}
+
+	second, err := service.ListProblemsByCursor(context.Background(), auth.Anonymous("req"), ListProblemsFilter{PageSize: 1, Cursor: page.NextCursor})
+	if err != nil {
+		t.Fatalf("second cursor page: %v", err)
+	}
+	if len(second.Items) != 1 || second.Items[0].ID != 1 || second.NextCursor != nil {
+		t.Fatalf("second cursor page = %+v, want only problem 1 without next cursor", second)
+	}
+}
+
 func TestCreateStatementSwitchesCurrentVersion(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
@@ -751,6 +778,41 @@ func (r *fakeRepository) ListProblems(ctx context.Context, filter ListProblemsFi
 		items = append(items, problem)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].ID > items[j].ID })
+	return items, nil
+}
+
+func (r *fakeRepository) ListProblemsByCursor(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error) {
+	return r.listProblemsByCursor(ctx, filter)
+}
+
+func (r *fakeRepository) listProblemsByCursor(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error) {
+	items, err := r.ListProblems(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	cursor := filter.Cursor
+	if cursor == nil {
+		cursor = &ProblemCursor{CreatedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
+	}
+	items = items[:0]
+	for _, problem := range r.problems {
+		if filter.OwnerUserID > 0 && problem.OwnerUserID != filter.OwnerUserID {
+			continue
+		}
+		if problem.CreatedAt.After(cursor.CreatedAt) || (problem.CreatedAt.Equal(cursor.CreatedAt) && problem.ID >= cursor.ID) {
+			continue
+		}
+		items = append(items, problem)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	if filter.Limit > 0 && len(items) > int(filter.Limit) {
+		items = items[:filter.Limit]
+	}
 	return items, nil
 }
 

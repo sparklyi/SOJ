@@ -267,6 +267,71 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 	return items, nil
 }
 
+const listUsersByCursor = `-- name: ListUsersByCursor :many
+SELECT id, email, password_hash, username, avatar_url, bio, role, status, created_at, updated_at
+FROM users
+WHERE ($1::text IS NULL OR role = $1::text)
+  AND ($2::text IS NULL OR status = $2::text)
+  AND (
+      $3::text IS NULL
+      OR email ILIKE '%' || $3::text || '%'
+      OR username ILIKE '%' || $3::text || '%'
+  )
+  AND (created_at, id) < (
+      $4::timestamptz,
+      $5::bigint
+  )
+ORDER BY created_at DESC, id DESC
+LIMIT $6
+`
+
+type ListUsersByCursorParams struct {
+	Role            pgtype.Text        `db:"role" json:"role"`
+	Status          pgtype.Text        `db:"status" json:"status"`
+	Keyword         pgtype.Text        `db:"keyword" json:"keyword"`
+	BeforeCreatedAt pgtype.Timestamptz `db:"before_created_at" json:"before_created_at"`
+	BeforeID        int64              `db:"before_id" json:"before_id"`
+	Limit           int32              `db:"limit" json:"limit"`
+}
+
+func (q *Queries) ListUsersByCursor(ctx context.Context, arg ListUsersByCursorParams) ([]User, error) {
+	rows, err := q.db.Query(ctx, listUsersByCursor,
+		arg.Role,
+		arg.Status,
+		arg.Keyword,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.PasswordHash,
+			&i.Username,
+			&i.AvatarUrl,
+			&i.Bio,
+			&i.Role,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeRefreshToken = `-- name: RevokeRefreshToken :exec
 UPDATE refresh_tokens
 SET revoked_at = now()

@@ -81,6 +81,34 @@ func (r *memoryRepository) ListContests(ctx context.Context, filter ListContestF
 	return rows, int64(len(rows)), nil
 }
 
+func (r *memoryRepository) ListContestsByCursor(ctx context.Context, filter ListContestFilter) ([]ContestRecord, error) {
+	rows, _, err := r.ListContests(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	cursor := filter.Cursor
+	if cursor == nil {
+		cursor = &ContestCursor{StartAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
+	}
+	filtered := rows[:0]
+	for _, row := range rows {
+		if row.StartAt.After(cursor.StartAt) || (row.StartAt.Equal(cursor.StartAt) && row.ID >= cursor.ID) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].StartAt.Equal(filtered[j].StartAt) {
+			return filtered[i].ID > filtered[j].ID
+		}
+		return filtered[i].StartAt.After(filtered[j].StartAt)
+	})
+	if filter.Limit > 0 && len(filtered) > int(filter.Limit) {
+		filtered = filtered[:filter.Limit]
+	}
+	return filtered, nil
+}
+
 func (r *memoryRepository) activeRegistration(contestID, userID int64) bool {
 	for _, row := range r.registrations[contestID] {
 		if row.UserID == userID && row.Status == RegistrationActive {

@@ -87,6 +87,29 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersInput
 	return users, total, nil
 }
 
+func (r *PostgresRepository) ListUsersByCursor(ctx context.Context, input ListUsersInput) ([]User, error) {
+	cursor := input.Cursor
+	if cursor == nil {
+		cursor = &UserCursor{CreatedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
+	}
+	rows, err := r.q.ListUsersByCursor(ctx, db.ListUsersByCursorParams{
+		Role:            nullableText(input.Role),
+		Status:          nullableText(input.Status),
+		Keyword:         nullableText(input.Keyword),
+		BeforeCreatedAt: pgtype.Timestamptz{Time: cursor.CreatedAt.UTC(), Valid: true},
+		BeforeID:        cursor.ID,
+		Limit:           input.PageSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+	users := make([]User, 0, len(rows))
+	for _, row := range rows {
+		users = append(users, mapUser(row))
+	}
+	return users, nil
+}
+
 func (r *PostgresRepository) UpdateUser(ctx context.Context, id int64, input UpdateUserInput) (User, error) {
 	row, err := r.q.UpdateUserAdminFields(ctx, db.UpdateUserAdminFieldsParams{
 		ID:       id,
