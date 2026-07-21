@@ -59,6 +59,12 @@ type ListUsersInput struct {
 	Keyword  string
 	Page     int32
 	PageSize int32
+	Cursor   *UserCursor
+}
+
+type UserCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        int64     `json:"id"`
 }
 
 type UpdateUserInput struct {
@@ -82,6 +88,11 @@ type UserList struct {
 	PageSize int32  `json:"page_size"`
 }
 
+type UserCursorPage struct {
+	Items      []User      `json:"items"`
+	NextCursor *UserCursor `json:"next_cursor,omitempty"`
+}
+
 type TokenMetadata struct {
 	DeviceID  string
 	UserAgent string
@@ -102,6 +113,7 @@ type Repository interface {
 	GetUserByEmail(ctx context.Context, email string) (UserWithPassword, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	ListUsers(ctx context.Context, input ListUsersInput) ([]User, int64, error)
+	ListUsersByCursor(ctx context.Context, input ListUsersInput) ([]User, error)
 	UpdateUser(ctx context.Context, id int64, input UpdateUserInput) (User, error)
 	CreateRefreshToken(ctx context.Context, userID int64, tokenHash string, meta TokenMetadata) error
 	GetRefreshToken(ctx context.Context, tokenHash string) (RefreshToken, error)
@@ -268,6 +280,42 @@ func (s *Service) ListUsers(ctx context.Context, actor auth.Actor, input ListUse
 		return UserList{}, err
 	}
 	return UserList{Items: users, Total: total, Page: input.Page, PageSize: input.PageSize}, nil
+}
+
+func (s *Service) ListUsersByCursor(ctx context.Context, actor auth.Actor, input ListUsersInput) (UserCursorPage, error) {
+	if !actor.Root() {
+		return UserCursorPage{}, apperror.Forbidden("forbidden", "root role required")
+	}
+	if input.PageSize <= 0 || input.PageSize > 100 {
+		input.PageSize = 20
+	}
+	cursor := UserCursor{
+		CreatedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC),
+		ID:        1<<63 - 1,
+	}
+	if input.Cursor != nil {
+		if input.Cursor.ID <= 0 || input.Cursor.CreatedAt.IsZero() {
+			return UserCursorPage{}, apperror.BadRequest("invalid_cursor", "cursor is invalid")
+		}
+		cursor = UserCursor{CreatedAt: input.Cursor.CreatedAt.UTC(), ID: input.Cursor.ID}
+	}
+	input.Cursor = &cursor
+	limit := input.PageSize
+	input.PageSize++
+	users, err := s.repo.ListUsersByCursor(ctx, input)
+	if err != nil {
+		return UserCursorPage{}, err
+	}
+	hasMore := len(users) > int(limit)
+	if hasMore {
+		users = users[:limit]
+	}
+	page := UserCursorPage{Items: users}
+	if hasMore {
+		last := users[len(users)-1]
+		page.NextCursor = &UserCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+	return page, nil
 }
 
 func (s *Service) UpdateUser(ctx context.Context, actor auth.Actor, id int64, input UpdateUserInput) (User, error) {

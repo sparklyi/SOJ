@@ -22,6 +22,7 @@ type Repository interface {
 	CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error)
 	GetProblem(ctx context.Context, id int64) (ProblemRecord, error)
 	ListProblems(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error)
+	ListProblemsByCursor(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error)
 	CountProblems(ctx context.Context, filter ListProblemsFilter) (int64, error)
 	UpdateProblem(ctx context.Context, id int64, input UpdateProblemInput) (ProblemRecord, error)
 	ArchiveProblem(ctx context.Context, id int64) (ProblemRecord, error)
@@ -169,6 +170,10 @@ func (r *PostgresRepository) ListProblems(ctx context.Context, filter ListProble
 		items = append(items, problemFromListRow(row))
 	}
 	return items, nil
+}
+
+func (r *PostgresRepository) ListProblemsByCursor(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error) {
+	return listProblemsByCursor(ctx, r.queries, filter)
 }
 
 func (r *PostgresRepository) CountProblems(ctx context.Context, filter ListProblemsFilter) (int64, error) {
@@ -341,6 +346,10 @@ func (r *txRepository) ListProblems(ctx context.Context, filter ListProblemsFilt
 	return items, nil
 }
 
+func (r *txRepository) ListProblemsByCursor(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error) {
+	return listProblemsByCursor(ctx, r.queries, filter)
+}
+
 func (r *txRepository) CountProblems(ctx context.Context, filter ListProblemsFilter) (int64, error) {
 	count, err := r.queries.CountProblems(ctx, db.CountProblemsParams{
 		Difficulty:   textArg(filter.Difficulty),
@@ -353,6 +362,34 @@ func (r *txRepository) CountProblems(ctx context.Context, filter ListProblemsFil
 		ViewerUserID: filter.ViewerUserID,
 	})
 	return count, mapDBErr(err)
+}
+
+func listProblemsByCursor(ctx context.Context, q *db.Queries, filter ListProblemsFilter) ([]ProblemRecord, error) {
+	cursor := filter.Cursor
+	if cursor == nil {
+		cursor = &ProblemCursor{CreatedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
+	}
+	rows, err := q.ListProblemsByCursor(ctx, db.ListProblemsByCursorParams{
+		Difficulty:      textArg(filter.Difficulty),
+		Status:          textArg(filter.Status),
+		Visibility:      textArg(filter.Visibility),
+		Tag:             textArg(filter.Tag),
+		Keyword:         textArg(filter.Keyword),
+		OwnerUserID:     filter.OwnerUserID,
+		IncludeAll:      filter.IncludeAll,
+		ViewerUserID:    filter.ViewerUserID,
+		BeforeCreatedAt: pgtype.Timestamptz{Time: cursor.CreatedAt.UTC(), Valid: true},
+		BeforeID:        cursor.ID,
+		Limit:           filter.Limit,
+	})
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	items := make([]ProblemRecord, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, problemFromListCursorRow(row))
+	}
+	return items, nil
 }
 
 func (r *txRepository) UpdateProblem(ctx context.Context, id int64, input UpdateProblemInput) (ProblemRecord, error) {
@@ -671,6 +708,26 @@ func problemFromGetRow(p db.GetProblemByIDRow) ProblemRecord {
 }
 
 func problemFromListRow(p db.ListProblemsRow) ProblemRecord {
+	return ProblemRecord{
+		ID:                    p.ID,
+		OwnerUserID:           p.OwnerUserID,
+		Title:                 p.Title,
+		Slug:                  p.Slug,
+		Difficulty:            p.Difficulty,
+		Visibility:            p.Visibility,
+		Status:                p.Status,
+		TimeLimitMS:           p.TimeLimitMs,
+		MemoryLimitKB:         p.MemoryLimitKb,
+		CurrentStatementID:    p.CurrentStatementID,
+		CurrentTestcaseSetID:  p.CurrentTestcaseSetID,
+		CurrentTestcaseStatus: p.CurrentTestcaseStatus,
+		CreatedAt:             p.CreatedAt.Time,
+		UpdatedAt:             p.UpdatedAt.Time,
+		PublishedAt:           p.PublishedAt.Time,
+	}
+}
+
+func problemFromListCursorRow(p db.ListProblemsByCursorRow) ProblemRecord {
 	return ProblemRecord{
 		ID:                    p.ID,
 		OwnerUserID:           p.OwnerUserID,

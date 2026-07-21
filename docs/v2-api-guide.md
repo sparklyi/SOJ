@@ -53,7 +53,14 @@ List endpoints use `page` and `page_size`. The response `data` object contains:
 }
 ```
 
-Submission list endpoints may later add cursor pagination, but the initial contract keeps `page` and `page_size`.
+The legacy page response remains available. High-volume lists also expose cursor variants that return `items` and an optional `next_cursor`, without `total` or page numbers:
+
+- `GET /api/v1/problems/cursor`
+- `GET /api/v1/contests/cursor`
+- `GET /api/v1/submissions/cursor`
+- `GET /api/v1/admin/users/cursor`
+
+Pass the returned opaque `next_cursor` as `cursor` on the next request. `page_size` is limited to 100.
 
 ## Endpoint Groups
 
@@ -68,6 +75,7 @@ Auth:
 Problems:
 
 - `GET /api/v1/problems`
+- `GET /api/v1/problems/cursor`
 - `POST /api/v1/problems`
 - `GET /api/v1/problems/{id}`
 - `GET /api/v1/problems/{id}/statement`
@@ -98,6 +106,7 @@ Submissions and runs:
 - `POST /api/v1/submissions`
 - `GET /api/v1/submissions`
 - `GET /api/v1/submissions/mine`
+- `GET /api/v1/submissions/cursor`
 - `GET /api/v1/submissions/{id}`
 - `POST /api/v1/runs`
 - `GET /api/v1/runs/{id}`
@@ -131,6 +140,7 @@ Rejudge batches:
 Contests:
 
 - `GET /api/v1/contests`
+- `GET /api/v1/contests/cursor`
 - `POST /api/v1/contests`
 - `GET /api/v1/contests/{id}`
 - `PATCH /api/v1/contests/{id}`
@@ -148,6 +158,7 @@ Contest create/update notes:
 Admin:
 
 - `GET /api/v1/admin/users`
+- `GET /api/v1/admin/users/cursor`
 - `PATCH /api/v1/admin/users/{id}`
 - `GET /api/v1/admin/languages`
 - `POST /api/v1/admin/languages/sync`

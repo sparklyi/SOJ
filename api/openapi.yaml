@@ -264,6 +264,44 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/cursor:
+    get:
+      tags: [Problems]
+      operationId: listProblemsByCursor
+      summary: List problems with a cursor
+      x-owner: WP3 Problem
+      x-auth: public
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Cursor"
+        - name: difficulty
+          in: query
+          schema: { $ref: "#/components/schemas/ProblemDifficulty" }
+        - name: tag
+          in: query
+          schema: { type: string }
+        - name: keyword
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          description: Admin/root only.
+          schema: { $ref: "#/components/schemas/ProblemStatus" }
+        - name: mine
+          in: query
+          description: When true, requires authentication and returns only problems owned by the current user.
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Cursor page of problems without a total count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemCursorPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/problems/{id}/statement:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -528,6 +566,39 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/submissions/cursor:
+    get:
+      tags: [Submissions]
+      operationId: listSubmissionsByCursor
+      summary: List submissions with a cursor
+      x-owner: WP4 Submission/Run
+      x-auth: user
+      parameters:
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Cursor"
+        - name: problem_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: contest_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/JudgeStatus" }
+        - name: user_id
+          in: query
+          description: Admin/root only.
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Cursor page of submissions without a total count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionCursorPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/rejudge-batches:
     post:
@@ -819,6 +890,36 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/contests/cursor:
+    get:
+      tags: [Contests]
+      operationId: listContestsByCursor
+      summary: List contests with a cursor
+      x-owner: WP5 Contest
+      x-auth: public
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/ContestStatus" }
+        - name: visibility
+          in: query
+          schema: { $ref: "#/components/schemas/ContestVisibility" }
+        - name: keyword
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cursor page of contests without a total count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContestCursorPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/contests/{id}/registrations:
     post:
       tags: [Contests]
@@ -933,6 +1034,36 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/users/cursor:
+    get:
+      tags: [Admin Users]
+      operationId: adminListUsersByCursor
+      summary: List users with a cursor as root
+      x-owner: WP2 Auth/User
+      x-auth: root
+      parameters:
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Cursor"
+        - name: role
+          in: query
+          schema: { $ref: "#/components/schemas/UserRole" }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/UserStatus" }
+        - name: keyword
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cursor page of users without a total count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserCursorPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/admin/languages:
     get:
       tags: [Admin Languages]
@@ -1042,6 +1173,12 @@ components:
         minimum: 1
         maximum: 100
         default: 20
+    Cursor:
+      x-owner: WP1 Data/API Contract
+      name: cursor
+      in: query
+      description: Opaque cursor returned as next_cursor by the previous response.
+      schema: { type: string }
   responses:
     BadRequest:
       x-owner: WP1 Data/API Contract
@@ -1795,6 +1932,14 @@ components:
           required: [items]
           properties:
             items: { type: array, items: { $ref: "#/components/schemas/UserResponse" } }
+    UserCursorPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/UserResponse" } }
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page. Omitted when no more items remain.
     ProblemPage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -1802,6 +1947,14 @@ components:
           required: [items]
           properties:
             items: { type: array, items: { $ref: "#/components/schemas/ProblemResponse" } }
+    ProblemCursorPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ProblemResponse" } }
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page. Omitted when no more items remain.
     SubmissionPage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -1824,6 +1977,14 @@ components:
           required: [items]
           properties:
             items: { type: array, items: { $ref: "#/components/schemas/ContestResponse" } }
+    ContestCursorPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ContestResponse" } }
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page. Omitted when no more items remain.
     LanguagePage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -1840,12 +2001,18 @@ components:
     UserPageEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/UserPage" } }
+    UserCursorPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/UserCursorPage" } }
     ProblemEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ProblemResponse" } }
     ProblemPageEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ProblemPage" } }
+    ProblemCursorPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ProblemCursorPage" } }
     ProblemStatementEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ProblemStatementResponse" } }
@@ -1888,6 +2055,9 @@ components:
     ContestPageEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ContestPage" } }
+    ContestCursorPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ContestCursorPage" } }
     ContestRegistrationEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ContestRegistrationResponse" } }

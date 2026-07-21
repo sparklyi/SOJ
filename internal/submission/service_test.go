@@ -833,6 +833,36 @@ func TestListOwnSubmissionsByCursorUsesKeysetPagination(t *testing.T) {
 	}
 }
 
+func TestListSubmissionsByCursorReturnsNextCursor(t *testing.T) {
+	submittedAt := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+	repo := newMemoryRepo()
+	repo.submissions[2] = SubmissionRecord{ID: 2, UserID: 10, ProblemID: 1, Status: StatusQueued, SubmittedAt: submittedAt}
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 10, ProblemID: 1, Status: StatusQueued, SubmittedAt: submittedAt}
+	service := NewService(ServiceOptions{Repository: repo})
+
+	page, err := service.ListSubmissionsByCursor(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, ListSubmissionsInput{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListSubmissionsByCursor returned error: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Submission.ID != 2 {
+		t.Fatalf("items = %+v, want submission 2", page.Items)
+	}
+	if page.NextCursor == nil || page.NextCursor.ID != 2 || !page.NextCursor.SubmittedAt.Equal(submittedAt) {
+		t.Fatalf("next cursor = %+v, want submission 2 cursor", page.NextCursor)
+	}
+
+	second, err := service.ListSubmissionsByCursor(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, ListSubmissionsInput{Limit: 1, Cursor: page.NextCursor})
+	if err != nil {
+		t.Fatalf("second cursor page: %v", err)
+	}
+	if len(second.Items) != 1 || second.Items[0].Submission.ID != 1 || second.NextCursor != nil {
+		t.Fatalf("second cursor page = %+v, want submission 1 without next cursor", second)
+	}
+	if repo.listSubmissionCalls != 0 || repo.cursorSubmissionListCalls != 2 {
+		t.Fatalf("list calls page=%d cursor=%d, want 0/2", repo.listSubmissionCalls, repo.cursorSubmissionListCalls)
+	}
+}
+
 func TestHandlerListsOwnSubmissionsByCursor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
@@ -920,6 +950,21 @@ func TestHandlerRejectsInvalidOwnSubmissionCursor(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid cursor status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandlerRejectsEmptyOwnSubmissionCursor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Repository: newMemoryRepo()})))}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/mine?cursor=", nil)
+	req.Header.Set("X-User-ID", "5")
+	req.Header.Set("X-User-Role", "user")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty cursor status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

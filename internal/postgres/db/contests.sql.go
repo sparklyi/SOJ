@@ -738,6 +738,93 @@ func (q *Queries) ListContests(ctx context.Context, arg ListContestsParams) ([]C
 	return items, nil
 }
 
+const listContestsByCursor = `-- name: ListContestsByCursor :many
+SELECT c.id, c.owner_user_id, c.title, c.description, c.visibility, c.status, c.start_at, c.end_at, c.freeze_at, c.invite_code_hash, c.created_at, c.updated_at
+FROM contests c
+WHERE ($1::text IS NULL OR c.status = $1::text)
+  AND ($2::text IS NULL OR c.visibility = $2::text)
+  AND (
+      $3::text IS NULL
+      OR c.title ILIKE '%' || $3::text || '%'
+  )
+  AND (
+      $4::boolean
+      OR c.visibility = 'public'
+      OR (
+          $5::bigint IS NOT NULL
+          AND (
+              c.owner_user_id = $5::bigint
+              OR EXISTS (
+                  SELECT 1
+                  FROM contest_registrations cr
+                  WHERE cr.contest_id = c.id
+                    AND cr.user_id = $5::bigint
+                    AND cr.status = 'active'
+              )
+          )
+      )
+  )
+  AND (c.start_at, c.id) < (
+      $6::timestamptz,
+      $7::bigint
+  )
+ORDER BY c.start_at DESC, c.id DESC
+LIMIT $8
+`
+
+type ListContestsByCursorParams struct {
+	Status          pgtype.Text        `db:"status" json:"status"`
+	Visibility      pgtype.Text        `db:"visibility" json:"visibility"`
+	Keyword         pgtype.Text        `db:"keyword" json:"keyword"`
+	IncludePrivate  bool               `db:"include_private" json:"include_private"`
+	VisibleToUserID pgtype.Int8        `db:"visible_to_user_id" json:"visible_to_user_id"`
+	BeforeStartAt   pgtype.Timestamptz `db:"before_start_at" json:"before_start_at"`
+	BeforeID        int64              `db:"before_id" json:"before_id"`
+	Limit           int32              `db:"limit" json:"limit"`
+}
+
+func (q *Queries) ListContestsByCursor(ctx context.Context, arg ListContestsByCursorParams) ([]Contest, error) {
+	rows, err := q.db.Query(ctx, listContestsByCursor,
+		arg.Status,
+		arg.Visibility,
+		arg.Keyword,
+		arg.IncludePrivate,
+		arg.VisibleToUserID,
+		arg.BeforeStartAt,
+		arg.BeforeID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Contest
+	for rows.Next() {
+		var i Contest
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerUserID,
+			&i.Title,
+			&i.Description,
+			&i.Visibility,
+			&i.Status,
+			&i.StartAt,
+			&i.EndAt,
+			&i.FreezeAt,
+			&i.InviteCodeHash,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateContest = `-- name: UpdateContest :one
 UPDATE contests
 SET title = coalesce($1, title),

@@ -162,6 +162,12 @@ type ListContestFilter struct {
 	PageSize        int32
 	Limit           int32
 	Offset          int32
+	Cursor          *ContestCursor
+}
+
+type ContestCursor struct {
+	StartAt time.Time `json:"start_at"`
+	ID      int64     `json:"id"`
 }
 
 type ContestList struct {
@@ -169,6 +175,11 @@ type ContestList struct {
 	Total    int64           `json:"total"`
 	Page     int32           `json:"page"`
 	PageSize int32           `json:"page_size"`
+}
+
+type ContestCursorPage struct {
+	Items      []ContestRecord `json:"items"`
+	NextCursor *ContestCursor  `json:"next_cursor,omitempty"`
 }
 
 type Service struct {
@@ -277,6 +288,52 @@ func (s *Service) ListContests(ctx context.Context, actor auth.Actor, filter Lis
 		items[i] = withProblems
 	}
 	return ContestList{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
+}
+
+func (s *Service) ListContestsByCursor(ctx context.Context, actor auth.Actor, filter ListContestFilter) (ContestCursorPage, error) {
+	if filter.PageSize <= 0 || filter.PageSize > 100 {
+		filter.PageSize = 20
+	}
+	if actor.Admin() {
+		filter.IncludePrivate = true
+	} else if actor.Authenticated() {
+		filter.VisibleToUserID = actor.UserID
+	}
+	limit := filter.PageSize
+	cursor := ContestCursor{
+		StartAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC),
+		ID:      1<<63 - 1,
+	}
+	if filter.Cursor != nil {
+		if filter.Cursor.ID <= 0 || filter.Cursor.StartAt.IsZero() {
+			return ContestCursorPage{}, apperror.BadRequest("invalid_cursor", "cursor is invalid")
+		}
+		cursor = ContestCursor{StartAt: filter.Cursor.StartAt.UTC(), ID: filter.Cursor.ID}
+	}
+	filter.Cursor = &cursor
+	filter.Limit = limit + 1
+	filter.Offset = 0
+	items, err := s.repo.ListContestsByCursor(ctx, filter)
+	if err != nil {
+		return ContestCursorPage{}, err
+	}
+	hasMore := len(items) > int(limit)
+	if hasMore {
+		items = items[:limit]
+	}
+	for i := range items {
+		withProblems, err := s.withFrontendContract(ctx, actor, items[i])
+		if err != nil {
+			return ContestCursorPage{}, err
+		}
+		items[i] = withProblems
+	}
+	page := ContestCursorPage{Items: items}
+	if hasMore {
+		last := items[len(items)-1]
+		page.NextCursor = &ContestCursor{StartAt: last.StartAt, ID: last.ID}
+	}
+	return page, nil
 }
 
 func (s *Service) UpdateContest(ctx context.Context, actor auth.Actor, id int64, input ContestUpdateInput) (ContestRecord, error) {
