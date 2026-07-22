@@ -50,39 +50,6 @@ WHERE (sqlc.narg('status')::text IS NULL OR c.status = sqlc.narg('status')::text
 ORDER BY c.start_at DESC, c.id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
--- name: ListContestsByCursor :many
-SELECT c.*
-FROM contests c
-WHERE (sqlc.narg('status')::text IS NULL OR c.status = sqlc.narg('status')::text)
-  AND (sqlc.narg('visibility')::text IS NULL OR c.visibility = sqlc.narg('visibility')::text)
-  AND (
-      sqlc.narg('keyword')::text IS NULL
-      OR c.title ILIKE '%' || sqlc.narg('keyword')::text || '%'
-  )
-  AND (
-      sqlc.arg('include_private')::boolean
-      OR c.visibility = 'public'
-      OR (
-          sqlc.narg('visible_to_user_id')::bigint IS NOT NULL
-          AND (
-              c.owner_user_id = sqlc.narg('visible_to_user_id')::bigint
-              OR EXISTS (
-                  SELECT 1
-                  FROM contest_registrations cr
-                  WHERE cr.contest_id = c.id
-                    AND cr.user_id = sqlc.narg('visible_to_user_id')::bigint
-                    AND cr.status = 'active'
-              )
-          )
-      )
-  )
-  AND (c.start_at, c.id) < (
-      sqlc.arg('before_start_at')::timestamptz,
-      sqlc.arg('before_id')::bigint
-  )
-ORDER BY c.start_at DESC, c.id DESC
-LIMIT sqlc.arg('limit');
-
 -- name: CountContests :one
 SELECT count(*)::bigint
 FROM contests c

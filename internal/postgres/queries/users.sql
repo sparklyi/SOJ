@@ -37,23 +37,6 @@ WHERE (sqlc.narg('role')::text IS NULL OR role = sqlc.narg('role')::text)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
--- name: ListUsersByCursor :many
-SELECT *
-FROM users
-WHERE (sqlc.narg('role')::text IS NULL OR role = sqlc.narg('role')::text)
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
-  AND (
-      sqlc.narg('keyword')::text IS NULL
-      OR email ILIKE '%' || sqlc.narg('keyword')::text || '%'
-      OR username ILIKE '%' || sqlc.narg('keyword')::text || '%'
-  )
-  AND (created_at, id) < (
-      sqlc.arg('before_created_at')::timestamptz,
-      sqlc.arg('before_id')::bigint
-  )
-ORDER BY created_at DESC, id DESC
-LIMIT sqlc.arg('limit');
-
 -- name: CountUsers :one
 SELECT count(*)::bigint
 FROM users
