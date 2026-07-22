@@ -21,10 +21,24 @@ var (
 )
 
 type PostgresRepository struct {
-	q db.Querier
+	q postgresQueries
 }
 
-func NewPostgresRepository(q db.Querier) *PostgresRepository {
+type postgresQueries interface {
+	CountUsers(context.Context, db.CountUsersParams) (int64, error)
+	CreateRefreshToken(context.Context, db.CreateRefreshTokenParams) (db.RefreshToken, error)
+	CreateUser(context.Context, db.CreateUserParams) (db.User, error)
+	GetRefreshTokenByHash(context.Context, string) (db.RefreshToken, error)
+	GetUserByEmail(context.Context, string) (db.User, error)
+	GetUserByID(context.Context, int64) (db.User, error)
+	ListUsers(context.Context, db.ListUsersParams) ([]db.User, error)
+	ListUsersByCursor(context.Context, db.ListUsersByCursorParams) ([]db.User, error)
+	RevokeRefreshToken(context.Context, string) error
+	RevokeUserDeviceRefreshTokens(context.Context, db.RevokeUserDeviceRefreshTokensParams) error
+	UpdateUserAdminFields(context.Context, db.UpdateUserAdminFieldsParams) (db.User, error)
+}
+
+func NewPostgresRepository(q postgresQueries) *PostgresRepository {
 	return &PostgresRepository{q: q}
 }
 
