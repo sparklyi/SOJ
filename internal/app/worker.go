@@ -71,7 +71,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 	queries := db.New(pool)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
-	problemService := problem.NewService(problem.NewPostgresRepository(pool), objectStore)
+	problemReader := problem.NewProblemReader(problem.NewPostgresRepository(pool), objectStore)
 	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStore)
 	taskQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
 		Stream:     cfg.Redis.Stream,
@@ -108,7 +108,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		Failures:         failures,
 		Queue:            taskQueue,
 		Judge:            judgeEngine,
-		ProblemReader:    problemService,
+		ProblemReader:    problemReader,
 		TestcaseResolver: testcaseResolver,
 		SourceStore:      sourceStore,
 		Metrics:          metrics,
