@@ -139,7 +139,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 }
 
 type judgeRequestProcessor interface {
-	ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error
+	ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue submission.MessageAcker) error
 }
 
 type judgeAgentSlotMetrics interface {

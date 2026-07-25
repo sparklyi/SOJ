@@ -76,18 +76,28 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	contestService := contest.NewService(contestRepo)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
 	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStorage)
-	submissionService := submission.NewService(submission.ServiceOptions{
-		Repository:       submissionRepo,
+	judgeEngine := newJudgeEngine(cfg.Judge)
+	sourceStore := submission.NewObjectSourceStore(objectStorage)
+	creator := submission.NewSubmissionCreator(submission.SubmissionCreatorOptions{
+		Store:            submissionRepo,
 		ProblemReader:    problemService,
 		TestcaseResolver: testcaseResolver,
-		SourceStore:      submission.NewObjectSourceStore(objectStorage),
-		Judge:            newJudgeEngine(cfg.Judge),
+		SourceStore:      sourceStore,
 		ContestPolicy:    contestService,
-		TerminalHook:     contestService,
-		RunContext:       ctx,
-		RunParallelism:   cfg.Judge.RunParallelism,
-		RunTimeout:       cfg.Judge.Timeout,
 	})
+	reader := submission.NewSubmissionReader(submissionRepo, contestService)
+	runs := submission.NewRunService(submission.RunServiceOptions{
+		Store:         submissionRepo,
+		ProblemReader: problemService,
+		SourceStore:   sourceStore,
+		Judge:         judgeEngine,
+		Context:       ctx,
+		Parallelism:   cfg.Judge.RunParallelism,
+		Timeout:       cfg.Judge.Timeout,
+	})
+	languages := submission.NewLanguageService(submissionRepo, judgeEngine)
+	completer := submission.NewSubmissionCompleter(submissionRepo, contestService, nil)
+	submissionService := submission.NewService(creator, reader, runs, languages, completer)
 	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemService, contests: contestService}, nil, metrics)
 
 	middleware := httpapi.DefaultMiddlewareSet()

@@ -20,15 +20,15 @@ type ResultPublisher interface {
 }
 
 type FakeAsyncAgentOptions struct {
-	Judge           judge.JudgeEngine
-	SourceStore     SourceStore
+	Judge           judgeRunner
+	SourceStore     sourceReader
 	ResultPublisher ResultPublisher
 	Now             func() time.Time
 }
 
 type FakeAsyncAgent struct {
-	judge           judge.JudgeEngine
-	sourceStore     SourceStore
+	judge           judgeRunner
+	sourceStore     sourceReader
 	resultPublisher ResultPublisher
 	now             func() time.Time
 }
@@ -39,14 +39,14 @@ type CoreJudge interface {
 
 type CoreAsyncAgentOptions struct {
 	Core            CoreJudge
-	SourceStore     SourceStore
+	SourceStore     sourceReader
 	ResultPublisher ResultPublisher
 	Now             func() time.Time
 }
 
 type CoreAsyncAgent struct {
 	core            CoreJudge
-	sourceStore     SourceStore
+	sourceStore     sourceReader
 	resultPublisher ResultPublisher
 	now             func() time.Time
 }
@@ -67,7 +67,7 @@ func NewCoreAsyncAgent(options CoreAsyncAgentOptions) *CoreAsyncAgent {
 	return &CoreAsyncAgent{core: options.Core, sourceStore: options.SourceStore, resultPublisher: options.ResultPublisher, now: now}
 }
 
-func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error {
+func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue MessageAcker) error {
 	var request judgeevents.RequestEvent
 	if err := json.Unmarshal(message.Payload, &request); err != nil {
 		return err
@@ -113,7 +113,7 @@ func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 	return requestQueue.Ack(ctx, message.ID)
 }
 
-func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error {
+func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue MessageAcker) error {
 	var request judgeevents.RequestEvent
 	if err := json.Unmarshal(message.Payload, &request); err != nil {
 		return err
@@ -193,15 +193,11 @@ func publishAsyncResult(ctx context.Context, publisher ResultPublisher, request 
 	return err
 }
 
-type ResultConsumerOptions struct {
-	Repository ResultConsumerRepository
-}
-
 type ResultConsumer struct {
-	repo ResultConsumerRepository
+	store resultConsumerStore
 }
 
-type ResultConsumerRepository interface {
+type resultConsumerStore interface {
 	CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error)
 }
 
@@ -227,11 +223,11 @@ type EnsureJudgeAttemptInput struct {
 	StartedAt       time.Time
 }
 
-func NewResultConsumer(options ResultConsumerOptions) *ResultConsumer {
-	return &ResultConsumer{repo: options.Repository}
+func NewResultConsumer(store resultConsumerStore) *ResultConsumer {
+	return &ResultConsumer{store: store}
 }
 
-func (c *ResultConsumer) ProcessResultMessage(ctx context.Context, message queue.Message, resultQueue queue.TaskQueue) error {
+func (c *ResultConsumer) ProcessResultMessage(ctx context.Context, message queue.Message, resultQueue MessageAcker) error {
 	var event judgeevents.ResultEvent
 	if err := json.Unmarshal(message.Payload, &event); err != nil {
 		return err
@@ -254,7 +250,7 @@ func (c *ResultConsumer) ProcessResultMessage(ctx context.Context, message queue
 	if result.JudgedAt.IsZero() {
 		result.JudgedAt = event.JudgedAt
 	}
-	if _, _, err := c.repo.CompleteJudgeAttemptResult(ctx, CompleteJudgeAttemptResultInput{
+	if _, _, err := c.store.CompleteJudgeAttemptResult(ctx, CompleteJudgeAttemptResultInput{
 		EventID:        event.EventID,
 		RequestEventID: event.RequestEventID,
 		AttemptKey:     event.AttemptID,

@@ -96,8 +96,16 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 	judgeEngine := newJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStore)
-	worker := submission.NewWorker(submission.WorkerOptions{
-		Repository:       submissionRepo,
+	dispatcher := submission.NewTaskDispatcher(submission.TaskDispatcherOptions{
+		Store:            submissionRepo,
+		Queue:            taskQueue,
+		TestcaseResolver: testcaseResolver,
+		Metrics:          metrics,
+	})
+	failures := submission.NewTaskFailureHandler(submissionRepo, taskQueue, 0, nil, nil)
+	processor := submission.NewTaskProcessor(submission.TaskProcessorOptions{
+		Store:            submissionRepo,
+		Failures:         failures,
 		Queue:            taskQueue,
 		Judge:            judgeEngine,
 		ProblemReader:    problemService,
@@ -105,8 +113,9 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		SourceStore:      sourceStore,
 		Metrics:          metrics,
 	})
-	resultConsumer := submission.NewResultConsumer(submission.ResultConsumerOptions{Repository: submissionRepo})
-	reconciler := submission.NewReconciler(submissionRepo, worker, nil, metrics)
+	worker := submission.NewWorker(dispatcher, processor, taskQueue)
+	resultConsumer := submission.NewResultConsumer(submissionRepo)
+	reconciler := submission.NewReconciler(submissionRepo, taskQueue, worker, nil, metrics)
 	contestService := contest.NewService(contest.NewPostgresRepository(pool))
 
 	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)

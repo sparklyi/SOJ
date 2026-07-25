@@ -182,46 +182,6 @@ type SubmissionListSummary struct {
 	LatestAttempt *JudgeAttemptRecord
 }
 
-type Repository interface {
-	CreateArtifact(ctx context.Context, arg ArtifactRecord) (ArtifactRecord, error)
-	GetArtifact(ctx context.Context, id int64) (ArtifactRecord, error)
-	CreateSubmission(ctx context.Context, arg SubmissionRecord) (SubmissionRecord, error)
-	CreateSubmissionWithTask(ctx context.Context, arg SubmissionRecord, nextRunAt time.Time) (SubmissionRecord, JudgeTaskRecord, error)
-	GetSubmission(ctx context.Context, id int64) (SubmissionRecord, error)
-	ListSubmissions(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, int64, error)
-	ListSubmissionsByCursor(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, error)
-	ListSubmissionsByUserBefore(ctx context.Context, userID int64, cursor SubmissionCursor, limit int32) ([]SubmissionRecord, error)
-	ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error)
-	MarkSubmissionRunning(ctx context.Context, id int64) (SubmissionRecord, error)
-	MarkSubmissionQueued(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
-	MarkSubmissionSystemError(ctx context.Context, id int64, reason string) (SubmissionRecord, error)
-	CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error)
-	EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAttemptInput) (JudgeAttemptRecord, error)
-	CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error)
-	GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID int64) (JudgeAttemptRecord, error)
-	ListJudgeCaseResults(ctx context.Context, attemptID int64) ([]JudgeCaseResultRecord, error)
-	GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error)
-	CreateJudgeTask(ctx context.Context, submissionID int64, nextRunAt time.Time) (JudgeTaskRecord, error)
-	GetJudgeTask(ctx context.Context, id int64) (JudgeTaskRecord, error)
-	ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]JudgeTaskRecord, error)
-	MarkJudgeTaskDispatching(ctx context.Context, id int64) (JudgeTaskRecord, error)
-	MarkJudgeTaskDispatched(ctx context.Context, id int64, streamID string) (JudgeTaskRecord, error)
-	MarkJudgeTaskRunning(ctx context.Context, id int64) (JudgeTaskRecord, error)
-	MarkJudgeTaskDone(ctx context.Context, id int64) (JudgeTaskRecord, error)
-	RetryJudgeTask(ctx context.Context, id int64, nextRunAt time.Time, reason string) (JudgeTaskRecord, error)
-	MarkJudgeTaskDead(ctx context.Context, id int64, reason string) (JudgeTaskRecord, error)
-	RecoverDeadJudgeTask(ctx context.Context, id int64, nextRunAt time.Time, reason string) (JudgeTaskRecord, error)
-	CreateRun(ctx context.Context, arg RunRecord) (RunRecord, error)
-	GetRun(ctx context.Context, id int64) (RunRecord, error)
-	UpdateRunStatus(ctx context.Context, id int64, result judge.Result) (RunRecord, error)
-	ResetStaleJudgeTasks(ctx context.Context, staleBefore time.Time, reason string) ([]JudgeTaskRecord, error)
-	MarkStaleRunsSystemError(ctx context.Context, staleBefore time.Time, reason string) ([]RunRecord, error)
-	GetEnabledLanguage(ctx context.Context, id int64) (LanguageRecord, error)
-	ListLanguages(ctx context.Context, arg ListLanguagesInput) ([]LanguageRecord, int64, error)
-	UpsertLanguage(ctx context.Context, language judge.Language) (LanguageRecord, error)
-	UpdateLanguage(ctx context.Context, id int64, arg UpdateLanguageInput) (LanguageRecord, error)
-}
-
 type SQLRepository struct {
 	q        *db.Queries
 	txRunner postgres.TxRunner

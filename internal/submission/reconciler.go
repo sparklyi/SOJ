@@ -3,11 +3,23 @@ package submission
 import (
 	"context"
 	"time"
+
+	"SOJ/internal/queue"
 )
 
+type reconciliationStore interface {
+	MarkStaleRunsSystemError(context.Context, time.Time, string) ([]RunRecord, error)
+	ResetStaleJudgeTasks(context.Context, time.Time, string) ([]JudgeTaskRecord, error)
+}
+
+type taskMessageProcessor interface {
+	ProcessMessage(context.Context, queue.Message) error
+}
+
 type Reconciler struct {
-	repo    Repository
-	worker  *Worker
+	store   reconciliationStore
+	queue   staleTaskClaimer
+	process taskMessageProcessor
 	now     func() time.Time
 	metrics ReconcilerMetrics
 }
@@ -16,7 +28,7 @@ type ReconcilerMetrics interface {
 	RecordReconcilerAction(action, result string, count int)
 }
 
-func NewReconciler(repo Repository, worker *Worker, now func() time.Time, metrics ...ReconcilerMetrics) *Reconciler {
+func NewReconciler(store reconciliationStore, taskQueue staleTaskClaimer, processor taskMessageProcessor, now func() time.Time, metrics ...ReconcilerMetrics) *Reconciler {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
@@ -24,18 +36,18 @@ func NewReconciler(repo Repository, worker *Worker, now func() time.Time, metric
 	if len(metrics) > 0 {
 		recorder = metrics[0]
 	}
-	return &Reconciler{repo: repo, worker: worker, now: now, metrics: recorder}
+	return &Reconciler{store: store, queue: taskQueue, process: processor, now: now, metrics: recorder}
 }
 
 func (r *Reconciler) ClaimStaleTasks(ctx context.Context, minIdle time.Duration, limit int) (int, error) {
-	messages, err := r.worker.queue.ClaimStale(ctx, minIdle, limit)
+	messages, err := r.queue.ClaimStale(ctx, minIdle, limit)
 	if err != nil {
 		r.record("claim_stale_tasks", "error", 1)
 		return 0, err
 	}
 	processed := 0
 	for _, message := range messages {
-		if err := r.worker.ProcessMessage(ctx, message); err != nil {
+		if err := r.process.ProcessMessage(ctx, message); err != nil {
 			r.record("claim_stale_tasks", "error", 1)
 			return processed, err
 		}
@@ -46,7 +58,7 @@ func (r *Reconciler) ClaimStaleTasks(ctx context.Context, minIdle time.Duration,
 }
 
 func (r *Reconciler) MarkStaleRuns(ctx context.Context, maxAge time.Duration) (int, error) {
-	runs, err := r.repo.MarkStaleRunsSystemError(ctx, r.now().Add(-maxAge), "run reconciliation marked stale run as system_error")
+	runs, err := r.store.MarkStaleRunsSystemError(ctx, r.now().Add(-maxAge), "run reconciliation marked stale run as system_error")
 	if err != nil {
 		r.record("mark_stale_runs", "error", 1)
 		return 0, err
@@ -56,7 +68,7 @@ func (r *Reconciler) MarkStaleRuns(ctx context.Context, maxAge time.Duration) (i
 }
 
 func (r *Reconciler) ResetStaleTasks(ctx context.Context, maxAge time.Duration) (int, error) {
-	tasks, err := r.repo.ResetStaleJudgeTasks(ctx, r.now().Add(-maxAge), "judge task reconciliation reset stale task to pending")
+	tasks, err := r.store.ResetStaleJudgeTasks(ctx, r.now().Add(-maxAge), "judge task reconciliation reset stale task to pending")
 	if err != nil {
 		r.record("reset_stale_tasks", "error", 1)
 		return 0, err
