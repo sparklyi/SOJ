@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"SOJ/internal/queue"
+	"SOJ/internal/submission"
 )
 
 func TestParseJudgeAgentLanguageSlots(t *testing.T) {
@@ -152,7 +153,7 @@ type blockingJudgeProcessor struct {
 	release chan struct{}
 }
 
-func (p *blockingJudgeProcessor) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue queue.TaskQueue) error {
+func (p *blockingJudgeProcessor) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue submission.MessageAcker) error {
 	p.entered <- message.ID
 	select {
 	case <-p.release:

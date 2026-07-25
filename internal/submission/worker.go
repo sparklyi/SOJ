@@ -16,64 +16,70 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-type Worker struct {
-	repo        Repository
-	queue       queue.TaskQueue
-	engine      judge.JudgeEngine
-	problems    problem.Reader
-	testcases   problem.TestcaseResolver
-	store       SourceStore
-	metrics     WorkerMetrics
-	maxAttempts int32
-	backoff     func(int32) time.Duration
-	now         func() time.Time
+type taskDispatchStore interface {
+	ClaimPendingJudgeTasks(context.Context, int32) ([]JudgeTaskRecord, error)
+	RetryJudgeTask(context.Context, int64, time.Time, string) (JudgeTaskRecord, error)
+	MarkJudgeTaskDispatched(context.Context, int64, string) (JudgeTaskRecord, error)
+	GetSubmission(context.Context, int64) (SubmissionRecord, error)
+	GetArtifact(context.Context, int64) (ArtifactRecord, error)
+	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
+	MarkSubmissionRunning(context.Context, int64) (SubmissionRecord, error)
+	EnsureJudgeAttempt(context.Context, EnsureJudgeAttemptInput) (JudgeAttemptRecord, error)
 }
 
-type WorkerOptions struct {
-	Repository       Repository
-	Queue            queue.TaskQueue
-	Judge            judge.JudgeEngine
-	ProblemReader    problem.Reader
-	TestcaseResolver problem.TestcaseResolver
-	SourceStore      SourceStore
-	MaxAttempts      int32
-	Backoff          func(int32) time.Duration
-	Now              func() time.Time
-	Metrics          WorkerMetrics
-}
-
-type WorkerMetrics interface {
+type taskDispatchMetrics interface {
 	RecordJudgeTaskDispatch(result string)
-	RecordJudgeTaskProcess(result string, duration time.Duration)
 }
 
-func NewWorker(options WorkerOptions) *Worker {
-	maxAttempts := options.MaxAttempts
-	if maxAttempts <= 0 {
-		maxAttempts = 5
+// TaskDispatcher turns pending judge tasks into queue messages.
+type TaskDispatcher struct {
+	store     taskDispatchStore
+	queue     taskPublisher
+	testcases testcaseSnapshotResolver
+	metrics   taskDispatchMetrics
+	now       func() time.Time
+	backoff   func(int32) time.Duration
+}
+
+type TaskDispatcherOptions struct {
+	Store            taskDispatchStore
+	Queue            taskPublisher
+	TestcaseResolver testcaseSnapshotResolver
+	Metrics          taskDispatchMetrics
+	Now              func() time.Time
+	Backoff          func(int32) time.Duration
+}
+
+func NewTaskDispatcher(options TaskDispatcherOptions) *TaskDispatcher {
+	now := options.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
 	}
 	backoff := options.Backoff
 	if backoff == nil {
 		backoff = defaultJudgeTaskBackoff
 	}
-	now := options.Now
-	if now == nil {
-		now = func() time.Time { return time.Now().UTC() }
+	return &TaskDispatcher{
+		store:     options.Store,
+		queue:     options.Queue,
+		testcases: options.TestcaseResolver,
+		metrics:   options.Metrics,
+		now:       now,
+		backoff:   backoff,
 	}
-	return &Worker{repo: options.Repository, queue: options.Queue, engine: options.Judge, problems: options.ProblemReader, testcases: options.TestcaseResolver, store: options.SourceStore, metrics: options.Metrics, maxAttempts: maxAttempts, backoff: backoff, now: now}
 }
 
-func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) {
+func (d *TaskDispatcher) DispatchPending(ctx context.Context, limit int32) (int, error) {
 	if limit <= 0 {
 		limit = 16
 	}
-	tasks, err := w.repo.ClaimPendingJudgeTasks(ctx, limit)
+	tasks, err := d.store.ClaimPendingJudgeTasks(ctx, limit)
 	if err != nil {
 		return 0, err
 	}
 	dispatched := 0
 	for _, task := range tasks {
-		event, err := w.requestEvent(ctx, task)
+		event, err := d.requestEvent(ctx, task)
 		if err != nil {
 			return dispatched, err
 		}
@@ -81,58 +87,58 @@ func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) 
 		if err != nil {
 			return dispatched, err
 		}
-		streamID, err := w.queue.Publish(ctx, task.ID, payload)
+		streamID, err := d.queue.Publish(ctx, task.ID, payload)
 		if err != nil {
-			w.recordDispatch("error")
-			_, _ = w.repo.RetryJudgeTask(ctx, task.ID, w.now().Add(w.backoff(task.Attempts)), err.Error())
+			d.record("error")
+			_, _ = d.store.RetryJudgeTask(ctx, task.ID, d.now().Add(d.backoff(task.Attempts)), err.Error())
 			return dispatched, err
 		}
-		if _, err := w.repo.MarkJudgeTaskDispatched(ctx, task.ID, streamID); err != nil {
-			w.recordDispatch("error")
+		if _, err := d.store.MarkJudgeTaskDispatched(ctx, task.ID, streamID); err != nil {
+			d.record("error")
 			return dispatched, err
 		}
-		w.recordDispatch("success")
+		d.record("success")
 		dispatched++
 	}
 	return dispatched, nil
 }
 
-func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgeevents.RequestEvent, error) {
-	submission, err := w.repo.GetSubmission(ctx, task.SubmissionID)
+func (d *TaskDispatcher) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgeevents.RequestEvent, error) {
+	submission, err := d.store.GetSubmission(ctx, task.SubmissionID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
-	artifact, err := w.repo.GetArtifact(ctx, submission.SourceArtifactID)
+	artifact, err := d.store.GetArtifact(ctx, submission.SourceArtifactID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
-	language, err := w.repo.GetEnabledLanguage(ctx, submission.LanguageID)
+	language, err := d.store.GetEnabledLanguage(ctx, submission.LanguageID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
-	testcaseSet, err := w.readyTestcaseSet(ctx, submission.ProblemID, submission.TestcaseSetID)
+	testcaseSet, err := d.testcases.ReadyTestcaseSet(ctx, submission.ProblemID, submission.TestcaseSetID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
 	testcases := make([]judgeevents.TestcaseRef, 0, len(testcaseSet.Cases))
-	for i, tc := range testcaseSet.Cases {
+	for i, testcase := range testcaseSet.Cases {
 		testcases = append(testcases, judgeevents.TestcaseRef{
 			Index:             i + 1,
-			InputKey:          tc.InputKey,
-			ExpectedOutputKey: tc.OutputKey,
-			TimeLimitMS:       tc.TimeLimit.Milliseconds(),
-			MemoryKB:          tc.MemoryKB,
+			InputKey:          testcase.InputKey,
+			ExpectedOutputKey: testcase.OutputKey,
+			TimeLimitMS:       testcase.TimeLimit.Milliseconds(),
+			MemoryKB:          testcase.MemoryKB,
 		})
 	}
-	now := w.now()
+	now := d.now()
 	if submission.Status == StatusQueued {
-		if _, err := w.repo.MarkSubmissionRunning(ctx, submission.ID); err != nil {
+		if _, err := d.store.MarkSubmissionRunning(ctx, submission.ID); err != nil {
 			return judgeevents.RequestEvent{}, err
 		}
 	}
 	fallbackTraceID := fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID)
 	traceID, traceContext := traceIdentityFromContext(ctx, fallbackTraceID)
-	attempt, err := w.repo.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
+	attempt, err := d.store.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
 		SubmissionID:    submission.ID,
 		TaskID:          task.ID,
 		LanguageID:      language.ID,
@@ -177,6 +183,254 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 	return event, nil
 }
 
+func (d *TaskDispatcher) record(result string) {
+	if d.metrics != nil {
+		d.metrics.RecordJudgeTaskDispatch(result)
+	}
+}
+
+type taskProcessStore interface {
+	GetJudgeTask(context.Context, int64) (JudgeTaskRecord, error)
+	GetSubmission(context.Context, int64) (SubmissionRecord, error)
+	MarkJudgeTaskDone(context.Context, int64) (JudgeTaskRecord, error)
+	MarkJudgeTaskRunning(context.Context, int64) (JudgeTaskRecord, error)
+	MarkSubmissionRunning(context.Context, int64) (SubmissionRecord, error)
+	GetArtifact(context.Context, int64) (ArtifactRecord, error)
+	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
+	CompleteSubmissionWithResult(context.Context, int64, judge.Result, int32) (SubmissionRecord, error)
+}
+
+type taskFailureStore interface {
+	RetryJudgeTask(context.Context, int64, time.Time, string) (JudgeTaskRecord, error)
+	MarkJudgeTaskDead(context.Context, int64, string) (JudgeTaskRecord, error)
+	MarkSubmissionSystemError(context.Context, int64, string) (SubmissionRecord, error)
+	MarkSubmissionQueued(context.Context, int64, string) (SubmissionRecord, error)
+}
+
+// TaskFailureHandler owns retry and terminal failure transitions.
+type TaskFailureHandler struct {
+	store       taskFailureStore
+	queue       deadLetterQueue
+	maxAttempts int32
+	backoff     func(int32) time.Duration
+	now         func() time.Time
+}
+
+func NewTaskFailureHandler(store taskFailureStore, taskQueue deadLetterQueue, maxAttempts int32, backoff func(int32) time.Duration, now func() time.Time) *TaskFailureHandler {
+	if maxAttempts <= 0 {
+		maxAttempts = 5
+	}
+	if backoff == nil {
+		backoff = defaultJudgeTaskBackoff
+	}
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	return &TaskFailureHandler{store: store, queue: taskQueue, maxAttempts: maxAttempts, backoff: backoff, now: now}
+}
+
+func (h *TaskFailureHandler) retryOrDead(ctx context.Context, message queue.Message, task JudgeTaskRecord, cause error) (string, error) {
+	reason := cause.Error()
+	if task.Attempts >= h.maxAttempts {
+		if _, err := h.store.MarkJudgeTaskDead(ctx, task.ID, reason); err != nil {
+			return "error", err
+		}
+		if _, err := h.store.MarkSubmissionSystemError(ctx, task.SubmissionID, reason); err != nil {
+			return "error", err
+		}
+		if err := h.queue.DeadLetter(ctx, message, reason); err != nil {
+			return "dead", h.queue.Ack(ctx, message.ID)
+		}
+		return "dead", h.queue.Ack(ctx, message.ID)
+	}
+	if _, err := h.store.RetryJudgeTask(ctx, task.ID, h.now().Add(h.backoff(task.Attempts)), reason); err != nil {
+		return "error", err
+	}
+	if _, err := h.store.MarkSubmissionQueued(ctx, task.SubmissionID, reason); err != nil {
+		return "error", err
+	}
+	return "retry", h.queue.Ack(ctx, message.ID)
+}
+
+type taskProcessMetrics interface {
+	RecordJudgeTaskProcess(result string, duration time.Duration)
+}
+
+// TaskProcessor executes a single judge queue message.
+type TaskProcessor struct {
+	store     taskProcessStore
+	failures  *TaskFailureHandler
+	queue     MessageAcker
+	engine    judgeRunner
+	problems  problem.Reader
+	testcases testcaseSnapshotResolver
+	sources   sourceReader
+	metrics   taskProcessMetrics
+}
+
+type TaskProcessorOptions struct {
+	Store            taskProcessStore
+	Failures         *TaskFailureHandler
+	Queue            MessageAcker
+	Judge            judgeRunner
+	ProblemReader    problem.Reader
+	TestcaseResolver testcaseSnapshotResolver
+	SourceStore      sourceReader
+	Metrics          taskProcessMetrics
+}
+
+func NewTaskProcessor(options TaskProcessorOptions) *TaskProcessor {
+	return &TaskProcessor{
+		store:     options.Store,
+		failures:  options.Failures,
+		queue:     options.Queue,
+		engine:    options.Judge,
+		problems:  options.ProblemReader,
+		testcases: options.TestcaseResolver,
+		sources:   options.SourceStore,
+		metrics:   options.Metrics,
+	}
+}
+
+func (p *TaskProcessor) ProcessMessage(ctx context.Context, message queue.Message) error {
+	started := time.Now()
+	result, err := p.processMessage(ctx, message)
+	if err != nil {
+		result = "error"
+	}
+	if result == "" {
+		result = "success"
+	}
+	if p.metrics != nil {
+		p.metrics.RecordJudgeTaskProcess(result, time.Since(started))
+	}
+	return err
+}
+
+func (p *TaskProcessor) processMessage(ctx context.Context, message queue.Message) (string, error) {
+	task, err := p.store.GetJudgeTask(ctx, message.TaskID)
+	if err != nil {
+		return "error", err
+	}
+	if task.Status == "done" || task.Status == "dead" {
+		return "skipped", p.queue.Ack(ctx, message.ID)
+	}
+
+	submission, err := p.store.GetSubmission(ctx, task.SubmissionID)
+	if err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	if terminalStatus(submission.Status) {
+		if _, err := p.store.MarkJudgeTaskDone(ctx, task.ID); err != nil {
+			return "error", err
+		}
+		return "skipped", p.queue.Ack(ctx, message.ID)
+	}
+	if _, err := p.store.MarkJudgeTaskRunning(ctx, task.ID); err != nil {
+		return "error", err
+	}
+	if submission.Status == StatusQueued {
+		if _, err := p.store.MarkSubmissionRunning(ctx, submission.ID); err != nil {
+			return p.failures.retryOrDead(ctx, message, task, err)
+		}
+	}
+	artifact, err := p.store.GetArtifact(ctx, submission.SourceArtifactID)
+	if err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	source, err := p.sources.Get(ctx, artifact.StorageKey)
+	if err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	language, err := p.store.GetEnabledLanguage(ctx, submission.LanguageID)
+	if err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	if _, err := p.problems.GetForJudge(ctx, submission.ProblemID); err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	testcaseSet, err := p.testcases.ReadyTestcaseSet(ctx, submission.ProblemID, submission.TestcaseSetID)
+	if err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	testcases := make([]judge.Testcase, 0, len(testcaseSet.Cases))
+	for _, testcase := range testcaseSet.Cases {
+		testcases = append(testcases, judge.Testcase{InputKey: testcase.InputKey, ExpectedOutputKey: testcase.OutputKey, TimeLimit: testcase.TimeLimit, MemoryKB: testcase.MemoryKB})
+	}
+
+	result, err := p.engine.Judge(ctx, judge.Request{
+		LanguageID: language.ID,
+		Source:     source,
+		Testcases:  testcases,
+		Timeout:    language.DefaultTimeLimit,
+	})
+	if err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	if _, _, err := completeSubmission(ctx, p.store, submission.ID, result); err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	if _, err := p.store.MarkJudgeTaskDone(ctx, task.ID); err != nil {
+		return "error", err
+	}
+	return "success", p.queue.Ack(ctx, message.ID)
+}
+
+// Worker composes task dispatching and processing for the worker loop.
+type Worker struct {
+	dispatcher *TaskDispatcher
+	processor  *TaskProcessor
+	queue      taskQueueConsumer
+}
+
+func NewWorker(dispatcher *TaskDispatcher, processor *TaskProcessor, taskQueue taskQueueConsumer) *Worker {
+	return &Worker{dispatcher: dispatcher, processor: processor, queue: taskQueue}
+}
+
+func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) {
+	return w.dispatcher.DispatchPending(ctx, limit)
+}
+
+func (w *Worker) ConsumeOnce(ctx context.Context, limit int, block time.Duration) (int, error) {
+	messages, err := w.queue.Consume(ctx, limit, block)
+	if err != nil {
+		return 0, err
+	}
+	processed := 0
+	for _, message := range messages {
+		if err := w.processor.ProcessMessage(ctx, message); err != nil {
+			return processed, err
+		}
+		processed++
+	}
+	return processed, nil
+}
+
+func (w *Worker) ProcessMessage(ctx context.Context, message queue.Message) error {
+	return w.processor.ProcessMessage(ctx, message)
+}
+
+func (w *Worker) Run(ctx context.Context, limit int, block time.Duration) error {
+	if err := w.queue.Ensure(ctx); err != nil {
+		return err
+	}
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if _, err := w.DispatchPending(ctx, int32(limit)); err != nil {
+			return fmt.Errorf("dispatch pending: %w", err)
+		}
+		if _, err := w.ConsumeOnce(ctx, limit, block); err != nil {
+			return fmt.Errorf("consume: %w", err)
+		}
+	}
+}
+
+type testcaseSnapshotResolver interface {
+	ReadyTestcaseSet(ctx context.Context, problemID, testcaseSetID int64) (problem.TestcaseSet, error)
+}
+
 func traceIdentityFromContext(ctx context.Context, fallback string) (string, judgeevents.TraceContext) {
 	spanContext := trace.SpanFromContext(ctx).SpanContext()
 	if !spanContext.IsValid() || !spanContext.TraceID().IsValid() {
@@ -201,155 +455,6 @@ func valueOr(value *string, fallback string) string {
 	return *value
 }
 
-func (w *Worker) ConsumeOnce(ctx context.Context, limit int, block time.Duration) (int, error) {
-	messages, err := w.queue.Consume(ctx, limit, block)
-	if err != nil {
-		return 0, err
-	}
-	processed := 0
-	for _, message := range messages {
-		if err := w.ProcessMessage(ctx, message); err != nil {
-			return processed, err
-		}
-		processed++
-	}
-	return processed, nil
-}
-
-func (w *Worker) ProcessMessage(ctx context.Context, message queue.Message) error {
-	started := time.Now()
-	result, err := w.processMessage(ctx, message)
-	if err != nil {
-		result = "error"
-	}
-	if result == "" {
-		result = "success"
-	}
-	w.recordProcess(result, time.Since(started))
-	return err
-}
-
-func (w *Worker) processMessage(ctx context.Context, message queue.Message) (string, error) {
-	task, err := w.repo.GetJudgeTask(ctx, message.TaskID)
-	if err != nil {
-		return "error", err
-	}
-	if task.Status == "done" || task.Status == "dead" {
-		return "skipped", w.queue.Ack(ctx, message.ID)
-	}
-
-	submission, err := w.repo.GetSubmission(ctx, task.SubmissionID)
-	if err != nil {
-		return w.retryOrDead(ctx, message, task, err)
-	}
-	if terminalStatus(submission.Status) {
-		if _, err := w.repo.MarkJudgeTaskDone(ctx, task.ID); err != nil {
-			return "error", err
-		}
-		return "skipped", w.queue.Ack(ctx, message.ID)
-	}
-	if _, err := w.repo.MarkJudgeTaskRunning(ctx, task.ID); err != nil {
-		return "error", err
-	}
-	if submission.Status == StatusQueued {
-		if _, err := w.repo.MarkSubmissionRunning(ctx, submission.ID); err != nil {
-			return w.retryOrDead(ctx, message, task, err)
-		}
-	}
-	artifact, err := w.repo.GetArtifact(ctx, submission.SourceArtifactID)
-	if err != nil {
-		return w.retryOrDead(ctx, message, task, err)
-	}
-	source, err := w.store.Get(ctx, artifact.StorageKey)
-	if err != nil {
-		return w.retryOrDead(ctx, message, task, err)
-	}
-	language, err := w.repo.GetEnabledLanguage(ctx, submission.LanguageID)
-	if err != nil {
-		return w.retryOrDead(ctx, message, task, err)
-	}
-	if _, err := w.problems.GetForJudge(ctx, submission.ProblemID); err != nil {
-		return w.retryOrDead(ctx, message, task, err)
-	}
-	testcaseSet, err := w.readyTestcaseSet(ctx, submission.ProblemID, submission.TestcaseSetID)
-	if err != nil {
-		return w.retryOrDead(ctx, message, task, err)
-	}
-	testcases := make([]judge.Testcase, 0, len(testcaseSet.Cases))
-	for _, tc := range testcaseSet.Cases {
-		testcases = append(testcases, judge.Testcase{InputKey: tc.InputKey, ExpectedOutputKey: tc.OutputKey, TimeLimit: tc.TimeLimit, MemoryKB: tc.MemoryKB})
-	}
-
-	result, err := w.engine.Judge(ctx, judge.Request{
-		LanguageID: language.ID,
-		Source:     source,
-		Testcases:  testcases,
-		Timeout:    language.DefaultTimeLimit,
-	})
-	if err != nil {
-		return w.retryOrDead(ctx, message, task, err)
-	}
-	service := Service{repo: w.repo}
-	if _, err := service.CompleteSubmission(ctx, submission.ID, result); err != nil {
-		return w.retryOrDead(ctx, message, task, err)
-	}
-	if _, err := w.repo.MarkJudgeTaskDone(ctx, task.ID); err != nil {
-		return "error", err
-	}
-	return "success", w.queue.Ack(ctx, message.ID)
-}
-
-func (w *Worker) retryOrDead(ctx context.Context, message queue.Message, task JudgeTaskRecord, cause error) (string, error) {
-	reason := cause.Error()
-	if task.Attempts >= w.maxAttempts {
-		if _, err := w.repo.MarkJudgeTaskDead(ctx, task.ID, reason); err != nil {
-			return "error", err
-		}
-		if _, err := w.repo.MarkSubmissionSystemError(ctx, task.SubmissionID, reason); err != nil {
-			return "error", err
-		}
-		if err := w.queue.DeadLetter(ctx, message, reason); err != nil {
-			return "dead", w.queue.Ack(ctx, message.ID)
-		}
-		return "dead", w.queue.Ack(ctx, message.ID)
-	}
-	if _, err := w.repo.RetryJudgeTask(ctx, task.ID, w.now().Add(w.backoff(task.Attempts)), reason); err != nil {
-		return "error", err
-	}
-	if _, err := w.repo.MarkSubmissionQueued(ctx, task.SubmissionID, reason); err != nil {
-		return "error", err
-	}
-	return "retry", w.queue.Ack(ctx, message.ID)
-}
-
-func (w *Worker) Run(ctx context.Context, limit int, block time.Duration) error {
-	if err := w.queue.Ensure(ctx); err != nil {
-		return err
-	}
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if _, err := w.DispatchPending(ctx, int32(limit)); err != nil {
-			return fmt.Errorf("dispatch pending: %w", err)
-		}
-		if _, err := w.ConsumeOnce(ctx, limit, block); err != nil {
-			return fmt.Errorf("consume: %w", err)
-		}
-	}
-}
-
-type testcaseSnapshotResolver interface {
-	ReadyTestcaseSet(ctx context.Context, problemID, testcaseSetID int64) (problem.TestcaseSet, error)
-}
-
-func (w *Worker) readyTestcaseSet(ctx context.Context, problemID, testcaseSetID int64) (problem.TestcaseSet, error) {
-	if resolver, ok := w.testcases.(testcaseSnapshotResolver); ok {
-		return resolver.ReadyTestcaseSet(ctx, problemID, testcaseSetID)
-	}
-	return problem.TestcaseSet{}, fmt.Errorf("testcase snapshot resolver unavailable for testcase_set_id %d", testcaseSetID)
-}
-
 func defaultJudgeTaskBackoff(attempts int32) time.Duration {
 	schedule := []time.Duration{
 		5 * time.Second,
@@ -365,16 +470,4 @@ func defaultJudgeTaskBackoff(attempts int32) time.Duration {
 		return schedule[len(schedule)-1]
 	}
 	return schedule[attempts]
-}
-
-func (w *Worker) recordDispatch(result string) {
-	if w.metrics != nil {
-		w.metrics.RecordJudgeTaskDispatch(result)
-	}
-}
-
-func (w *Worker) recordProcess(result string, duration time.Duration) {
-	if w.metrics != nil {
-		w.metrics.RecordJudgeTaskProcess(result, duration)
-	}
 }

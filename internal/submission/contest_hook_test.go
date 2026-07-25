@@ -19,7 +19,7 @@ func TestCompleteSubmissionRunsTerminalHookOnce(t *testing.T) {
 		SubmittedAt: time.Unix(100, 0).UTC(),
 	}
 	hook := &recordingTerminalHook{}
-	service := NewService(ServiceOptions{Repository: repo, TerminalHook: hook})
+	service := newServiceForTest(serviceTestOptions{Repository: repo, TerminalHook: hook})
 
 	_, err := service.CompleteSubmission(context.Background(), 1, judge.Result{Verdict: judge.VerdictAccepted, JudgedAt: time.Unix(200, 0).UTC()})
 	if err != nil {
