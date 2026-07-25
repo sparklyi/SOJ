@@ -182,68 +182,9 @@ type ContestCursorPage struct {
 	NextCursor *ContestCursor  `json:"next_cursor,omitempty"`
 }
 
-type contestReader interface {
-	GetContest(context.Context, int64) (ContestRecord, error)
-}
-
-type contestCatalogStore interface {
-	ListContests(context.Context, ListContestFilter) ([]ContestRecord, int64, error)
-	ListContestsByCursor(context.Context, ListContestFilter) ([]ContestRecord, error)
-	ListContestProblems(context.Context, int64) ([]ContestProblem, error)
-}
-
-type contestRegistrationStore interface {
-	CreateRegistration(context.Context, ContestRegistration) (ContestRegistration, error)
-	GetRegistration(context.Context, int64, int64) (ContestRegistration, error)
-	ListRegistrations(context.Context, int64) ([]ContestRegistration, error)
-}
-
-type scoreboardStore interface {
-	ListProblemResults(context.Context, int64) ([]ContestProblemResult, error)
-	ListTerminalSubmissions(context.Context, int64) ([]ContestSubmissionResult, error)
-	ListScoreSnapshotCandidates(context.Context, time.Time, int32) ([]ScoreSnapshotCandidate, error)
-	CreateScoreSnapshot(context.Context, ScoreboardSnapshot) (ScoreboardSnapshot, error)
-	LatestScoreSnapshot(context.Context, int64, ScoreboardView) (ScoreboardSnapshot, error)
-}
-
-type scoreboardProjectionStore interface {
-	ListProblemResults(context.Context, int64) ([]ContestProblemResult, error)
-	UpsertProblemResult(context.Context, ContestProblemResult) (ContestProblemResult, error)
-}
-
-type contestArchiver interface {
-	ArchiveContest(context.Context, int64) (ContestRecord, error)
-}
-
-type contestTransactionRunner interface {
-	WithTx(context.Context, func(context.Context, contestTransaction) error) error
-}
-
-type contestTransaction interface {
-	CreateContest(context.Context, ContestRecord) (ContestRecord, error)
-	UpdateContest(context.Context, int64, ContestUpdateInput) (ContestRecord, error)
-	ReplaceContestProblems(context.Context, int64, []ContestProblem) error
-}
-
-type ServiceOptions struct {
-	Contests      contestReader
-	Catalog       contestCatalogStore
-	Registrations contestRegistrationStore
-	Scoreboards   scoreboardStore
-	Projections   scoreboardProjectionStore
-	Archive       contestArchiver
-	Transactions  contestTransactionRunner
-}
-
 type Service struct {
-	contests      contestReader
-	catalog       contestCatalogStore
-	registrations contestRegistrationStore
-	scoreboards   scoreboardStore
-	projections   scoreboardProjectionStore
-	archive       contestArchiver
-	transactions  contestTransactionRunner
-	now           func() time.Time
+	repo Repository
+	now  func() time.Time
 }
 
 type Option func(*Service)
@@ -256,17 +197,8 @@ func WithNow(now func() time.Time) Option {
 	}
 }
 
-func NewService(config ServiceOptions, options ...Option) *Service {
-	s := &Service{
-		contests:      config.Contests,
-		catalog:       config.Catalog,
-		registrations: config.Registrations,
-		scoreboards:   config.Scoreboards,
-		projections:   config.Projections,
-		archive:       config.Archive,
-		transactions:  config.Transactions,
-		now:           func() time.Time { return time.Now().UTC() },
-	}
+func NewService(repo Repository, options ...Option) *Service {
+	s := &Service{repo: repo, now: func() time.Time { return time.Now().UTC() }}
 	for _, option := range options {
 		option(s)
 	}
@@ -300,7 +232,7 @@ func (s *Service) CreateContest(ctx context.Context, actor auth.Actor, input Con
 	}
 
 	var created ContestRecord
-	err = s.transactions.WithTx(ctx, func(ctx context.Context, repo contestTransaction) error {
+	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		var err error
 		created, err = repo.CreateContest(ctx, record)
 		if err != nil {
@@ -320,7 +252,7 @@ func (s *Service) CreateContest(ctx context.Context, actor auth.Actor, input Con
 }
 
 func (s *Service) GetContest(ctx context.Context, actor auth.Actor, id int64) (ContestRecord, error) {
-	record, err := s.contests.GetContest(ctx, id)
+	record, err := s.repo.GetContest(ctx, id)
 	if err != nil {
 		return ContestRecord{}, err
 	}
@@ -344,7 +276,7 @@ func (s *Service) ListContests(ctx context.Context, actor auth.Actor, filter Lis
 	}
 	filter.Limit = filter.PageSize
 	filter.Offset = (filter.Page - 1) * filter.PageSize
-	items, total, err := s.catalog.ListContests(ctx, filter)
+	items, total, err := s.repo.ListContests(ctx, filter)
 	if err != nil {
 		return ContestList{}, err
 	}
@@ -381,7 +313,7 @@ func (s *Service) ListContestsByCursor(ctx context.Context, actor auth.Actor, fi
 	filter.Cursor = &cursor
 	filter.Limit = limit + 1
 	filter.Offset = 0
-	items, err := s.catalog.ListContestsByCursor(ctx, filter)
+	items, err := s.repo.ListContestsByCursor(ctx, filter)
 	if err != nil {
 		return ContestCursorPage{}, err
 	}
@@ -405,7 +337,7 @@ func (s *Service) ListContestsByCursor(ctx context.Context, actor auth.Actor, fi
 }
 
 func (s *Service) UpdateContest(ctx context.Context, actor auth.Actor, id int64, input ContestUpdateInput) (ContestRecord, error) {
-	current, err := s.contests.GetContest(ctx, id)
+	current, err := s.repo.GetContest(ctx, id)
 	if err != nil {
 		return ContestRecord{}, err
 	}
@@ -416,7 +348,7 @@ func (s *Service) UpdateContest(ctx context.Context, actor auth.Actor, id int64,
 		return ContestRecord{}, err
 	}
 	var updated ContestRecord
-	err = s.transactions.WithTx(ctx, func(ctx context.Context, repo contestTransaction) error {
+	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		var err error
 		updated, err = repo.UpdateContest(ctx, id, input)
 		if err != nil {
@@ -442,18 +374,18 @@ func (s *Service) UpdateContest(ctx context.Context, actor auth.Actor, id int64,
 }
 
 func (s *Service) DeleteContest(ctx context.Context, actor auth.Actor, id int64) (ContestRecord, error) {
-	current, err := s.contests.GetContest(ctx, id)
+	current, err := s.repo.GetContest(ctx, id)
 	if err != nil {
 		return ContestRecord{}, err
 	}
 	if err := requireContestWriter(actor, current); err != nil {
 		return ContestRecord{}, err
 	}
-	return s.archive.ArchiveContest(ctx, id)
+	return s.repo.ArchiveContest(ctx, id)
 }
 
 func (s *Service) AuthorizeContestRejudge(ctx context.Context, actor auth.Actor, id int64) error {
-	contest, err := s.contests.GetContest(ctx, id)
+	contest, err := s.repo.GetContest(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -461,7 +393,7 @@ func (s *Service) AuthorizeContestRejudge(ctx context.Context, actor auth.Actor,
 }
 
 func (s *Service) ValidateContestRejudgeTarget(ctx context.Context, id int64) error {
-	contest, err := s.contests.GetContest(ctx, id)
+	contest, err := s.repo.GetContest(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -475,7 +407,7 @@ func (s *Service) Register(ctx context.Context, actor auth.Actor, contestID int6
 	if !actor.Authenticated() {
 		return ContestRegistration{}, apperror.Unauthorized("auth_required", "authentication required")
 	}
-	contest, err := s.contests.GetContest(ctx, contestID)
+	contest, err := s.repo.GetContest(ctx, contestID)
 	if err != nil {
 		return ContestRegistration{}, err
 	}
@@ -490,7 +422,7 @@ func (s *Service) Register(ctx context.Context, actor auth.Actor, contestID int6
 	if displayName == "" || email == "" {
 		return ContestRegistration{}, apperror.BadRequest("request.invalid", "display_name and email are required")
 	}
-	return s.registrations.CreateRegistration(ctx, ContestRegistration{
+	return s.repo.CreateRegistration(ctx, ContestRegistration{
 		ContestID:   contestID,
 		UserID:      actor.UserID,
 		DisplayName: displayName,
@@ -503,7 +435,7 @@ func (s *Service) ValidateSubmission(ctx context.Context, actor auth.Actor, prob
 	if !actor.Authenticated() {
 		return apperror.Unauthorized("auth_required", "authentication required")
 	}
-	contest, err := s.contests.GetContest(ctx, contestID)
+	contest, err := s.repo.GetContest(ctx, contestID)
 	if err != nil {
 		return err
 	}
@@ -517,7 +449,7 @@ func (s *Service) ValidateSubmission(ctx context.Context, actor auth.Actor, prob
 	if !now.Before(contest.EndAt) {
 		return apperror.Forbidden("contest.ended", "contest has ended")
 	}
-	problems, err := s.catalog.ListContestProblems(ctx, contestID)
+	problems, err := s.repo.ListContestProblems(ctx, contestID)
 	if err != nil {
 		return err
 	}
@@ -527,7 +459,7 @@ func (s *Service) ValidateSubmission(ctx context.Context, actor auth.Actor, prob
 	if actor.Admin() || actor.UserID == contest.OwnerUserID {
 		return nil
 	}
-	registration, err := s.registrations.GetRegistration(ctx, contestID, actor.UserID)
+	registration, err := s.repo.GetRegistration(ctx, contestID, actor.UserID)
 	if err != nil || registration.Status != RegistrationActive {
 		return apperror.Forbidden("contest.registration_required", "contest registration required")
 	}
@@ -535,7 +467,7 @@ func (s *Service) ValidateSubmission(ctx context.Context, actor auth.Actor, prob
 }
 
 func (s *Service) SubmissionResultVisibility(ctx context.Context, actor auth.Actor, sub submission.ContestSubmissionVisibility) (submission.SubmissionResultVisibility, error) {
-	contest, err := s.contests.GetContest(ctx, sub.ContestID)
+	contest, err := s.repo.GetContest(ctx, sub.ContestID)
 	if err != nil {
 		return submission.SubmissionResultVisibility{}, err
 	}
@@ -553,7 +485,7 @@ func (s *Service) SubmissionResultVisibilities(ctx context.Context, actor auth.A
 		contest, ok := contests[sub.ContestID]
 		if !ok {
 			var err error
-			contest, err = s.contests.GetContest(ctx, sub.ContestID)
+			contest, err = s.repo.GetContest(ctx, sub.ContestID)
 			if err != nil {
 				return nil, err
 			}
@@ -596,7 +528,7 @@ func (s *Service) AfterSubmissionTerminal(ctx context.Context, terminal submissi
 }
 
 func (s *Service) withFrontendContract(ctx context.Context, actor auth.Actor, record ContestRecord) (ContestRecord, error) {
-	problems, err := s.catalog.ListContestProblems(ctx, record.ID)
+	problems, err := s.repo.ListContestProblems(ctx, record.ID)
 	if err != nil {
 		return ContestRecord{}, err
 	}
@@ -610,7 +542,7 @@ func (s *Service) actorRegisteredForContest(ctx context.Context, actor auth.Acto
 	if !actor.Authenticated() {
 		return false
 	}
-	registration, err := s.registrations.GetRegistration(ctx, contestID, actor.UserID)
+	registration, err := s.repo.GetRegistration(ctx, contestID, actor.UserID)
 	return err == nil && registration.Status == RegistrationActive
 }
 
@@ -621,7 +553,7 @@ func (s *Service) canReadContest(ctx context.Context, actor auth.Actor, contest 
 	if !actor.Authenticated() {
 		return apperror.Unauthorized("auth_required", "authentication required")
 	}
-	registration, err := s.registrations.GetRegistration(ctx, contest.ID, actor.UserID)
+	registration, err := s.repo.GetRegistration(ctx, contest.ID, actor.UserID)
 	if err == nil && registration.Status == RegistrationActive {
 		return nil
 	}

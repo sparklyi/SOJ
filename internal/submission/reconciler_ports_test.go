@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"SOJ/internal/queue"
 )
 
 type reconciliationStoreStub struct{}
@@ -16,11 +18,23 @@ func (reconciliationStoreStub) ResetStaleJudgeTasks(context.Context, time.Time, 
 	return []JudgeTaskRecord{{ID: 1}}, nil
 }
 
-func TestReconcilerDependsOnlyOnReconciliationStore(t *testing.T) {
-	now := time.Date(2026, time.July, 25, 0, 0, 0, 0, time.UTC)
-	reconciler := NewReconciler(reconciliationStoreStub{}, nil, func() time.Time { return now })
+type taskMessageProcessorStub struct{}
 
-	runs, err := reconciler.MarkStaleRuns(context.Background(), time.Minute)
+func (taskMessageProcessorStub) ProcessMessage(context.Context, queue.Message) error {
+	return nil
+}
+
+type staleTaskClaimerStub struct{}
+
+func (staleTaskClaimerStub) ClaimStale(context.Context, time.Duration, int) ([]queue.Message, error) {
+	return nil, nil
+}
+
+func TestReconcilerUsesOnlyReconciliationStore(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 0, 0, 0, 0, time.UTC)
+	reconciler := NewReconciler(reconciliationStoreStub{}, staleTaskClaimerStub{}, taskMessageProcessorStub{}, func() time.Time { return now })
+
+	runs, err := reconciler.MarkStaleRuns(t.Context(), time.Minute)
 	if err != nil {
 		t.Fatalf("MarkStaleRuns() error = %v", err)
 	}
@@ -28,7 +42,7 @@ func TestReconcilerDependsOnlyOnReconciliationStore(t *testing.T) {
 		t.Fatalf("MarkStaleRuns() count = %d, want 1", runs)
 	}
 
-	tasks, err := reconciler.ResetStaleTasks(context.Background(), time.Minute)
+	tasks, err := reconciler.ResetStaleTasks(t.Context(), time.Minute)
 	if err != nil {
 		t.Fatalf("ResetStaleTasks() error = %v", err)
 	}

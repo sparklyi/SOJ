@@ -282,97 +282,14 @@ type ProblemAuthoringState struct {
 	Blockers    []ProblemAuthoringBlocker `json:"blockers"`
 }
 
-type problemRecordReader interface {
-	GetProblem(context.Context, int64) (ProblemRecord, error)
-}
-
-type problemCatalogStore interface {
-	ListProblems(context.Context, ListProblemsFilter) ([]ProblemRecord, error)
-	ListProblemsByCursor(context.Context, ListProblemsFilter) ([]ProblemRecord, error)
-	CountProblems(context.Context, ListProblemsFilter) (int64, error)
-	ListProblemTags(context.Context, int64) ([]Tag, error)
-}
-
-type problemContentStore interface {
-	GetCurrentProblemStatement(context.Context, int64) (Statement, error)
-	GetCurrentReadyTestcaseSet(context.Context, int64) (TestcaseSetRecord, error)
-	GetLatestCompletedProblemCheckRun(context.Context, int64, int64, int64) (ProblemCheckRunRecord, error)
-	ListProblemCheckFindings(context.Context, int64) ([]ProblemCheckFindingRecord, error)
-}
-
-type problemCheckStore interface {
-	GetProblemCheckRun(context.Context, int64) (ProblemCheckRunRecord, error)
-	ListProblemCheckFindings(context.Context, int64) ([]ProblemCheckFindingRecord, error)
-}
-
-type problemStatsStore interface {
-	GetProblemStats(context.Context, int64) (ProblemStats, error)
-}
-
-type problemTransactionRunner interface {
-	WithTx(context.Context, func(context.Context, problemTransaction) error) error
-}
-
-type problemStatusUpdater interface {
-	UpdateProblem(context.Context, int64, UpdateProblemInput) (ProblemRecord, error)
-}
-
-type problemTransaction interface {
-	problemContentStore
-	problemStatusUpdater
-	CreateProblem(context.Context, int64, CreateProblemInput) (ProblemRecord, error)
-	ArchiveProblem(context.Context, int64) (ProblemRecord, error)
-	LockProblemForUpdate(context.Context, int64) (ProblemRecord, error)
-	NextProblemStatementVersion(context.Context, int64) (int32, error)
-	ClearCurrentProblemStatement(context.Context, int64) error
-	CreateProblemStatement(context.Context, int64, int32, CreateStatementInput) (Statement, error)
-	ReplaceProblemTags(context.Context, int64, []TagInput) ([]Tag, error)
-	NextTestcaseSetVersion(context.Context, int64) (int32, error)
-	ClearCurrentTestcaseSet(context.Context, int64) error
-	CreateTestcaseSet(context.Context, int64, int32, string, string, int64, int32, int64) (TestcaseSetRecord, error)
-	CreateProblemCheckRun(context.Context, CreateProblemCheckRunInput) (ProblemCheckRunRecord, error)
-	CompleteProblemCheckRun(context.Context, CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error)
-	CreateProblemCheckFinding(context.Context, CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error)
-	CreateArtifact(context.Context, ArtifactRecord) (ArtifactRecord, error)
-}
-
-type ServiceOptions struct {
-	Problems     problemRecordReader
-	Catalog      problemCatalogStore
-	Content      problemContentStore
-	Checks       problemCheckStore
-	Stats        problemStatsStore
-	Transactions problemTransactionRunner
-	Storage      storage.ObjectStorage
-	Now          func() time.Time
-}
-
 type Service struct {
-	problems     problemRecordReader
-	catalog      problemCatalogStore
-	content      problemContentStore
-	checks       problemCheckStore
-	stats        problemStatsStore
-	transactions problemTransactionRunner
-	storage      storage.ObjectStorage
-	now          func() time.Time
+	repo    Repository
+	storage storage.ObjectStorage
+	now     func() time.Time
 }
 
-func NewService(options ServiceOptions) *Service {
-	now := options.Now
-	if now == nil {
-		now = time.Now
-	}
-	return &Service{
-		problems:     options.Problems,
-		catalog:      options.Catalog,
-		content:      options.Content,
-		checks:       options.Checks,
-		stats:        options.Stats,
-		transactions: options.Transactions,
-		storage:      options.Storage,
-		now:          now,
-	}
+func NewService(repo Repository, objectStorage storage.ObjectStorage) *Service {
+	return &Service{repo: repo, storage: objectStorage, now: time.Now}
 }
 
 func (s *Service) CreateProblem(ctx context.Context, actor auth.Actor, input CreateProblemInput) (ProblemRecord, error) {
@@ -387,7 +304,7 @@ func (s *Service) CreateProblem(ctx context.Context, actor auth.Actor, input Cre
 		return ProblemRecord{}, err
 	}
 	var created ProblemRecord
-	err = s.transactions.WithTx(ctx, func(ctx context.Context, repo problemTransaction) error {
+	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		var err error
 		created, err = repo.CreateProblem(ctx, actor.UserID, input)
 		if err != nil {
@@ -402,7 +319,7 @@ func (s *Service) CreateProblem(ctx context.Context, actor auth.Actor, input Cre
 }
 
 func (s *Service) GetProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
-	p, err := s.problems.GetProblem(ctx, id)
+	p, err := s.repo.GetProblem(ctx, id)
 	if err != nil {
 		return ProblemRecord{}, err
 	}
@@ -417,11 +334,11 @@ func (s *Service) ListProblems(ctx context.Context, actor auth.Actor, filter Lis
 		return ProblemList{}, requireAuthenticated(actor)
 	}
 	filter = normalizeListFilter(actor, filter)
-	items, err := s.catalog.ListProblems(ctx, filter)
+	items, err := s.repo.ListProblems(ctx, filter)
 	if err != nil {
 		return ProblemList{}, err
 	}
-	total, err := s.catalog.CountProblems(ctx, filter)
+	total, err := s.repo.CountProblems(ctx, filter)
 	if err != nil {
 		return ProblemList{}, err
 	}
@@ -455,7 +372,7 @@ func (s *Service) ListProblemsByCursor(ctx context.Context, actor auth.Actor, fi
 	filter.Cursor = &cursor
 	filter.Limit = limit + 1
 	filter.Offset = 0
-	items, err := s.catalog.ListProblemsByCursor(ctx, filter)
+	items, err := s.repo.ListProblemsByCursor(ctx, filter)
 	if err != nil {
 		return ProblemCursorPage{}, err
 	}
@@ -480,7 +397,7 @@ func (s *Service) ListProblemsByCursor(ctx context.Context, actor auth.Actor, fi
 }
 
 func (s *Service) GetProblemAuthoringState(ctx context.Context, actor auth.Actor, id int64) (ProblemAuthoringState, error) {
-	p, err := s.problems.GetProblem(ctx, id)
+	p, err := s.repo.GetProblem(ctx, id)
 	if err != nil {
 		return ProblemAuthoringState{}, err
 	}
@@ -491,7 +408,7 @@ func (s *Service) GetProblemAuthoringState(ctx context.Context, actor auth.Actor
 	if err != nil {
 		return ProblemAuthoringState{}, err
 	}
-	readiness, err := loadProblemAuthoringReadiness(ctx, s.content, id)
+	readiness, err := loadProblemAuthoringReadiness(ctx, s.repo, id)
 	if err != nil {
 		return ProblemAuthoringState{}, err
 	}
@@ -507,7 +424,7 @@ func (s *Service) GetProblemAuthoringState(ctx context.Context, actor auth.Actor
 
 func (s *Service) UpdateProblem(ctx context.Context, actor auth.Actor, id int64, input UpdateProblemInput) (ProblemRecord, error) {
 	var updated ProblemRecord
-	err := s.transactions.WithTx(ctx, func(ctx context.Context, repo problemTransaction) error {
+	err := s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		current, err := repo.LockProblemForUpdate(ctx, id)
 		if err != nil {
 			return err
@@ -541,7 +458,7 @@ func (s *Service) UpdateProblem(ctx context.Context, actor auth.Actor, id int64,
 
 func (s *Service) ArchiveProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
 	var archived ProblemRecord
-	err := s.transactions.WithTx(ctx, func(ctx context.Context, repo problemTransaction) error {
+	err := s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		current, err := repo.LockProblemForUpdate(ctx, id)
 		if err != nil {
 			return err
@@ -563,7 +480,7 @@ func (s *Service) CreateStatement(ctx context.Context, actor auth.Actor, problem
 		return Statement{}, err
 	}
 	var statement Statement
-	err := s.transactions.WithTx(ctx, func(ctx context.Context, repo problemTransaction) error {
+	err := s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		p, err := repo.LockProblemForUpdate(ctx, problemID)
 		if err != nil {
 			return err
@@ -590,14 +507,14 @@ func (s *Service) CreateStatement(ctx context.Context, actor auth.Actor, problem
 }
 
 func (s *Service) CurrentStatement(ctx context.Context, actor auth.Actor, problemID int64) (Statement, error) {
-	p, err := s.problems.GetProblem(ctx, problemID)
+	p, err := s.repo.GetProblem(ctx, problemID)
 	if err != nil {
 		return Statement{}, err
 	}
 	if err := canReadProblem(actor, p); err != nil {
 		return Statement{}, err
 	}
-	return s.content.GetCurrentProblemStatement(ctx, problemID)
+	return s.repo.GetCurrentProblemStatement(ctx, problemID)
 }
 
 func (s *Service) AssignTags(ctx context.Context, actor auth.Actor, problemID int64, input AssignTagsInput) ([]Tag, error) {
@@ -605,7 +522,7 @@ func (s *Service) AssignTags(ctx context.Context, actor auth.Actor, problemID in
 		return nil, err
 	}
 	var tags []Tag
-	err := s.transactions.WithTx(ctx, func(ctx context.Context, repo problemTransaction) error {
+	err := s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		p, err := repo.LockProblemForUpdate(ctx, problemID)
 		if err != nil {
 			return err
@@ -626,7 +543,7 @@ func (s *Service) UploadTestcaseArchive(ctx context.Context, actor auth.Actor, p
 	if err := validateTestcaseArchive(input.Content, input.CaseCount, input.ChecksumSHA256, defaultMaxTestcaseArchiveBytes); err != nil {
 		return TestcaseSetRecord{}, err
 	}
-	current, err := s.problems.GetProblem(ctx, problemID)
+	current, err := s.repo.GetProblem(ctx, problemID)
 	if err != nil {
 		return TestcaseSetRecord{}, err
 	}
@@ -657,7 +574,7 @@ func (s *Service) UploadTestcaseArchive(ctx context.Context, actor auth.Actor, p
 	}
 
 	var created TestcaseSetRecord
-	err = s.transactions.WithTx(ctx, func(ctx context.Context, repo problemTransaction) error {
+	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		p, err := repo.LockProblemForUpdate(ctx, problemID)
 		if err != nil {
 			return err
@@ -700,7 +617,7 @@ func (s *Service) UploadTestcaseArchive(ctx context.Context, actor auth.Actor, p
 }
 
 func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problemID int64) (ProblemCheckResult, error) {
-	p, err := s.problems.GetProblem(ctx, problemID)
+	p, err := s.repo.GetProblem(ctx, problemID)
 	if err != nil {
 		return ProblemCheckResult{}, err
 	}
@@ -708,11 +625,11 @@ func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problem
 		return ProblemCheckResult{}, err
 	}
 
-	statement, err := s.content.GetCurrentProblemStatement(ctx, problemID)
+	statement, err := s.repo.GetCurrentProblemStatement(ctx, problemID)
 	if err != nil {
 		return ProblemCheckResult{}, err
 	}
-	set, err := s.content.GetCurrentReadyTestcaseSet(ctx, problemID)
+	set, err := s.repo.GetCurrentReadyTestcaseSet(ctx, problemID)
 	if err != nil {
 		return ProblemCheckResult{}, err
 	}
@@ -780,7 +697,7 @@ func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problem
 
 	var runRecord ProblemCheckRunRecord
 	persistedFindings := make([]ProblemCheckFinding, 0, len(findings))
-	err = s.transactions.WithTx(ctx, func(ctx context.Context, repo problemTransaction) error {
+	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
 		run, err := repo.CreateProblemCheckRun(ctx, CreateProblemCheckRunInput{
 			ProblemID:     problemID,
 			StatementID:   statement.ID,
@@ -821,21 +738,21 @@ func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problem
 }
 
 func (s *Service) GetProblemCheck(ctx context.Context, actor auth.Actor, problemID int64, checkID int64) (ProblemCheckResult, error) {
-	p, err := s.problems.GetProblem(ctx, problemID)
+	p, err := s.repo.GetProblem(ctx, problemID)
 	if err != nil {
 		return ProblemCheckResult{}, err
 	}
 	if err := canWriteProblem(actor, p); err != nil {
 		return ProblemCheckResult{}, err
 	}
-	run, err := s.checks.GetProblemCheckRun(ctx, checkID)
+	run, err := s.repo.GetProblemCheckRun(ctx, checkID)
 	if err != nil {
 		return ProblemCheckResult{}, problemCheckNotFoundErr(err)
 	}
 	if run.ProblemID != problemID {
 		return ProblemCheckResult{}, apperror.NotFound("problem_check.not_found", "problem check not found")
 	}
-	records, err := s.checks.ListProblemCheckFindings(ctx, checkID)
+	records, err := s.repo.ListProblemCheckFindings(ctx, checkID)
 	if err != nil {
 		return ProblemCheckResult{}, err
 	}
@@ -847,7 +764,7 @@ func (s *Service) GetProblemCheck(ctx context.Context, actor auth.Actor, problem
 }
 
 func (s *Service) ProblemResponse(ctx context.Context, p ProblemRecord) (ProblemResponse, error) {
-	tags, err := s.catalog.ListProblemTags(ctx, p.ID)
+	tags, err := s.repo.ListProblemTags(ctx, p.ID)
 	if err != nil {
 		return ProblemResponse{}, err
 	}
@@ -875,7 +792,7 @@ func (s *Service) ProblemResponse(ctx context.Context, p ProblemRecord) (Problem
 }
 
 func (s *Service) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
-	set, err := s.content.GetCurrentReadyTestcaseSet(ctx, problemID)
+	set, err := s.repo.GetCurrentReadyTestcaseSet(ctx, problemID)
 	if err != nil {
 		return TestcaseSet{}, err
 	}
@@ -885,7 +802,7 @@ func (s *Service) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) 
 	if strings.TrimSpace(set.StorageKey) == "" {
 		return TestcaseSet{}, apperror.BadRequest("testcase.archive_missing", "testcase archive storage key is missing")
 	}
-	p, err := s.problems.GetProblem(ctx, problemID)
+	p, err := s.repo.GetProblem(ctx, problemID)
 	if err != nil {
 		return TestcaseSet{}, err
 	}
@@ -917,7 +834,7 @@ func (s *Service) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) 
 }
 
 func (s *Service) GetForJudge(ctx context.Context, problemID int64) (Problem, error) {
-	p, err := s.problems.GetProblem(ctx, problemID)
+	p, err := s.repo.GetProblem(ctx, problemID)
 	if err != nil {
 		return Problem{}, err
 	}
@@ -936,7 +853,7 @@ func (s *Service) GetForJudge(ctx context.Context, problemID int64) (Problem, er
 }
 
 func (s *Service) AuthorizeProblemRejudge(ctx context.Context, actor auth.Actor, id int64) error {
-	problem, err := s.problems.GetProblem(ctx, id)
+	problem, err := s.repo.GetProblem(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -944,14 +861,14 @@ func (s *Service) AuthorizeProblemRejudge(ctx context.Context, actor auth.Actor,
 }
 
 func (s *Service) Stats(ctx context.Context, actor auth.Actor, problemID int64) (ProblemStats, error) {
-	p, err := s.problems.GetProblem(ctx, problemID)
+	p, err := s.repo.GetProblem(ctx, problemID)
 	if err != nil {
 		return ProblemStats{}, err
 	}
 	if err := canReadProblem(actor, p); err != nil {
 		return ProblemStats{}, err
 	}
-	stats, err := s.stats.GetProblemStats(ctx, problemID)
+	stats, err := s.repo.GetProblemStats(ctx, problemID)
 	if err != nil {
 		return ProblemStats{}, err
 	}
@@ -961,7 +878,7 @@ func (s *Service) Stats(ctx context.Context, actor auth.Actor, problemID int64) 
 	return stats, nil
 }
 
-func ensurePublishable(ctx context.Context, repo problemContentStore, problemID int64) error {
+func ensurePublishable(ctx context.Context, repo Repository, problemID int64) error {
 	readiness, err := loadProblemAuthoringReadiness(ctx, repo, problemID)
 	if err != nil {
 		return err
@@ -973,7 +890,7 @@ func ensurePublishable(ctx context.Context, repo problemContentStore, problemID 
 	return nil
 }
 
-func demotePublishedProblem(ctx context.Context, repo problemStatusUpdater, problem ProblemRecord) error {
+func demotePublishedProblem(ctx context.Context, repo Repository, problem ProblemRecord) error {
 	if problem.Status != StatusPublished {
 		return nil
 	}
@@ -989,7 +906,7 @@ type problemAuthoringReadiness struct {
 	blockers    []ProblemAuthoringBlocker
 }
 
-func loadProblemAuthoringReadiness(ctx context.Context, repo problemContentStore, problemID int64) (problemAuthoringReadiness, error) {
+func loadProblemAuthoringReadiness(ctx context.Context, repo Repository, problemID int64) (problemAuthoringReadiness, error) {
 	state := problemAuthoringReadiness{blockers: []ProblemAuthoringBlocker{}}
 	statement, err := repo.GetCurrentProblemStatement(ctx, problemID)
 	if err != nil {

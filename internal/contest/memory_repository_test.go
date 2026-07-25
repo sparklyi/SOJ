@@ -37,19 +37,7 @@ func (r *memoryRepository) id() int64 {
 	return r.nextID
 }
 
-func newServiceForTest(repo *memoryRepository, options ...Option) *Service {
-	return NewService(ServiceOptions{
-		Contests:      repo,
-		Catalog:       repo,
-		Registrations: repo,
-		Scoreboards:   repo,
-		Projections:   repo,
-		Archive:       repo,
-		Transactions:  repo,
-	}, options...)
-}
-
-func (r *memoryRepository) WithTx(ctx context.Context, fn func(context.Context, contestTransaction) error) error {
+func (r *memoryRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
 	return fn(ctx, r)
 }
 

@@ -8,11 +8,11 @@ import (
 
 func (s *Service) recordTerminalSubmission(ctx context.Context, terminal submission.TerminalSubmission) error {
 	contestID := *terminal.ContestID
-	contest, err := s.contests.GetContest(ctx, contestID)
+	contest, err := s.repo.GetContest(ctx, contestID)
 	if err != nil {
 		return err
 	}
-	problems, err := s.catalog.ListContestProblems(ctx, contestID)
+	problems, err := s.repo.ListContestProblems(ctx, contestID)
 	if err != nil {
 		return err
 	}
@@ -20,7 +20,7 @@ func (s *Service) recordTerminalSubmission(ctx context.Context, terminal submiss
 		return nil
 	}
 	existing := ContestProblemResult{ContestID: contestID, UserID: terminal.UserID, ProblemID: terminal.ProblemID, Status: CellNone}
-	results, err := s.projections.ListProblemResults(ctx, contestID)
+	results, err := s.repo.ListProblemResults(ctx, contestID)
 	if err != nil {
 		return err
 	}
@@ -48,6 +48,6 @@ func (s *Service) recordTerminalSubmission(ctx context.Context, terminal submiss
 	} else {
 		existing.Status = CellAttempted
 	}
-	_, err = s.projections.UpsertProblemResult(ctx, existing)
+	_, err = s.repo.UpsertProblemResult(ctx, existing)
 	return err
 }
