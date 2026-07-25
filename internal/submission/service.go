@@ -46,6 +46,27 @@ type SourceStore interface {
 	Get(ctx context.Context, storageKey string) ([]byte, error)
 }
 
+type submissionServiceStore interface {
+	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
+	CreateArtifact(context.Context, ArtifactRecord) (ArtifactRecord, error)
+	CreateSubmissionWithTask(context.Context, SubmissionRecord, time.Time) (SubmissionRecord, JudgeTaskRecord, error)
+	CreateRun(context.Context, RunRecord) (RunRecord, error)
+	UpdateRunStatus(context.Context, int64, judge.Result) (RunRecord, error)
+	GetSubmission(context.Context, int64) (SubmissionRecord, error)
+	ListSubmissions(context.Context, ListSubmissionsInput) ([]SubmissionRecord, int64, error)
+	ListSubmissionsByCursor(context.Context, ListSubmissionsInput) ([]SubmissionRecord, error)
+	ListSubmissionsByUserBefore(context.Context, int64, SubmissionCursor, int32) ([]SubmissionRecord, error)
+	ListSubmissionSummaries(context.Context, []int64, bool) (map[int64]SubmissionListSummary, error)
+	GetRun(context.Context, int64) (RunRecord, error)
+	CompleteSubmissionWithResult(context.Context, int64, judge.Result, int32) (SubmissionRecord, error)
+	GetSubmissionResult(context.Context, int64) (SubmissionResultRecord, error)
+	GetLatestJudgeAttemptBySubmissionID(context.Context, int64) (JudgeAttemptRecord, error)
+	ListJudgeCaseResults(context.Context, int64) ([]JudgeCaseResultRecord, error)
+	ListLanguages(context.Context, ListLanguagesInput) ([]LanguageRecord, int64, error)
+	UpsertLanguage(context.Context, judge.Language) (LanguageRecord, error)
+	UpdateLanguage(context.Context, int64, UpdateLanguageInput) (LanguageRecord, error)
+}
+
 type MemorySourceStore struct {
 	mu      sync.Mutex
 	objects map[string][]byte
@@ -76,7 +97,7 @@ func (s *MemorySourceStore) Get(ctx context.Context, storageKey string) ([]byte,
 }
 
 type Service struct {
-	repo          Repository
+	records       submissionServiceStore
 	problems      problem.Reader
 	testcases     problem.TestcaseResolver
 	queue         queue.TaskQueue
@@ -98,7 +119,7 @@ type Service struct {
 }
 
 type ServiceOptions struct {
-	Repository       Repository
+	Store            submissionServiceStore
 	ProblemReader    problem.Reader
 	TestcaseResolver problem.TestcaseResolver
 	Queue            queue.TaskQueue
@@ -178,7 +199,7 @@ func NewService(options ServiceOptions) *Service {
 	}
 	runCtx, runCancel := context.WithCancel(runParentCtx)
 	service := &Service{
-		repo:          options.Repository,
+		records:       options.Store,
 		problems:      options.ProblemReader,
 		testcases:     options.TestcaseResolver,
 		queue:         options.Queue,
@@ -256,7 +277,7 @@ func (s *Service) CreateSubmission(ctx context.Context, actor auth.Actor, input 
 	if err != nil {
 		return CreateSubmissionOutput{}, err
 	}
-	if _, err := s.repo.GetEnabledLanguage(ctx, input.LanguageID); err != nil {
+	if _, err := s.records.GetEnabledLanguage(ctx, input.LanguageID); err != nil {
 		return CreateSubmissionOutput{}, err
 	}
 
@@ -264,7 +285,7 @@ func (s *Service) CreateSubmission(ctx context.Context, actor auth.Actor, input 
 	if err != nil {
 		return CreateSubmissionOutput{}, err
 	}
-	artifact, err := s.repo.CreateArtifact(ctx, ArtifactRecord{
+	artifact, err := s.records.CreateArtifact(ctx, ArtifactRecord{
 		OwnerType:      "submission",
 		OwnerID:        actor.UserID,
 		Kind:           "source",
@@ -276,7 +297,7 @@ func (s *Service) CreateSubmission(ctx context.Context, actor auth.Actor, input 
 	if err != nil {
 		return CreateSubmissionOutput{}, err
 	}
-	sub, task, err := s.repo.CreateSubmissionWithTask(ctx, SubmissionRecord{
+	sub, task, err := s.records.CreateSubmissionWithTask(ctx, SubmissionRecord{
 		UserID:           actor.UserID,
 		ProblemID:        input.ProblemID,
 		ContestID:        input.ContestID,
@@ -312,7 +333,7 @@ func (s *Service) CreateRun(ctx context.Context, actor auth.Actor, input CreateR
 	if _, err := s.problems.GetForJudge(ctx, input.ProblemID); err != nil {
 		return CreateRunOutput{}, err
 	}
-	language, err := s.repo.GetEnabledLanguage(ctx, input.LanguageID)
+	language, err := s.records.GetEnabledLanguage(ctx, input.LanguageID)
 	if err != nil {
 		return CreateRunOutput{}, err
 	}
@@ -332,7 +353,7 @@ func (s *Service) CreateRun(ctx context.Context, actor auth.Actor, input CreateR
 	if err != nil {
 		return CreateRunOutput{}, err
 	}
-	artifact, err := s.repo.CreateArtifact(ctx, ArtifactRecord{
+	artifact, err := s.records.CreateArtifact(ctx, ArtifactRecord{
 		OwnerType:      "run",
 		OwnerID:        actor.UserID,
 		Kind:           "source",
@@ -348,7 +369,7 @@ func (s *Service) CreateRun(ctx context.Context, actor auth.Actor, input CreateR
 	if s.judge != nil {
 		status = StatusRunning
 	}
-	run, err := s.repo.CreateRun(ctx, RunRecord{
+	run, err := s.records.CreateRun(ctx, RunRecord{
 		UserID:           actor.UserID,
 		ProblemID:        input.ProblemID,
 		LanguageID:       input.LanguageID,
@@ -396,7 +417,7 @@ func (s *Service) completeRunAsync(runID int64, language LanguageRecord, source 
 	}
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), defaultRunFinalizeTimeout)
 	defer finalizeCancel()
-	run, err := s.repo.UpdateRunStatus(finalizeCtx, runID, result)
+	run, err := s.records.UpdateRunStatus(finalizeCtx, runID, result)
 	if err != nil {
 		return
 	}
@@ -451,7 +472,7 @@ func (s *Service) releaseRunExecution() {
 }
 
 func (s *Service) GetSubmission(ctx context.Context, actor auth.Actor, id int64) (SubmissionView, error) {
-	record, err := s.repo.GetSubmission(ctx, id)
+	record, err := s.records.GetSubmission(ctx, id)
 	if err != nil {
 		return SubmissionView{}, err
 	}
@@ -474,7 +495,7 @@ func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input L
 	if input.Offset < 0 {
 		input.Offset = 0
 	}
-	records, total, err := s.repo.ListSubmissions(ctx, input)
+	records, total, err := s.records.ListSubmissions(ctx, input)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -508,7 +529,7 @@ func (s *Service) ListSubmissionsByCursor(ctx context.Context, actor auth.Actor,
 	}
 	input.Cursor = &cursor
 	input.Limit++
-	records, err := s.repo.ListSubmissionsByCursor(ctx, input)
+	records, err := s.records.ListSubmissionsByCursor(ctx, input)
 	if err != nil {
 		return SubmissionCursorPage{}, err
 	}
@@ -545,7 +566,7 @@ func (s *Service) ListOwnSubmissionsByCursor(ctx context.Context, actor auth.Act
 		}
 		cursor = SubmissionCursor{SubmittedAt: input.Cursor.SubmittedAt.UTC(), ID: input.Cursor.ID}
 	}
-	records, err := s.repo.ListSubmissionsByUserBefore(ctx, actor.UserID, cursor, input.Limit+1)
+	records, err := s.records.ListSubmissionsByUserBefore(ctx, actor.UserID, cursor, input.Limit+1)
 	if err != nil {
 		return SubmissionCursorPage{}, err
 	}
@@ -579,7 +600,7 @@ func (s *Service) submissionListViews(ctx context.Context, actor auth.Actor, rec
 			includeAttempts = includeAttempts || visibility.ShowAdminDiagnostics
 		}
 	}
-	summaries, err := s.repo.ListSubmissionSummaries(ctx, submissionIDs, includeAttempts)
+	summaries, err := s.records.ListSubmissionSummaries(ctx, submissionIDs, includeAttempts)
 	if err != nil {
 		return nil, err
 	}
@@ -601,7 +622,7 @@ func (s *Service) submissionListViews(ctx context.Context, actor auth.Actor, rec
 }
 
 func (s *Service) GetRun(ctx context.Context, actor auth.Actor, id int64) (RunRecord, error) {
-	record, err := s.repo.GetRun(ctx, id)
+	record, err := s.records.GetRun(ctx, id)
 	if err != nil {
 		return RunRecord{}, err
 	}
@@ -612,22 +633,11 @@ func (s *Service) GetRun(ctx context.Context, actor auth.Actor, id int64) (RunRe
 }
 
 func (s *Service) CompleteSubmission(ctx context.Context, submissionID int64, result judge.Result) (SubmissionRecord, error) {
-	current, err := s.repo.GetSubmission(ctx, submissionID)
+	updated, completed, err := completeSubmission(ctx, s.records, submissionID, result)
 	if err != nil {
 		return SubmissionRecord{}, err
 	}
-	if terminalStatus(current.Status) {
-		return current, nil
-	}
-	score := int32(0)
-	if result.Verdict == judge.VerdictAccepted {
-		score = 100
-	}
-	updated, err := s.repo.CompleteSubmissionWithResult(ctx, submissionID, result, score)
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	if s.terminalHook != nil {
+	if completed && s.terminalHook != nil {
 		judgedAt := result.JudgedAt
 		if judgedAt.IsZero() {
 			judgedAt = s.now()
@@ -647,6 +657,30 @@ func (s *Service) CompleteSubmission(ctx context.Context, submissionID int64, re
 	return updated, nil
 }
 
+type submissionCompletionStore interface {
+	GetSubmission(context.Context, int64) (SubmissionRecord, error)
+	CompleteSubmissionWithResult(context.Context, int64, judge.Result, int32) (SubmissionRecord, error)
+}
+
+func completeSubmission(ctx context.Context, store submissionCompletionStore, submissionID int64, result judge.Result) (SubmissionRecord, bool, error) {
+	current, err := store.GetSubmission(ctx, submissionID)
+	if err != nil {
+		return SubmissionRecord{}, false, err
+	}
+	if terminalStatus(current.Status) {
+		return current, false, nil
+	}
+	score := int32(0)
+	if result.Verdict == judge.VerdictAccepted {
+		score = 100
+	}
+	updated, err := store.CompleteSubmissionWithResult(ctx, submissionID, result, score)
+	if err != nil {
+		return SubmissionRecord{}, false, err
+	}
+	return updated, true, nil
+}
+
 func (s *Service) submissionView(ctx context.Context, actor auth.Actor, record SubmissionRecord) (SubmissionView, error) {
 	visibility, err := s.submissionVisibility(ctx, actor, record)
 	if err != nil {
@@ -657,7 +691,7 @@ func (s *Service) submissionView(ctx context.Context, actor auth.Actor, record S
 	if !visibility.ShowResult || !terminalStatus(record.Status) {
 		return view, nil
 	}
-	result, err := s.repo.GetSubmissionResult(ctx, record.ID)
+	result, err := s.records.GetSubmissionResult(ctx, record.ID)
 	if err != nil {
 		if appErr, ok := err.(*apperror.Error); ok && appErr.HTTPStatus == 404 {
 			return view, nil
@@ -666,7 +700,7 @@ func (s *Service) submissionView(ctx context.Context, actor auth.Actor, record S
 	}
 	view.Result = &result
 
-	attempt, err := s.repo.GetLatestJudgeAttemptBySubmissionID(ctx, record.ID)
+	attempt, err := s.records.GetLatestJudgeAttemptBySubmissionID(ctx, record.ID)
 	if err != nil {
 		if appErr, ok := err.(*apperror.Error); ok && appErr.HTTPStatus == 404 {
 			return view, nil
@@ -677,7 +711,7 @@ func (s *Service) submissionView(ctx context.Context, actor auth.Actor, record S
 		view.AdminDiagnostics = &attempt
 	}
 	if visibility.ShowCases {
-		cases, err := s.repo.ListJudgeCaseResults(ctx, attempt.ID)
+		cases, err := s.records.ListJudgeCaseResults(ctx, attempt.ID)
 		if err != nil {
 			return SubmissionView{}, err
 		}
@@ -762,14 +796,14 @@ func contestSubmissionVisibility(record SubmissionRecord) ContestSubmissionVisib
 }
 
 func (s *Service) CompleteRun(ctx context.Context, runID int64, result judge.Result) (RunRecord, error) {
-	current, err := s.repo.GetRun(ctx, runID)
+	current, err := s.records.GetRun(ctx, runID)
 	if err != nil {
 		return RunRecord{}, err
 	}
 	if terminalStatus(current.Status) {
 		return current, nil
 	}
-	return s.repo.UpdateRunStatus(ctx, runID, result)
+	return s.records.UpdateRunStatus(ctx, runID, result)
 }
 
 type ListLanguagesInput struct {
@@ -792,7 +826,7 @@ func (s *Service) ListLanguages(ctx context.Context, actor auth.Actor, input Lis
 	if input.Limit <= 0 || input.Limit > 100 {
 		input.Limit = 50
 	}
-	return s.repo.ListLanguages(ctx, input)
+	return s.records.ListLanguages(ctx, input)
 }
 
 func (s *Service) ListPublicLanguages(ctx context.Context, actor auth.Actor, input ListLanguagesInput) ([]LanguageRecord, int64, error) {
@@ -801,7 +835,7 @@ func (s *Service) ListPublicLanguages(ctx context.Context, actor auth.Actor, inp
 	if input.Limit <= 0 || input.Limit > 100 {
 		input.Limit = 50
 	}
-	return s.repo.ListLanguages(ctx, input)
+	return s.records.ListLanguages(ctx, input)
 }
 
 func (s *Service) SyncLanguages(ctx context.Context, actor auth.Actor) ([]LanguageRecord, error) {
@@ -814,7 +848,7 @@ func (s *Service) SyncLanguages(ctx context.Context, actor auth.Actor) ([]Langua
 	}
 	out := make([]LanguageRecord, 0, len(languages))
 	for _, language := range languages {
-		record, err := s.repo.UpsertLanguage(ctx, language)
+		record, err := s.records.UpsertLanguage(ctx, language)
 		if err != nil {
 			return nil, err
 		}
@@ -827,7 +861,7 @@ func (s *Service) UpdateLanguage(ctx context.Context, actor auth.Actor, id int64
 	if !actor.Admin() {
 		return LanguageRecord{}, apperror.Forbidden("admin_required", "admin role required")
 	}
-	return s.repo.UpdateLanguage(ctx, id, input)
+	return s.records.UpdateLanguage(ctx, id, input)
 }
 
 func terminalStatus(status string) bool {

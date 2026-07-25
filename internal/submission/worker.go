@@ -16,8 +16,26 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+type taskWorkflowStore interface {
+	ClaimPendingJudgeTasks(context.Context, int32) ([]JudgeTaskRecord, error)
+	RetryJudgeTask(context.Context, int64, time.Time, string) (JudgeTaskRecord, error)
+	MarkJudgeTaskDispatched(context.Context, int64, string) (JudgeTaskRecord, error)
+	GetSubmission(context.Context, int64) (SubmissionRecord, error)
+	GetArtifact(context.Context, int64) (ArtifactRecord, error)
+	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
+	MarkSubmissionRunning(context.Context, int64) (SubmissionRecord, error)
+	EnsureJudgeAttempt(context.Context, EnsureJudgeAttemptInput) (JudgeAttemptRecord, error)
+	GetJudgeTask(context.Context, int64) (JudgeTaskRecord, error)
+	MarkJudgeTaskDone(context.Context, int64) (JudgeTaskRecord, error)
+	MarkJudgeTaskRunning(context.Context, int64) (JudgeTaskRecord, error)
+	MarkJudgeTaskDead(context.Context, int64, string) (JudgeTaskRecord, error)
+	MarkSubmissionSystemError(context.Context, int64, string) (SubmissionRecord, error)
+	MarkSubmissionQueued(context.Context, int64, string) (SubmissionRecord, error)
+	CompleteSubmissionWithResult(context.Context, int64, judge.Result, int32) (SubmissionRecord, error)
+}
+
 type Worker struct {
-	repo        Repository
+	workflow    taskWorkflowStore
 	queue       queue.TaskQueue
 	engine      judge.JudgeEngine
 	problems    problem.Reader
@@ -30,7 +48,7 @@ type Worker struct {
 }
 
 type WorkerOptions struct {
-	Repository       Repository
+	Store            taskWorkflowStore
 	Queue            queue.TaskQueue
 	Judge            judge.JudgeEngine
 	ProblemReader    problem.Reader
@@ -60,14 +78,14 @@ func NewWorker(options WorkerOptions) *Worker {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Worker{repo: options.Repository, queue: options.Queue, engine: options.Judge, problems: options.ProblemReader, testcases: options.TestcaseResolver, store: options.SourceStore, metrics: options.Metrics, maxAttempts: maxAttempts, backoff: backoff, now: now}
+	return &Worker{workflow: options.Store, queue: options.Queue, engine: options.Judge, problems: options.ProblemReader, testcases: options.TestcaseResolver, store: options.SourceStore, metrics: options.Metrics, maxAttempts: maxAttempts, backoff: backoff, now: now}
 }
 
 func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) {
 	if limit <= 0 {
 		limit = 16
 	}
-	tasks, err := w.repo.ClaimPendingJudgeTasks(ctx, limit)
+	tasks, err := w.workflow.ClaimPendingJudgeTasks(ctx, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -84,10 +102,10 @@ func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) 
 		streamID, err := w.queue.Publish(ctx, task.ID, payload)
 		if err != nil {
 			w.recordDispatch("error")
-			_, _ = w.repo.RetryJudgeTask(ctx, task.ID, w.now().Add(w.backoff(task.Attempts)), err.Error())
+			_, _ = w.workflow.RetryJudgeTask(ctx, task.ID, w.now().Add(w.backoff(task.Attempts)), err.Error())
 			return dispatched, err
 		}
-		if _, err := w.repo.MarkJudgeTaskDispatched(ctx, task.ID, streamID); err != nil {
+		if _, err := w.workflow.MarkJudgeTaskDispatched(ctx, task.ID, streamID); err != nil {
 			w.recordDispatch("error")
 			return dispatched, err
 		}
@@ -98,15 +116,15 @@ func (w *Worker) DispatchPending(ctx context.Context, limit int32) (int, error) 
 }
 
 func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgeevents.RequestEvent, error) {
-	submission, err := w.repo.GetSubmission(ctx, task.SubmissionID)
+	submission, err := w.workflow.GetSubmission(ctx, task.SubmissionID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
-	artifact, err := w.repo.GetArtifact(ctx, submission.SourceArtifactID)
+	artifact, err := w.workflow.GetArtifact(ctx, submission.SourceArtifactID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
-	language, err := w.repo.GetEnabledLanguage(ctx, submission.LanguageID)
+	language, err := w.workflow.GetEnabledLanguage(ctx, submission.LanguageID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
@@ -126,13 +144,13 @@ func (w *Worker) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgee
 	}
 	now := w.now()
 	if submission.Status == StatusQueued {
-		if _, err := w.repo.MarkSubmissionRunning(ctx, submission.ID); err != nil {
+		if _, err := w.workflow.MarkSubmissionRunning(ctx, submission.ID); err != nil {
 			return judgeevents.RequestEvent{}, err
 		}
 	}
 	fallbackTraceID := fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID)
 	traceID, traceContext := traceIdentityFromContext(ctx, fallbackTraceID)
-	attempt, err := w.repo.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
+	attempt, err := w.workflow.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
 		SubmissionID:    submission.ID,
 		TaskID:          task.ID,
 		LanguageID:      language.ID,
@@ -230,7 +248,7 @@ func (w *Worker) ProcessMessage(ctx context.Context, message queue.Message) erro
 }
 
 func (w *Worker) processMessage(ctx context.Context, message queue.Message) (string, error) {
-	task, err := w.repo.GetJudgeTask(ctx, message.TaskID)
+	task, err := w.workflow.GetJudgeTask(ctx, message.TaskID)
 	if err != nil {
 		return "error", err
 	}
@@ -238,25 +256,25 @@ func (w *Worker) processMessage(ctx context.Context, message queue.Message) (str
 		return "skipped", w.queue.Ack(ctx, message.ID)
 	}
 
-	submission, err := w.repo.GetSubmission(ctx, task.SubmissionID)
+	submission, err := w.workflow.GetSubmission(ctx, task.SubmissionID)
 	if err != nil {
 		return w.retryOrDead(ctx, message, task, err)
 	}
 	if terminalStatus(submission.Status) {
-		if _, err := w.repo.MarkJudgeTaskDone(ctx, task.ID); err != nil {
+		if _, err := w.workflow.MarkJudgeTaskDone(ctx, task.ID); err != nil {
 			return "error", err
 		}
 		return "skipped", w.queue.Ack(ctx, message.ID)
 	}
-	if _, err := w.repo.MarkJudgeTaskRunning(ctx, task.ID); err != nil {
+	if _, err := w.workflow.MarkJudgeTaskRunning(ctx, task.ID); err != nil {
 		return "error", err
 	}
 	if submission.Status == StatusQueued {
-		if _, err := w.repo.MarkSubmissionRunning(ctx, submission.ID); err != nil {
+		if _, err := w.workflow.MarkSubmissionRunning(ctx, submission.ID); err != nil {
 			return w.retryOrDead(ctx, message, task, err)
 		}
 	}
-	artifact, err := w.repo.GetArtifact(ctx, submission.SourceArtifactID)
+	artifact, err := w.workflow.GetArtifact(ctx, submission.SourceArtifactID)
 	if err != nil {
 		return w.retryOrDead(ctx, message, task, err)
 	}
@@ -264,7 +282,7 @@ func (w *Worker) processMessage(ctx context.Context, message queue.Message) (str
 	if err != nil {
 		return w.retryOrDead(ctx, message, task, err)
 	}
-	language, err := w.repo.GetEnabledLanguage(ctx, submission.LanguageID)
+	language, err := w.workflow.GetEnabledLanguage(ctx, submission.LanguageID)
 	if err != nil {
 		return w.retryOrDead(ctx, message, task, err)
 	}
@@ -289,11 +307,10 @@ func (w *Worker) processMessage(ctx context.Context, message queue.Message) (str
 	if err != nil {
 		return w.retryOrDead(ctx, message, task, err)
 	}
-	service := Service{repo: w.repo}
-	if _, err := service.CompleteSubmission(ctx, submission.ID, result); err != nil {
+	if _, _, err := completeSubmission(ctx, w.workflow, submission.ID, result); err != nil {
 		return w.retryOrDead(ctx, message, task, err)
 	}
-	if _, err := w.repo.MarkJudgeTaskDone(ctx, task.ID); err != nil {
+	if _, err := w.workflow.MarkJudgeTaskDone(ctx, task.ID); err != nil {
 		return "error", err
 	}
 	return "success", w.queue.Ack(ctx, message.ID)
@@ -302,10 +319,10 @@ func (w *Worker) processMessage(ctx context.Context, message queue.Message) (str
 func (w *Worker) retryOrDead(ctx context.Context, message queue.Message, task JudgeTaskRecord, cause error) (string, error) {
 	reason := cause.Error()
 	if task.Attempts >= w.maxAttempts {
-		if _, err := w.repo.MarkJudgeTaskDead(ctx, task.ID, reason); err != nil {
+		if _, err := w.workflow.MarkJudgeTaskDead(ctx, task.ID, reason); err != nil {
 			return "error", err
 		}
-		if _, err := w.repo.MarkSubmissionSystemError(ctx, task.SubmissionID, reason); err != nil {
+		if _, err := w.workflow.MarkSubmissionSystemError(ctx, task.SubmissionID, reason); err != nil {
 			return "error", err
 		}
 		if err := w.queue.DeadLetter(ctx, message, reason); err != nil {
@@ -313,10 +330,10 @@ func (w *Worker) retryOrDead(ctx context.Context, message queue.Message, task Ju
 		}
 		return "dead", w.queue.Ack(ctx, message.ID)
 	}
-	if _, err := w.repo.RetryJudgeTask(ctx, task.ID, w.now().Add(w.backoff(task.Attempts)), reason); err != nil {
+	if _, err := w.workflow.RetryJudgeTask(ctx, task.ID, w.now().Add(w.backoff(task.Attempts)), reason); err != nil {
 		return "error", err
 	}
-	if _, err := w.repo.MarkSubmissionQueued(ctx, task.SubmissionID, reason); err != nil {
+	if _, err := w.workflow.MarkSubmissionQueued(ctx, task.SubmissionID, reason); err != nil {
 		return "error", err
 	}
 	return "retry", w.queue.Ack(ctx, message.ID)

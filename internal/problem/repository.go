@@ -17,39 +17,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Repository interface {
-	WithTx(ctx context.Context, fn func(context.Context, Repository) error) error
-	CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error)
-	GetProblem(ctx context.Context, id int64) (ProblemRecord, error)
-	ListProblems(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error)
-	ListProblemsByCursor(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error)
-	CountProblems(ctx context.Context, filter ListProblemsFilter) (int64, error)
-	UpdateProblem(ctx context.Context, id int64, input UpdateProblemInput) (ProblemRecord, error)
-	ArchiveProblem(ctx context.Context, id int64) (ProblemRecord, error)
-	LockProblemForUpdate(ctx context.Context, id int64) (ProblemRecord, error)
-	NextProblemStatementVersion(ctx context.Context, problemID int64) (int32, error)
-	ClearCurrentProblemStatement(ctx context.Context, problemID int64) error
-	CreateProblemStatement(ctx context.Context, problemID int64, version int32, input CreateStatementInput) (Statement, error)
-	GetCurrentProblemStatement(ctx context.Context, problemID int64) (Statement, error)
-	ReplaceProblemTags(ctx context.Context, problemID int64, tags []TagInput) ([]Tag, error)
-	ListProblemTags(ctx context.Context, problemID int64) ([]Tag, error)
-	NextTestcaseSetVersion(ctx context.Context, problemID int64) (int32, error)
-	ClearCurrentTestcaseSet(ctx context.Context, problemID int64) error
-	CreateTestcaseSet(ctx context.Context, problemID int64, version int32, storageKey, checksum string, sizeBytes int64, caseCount int32, createdBy int64) (TestcaseSetRecord, error)
-	GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error)
-	CreateProblemCheckRun(ctx context.Context, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error)
-	GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error)
-	GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error)
-	ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error)
-	CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error)
-	FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error)
-	CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error)
-	GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error)
-	ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error)
-	CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error)
-	GetProblemStats(ctx context.Context, problemID int64) (ProblemStats, error)
-}
-
 type CreateProblemCheckRunInput struct {
 	ProblemID     int64
 	StatementID   int64
@@ -124,7 +91,7 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool, queries: db.New(pool)}
 }
 
-func (r *PostgresRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
+func (r *PostgresRepository) WithTx(ctx context.Context, fn func(context.Context, problemTransaction) error) error {
 	return postgres.WithPoolTx(ctx, r.pool, func(tx pgx.Tx) error {
 		return fn(ctx, &txRepository{queries: r.queries.WithTx(tx)})
 	})
@@ -300,7 +267,7 @@ type txRepository struct {
 	queries *db.Queries
 }
 
-func (r *txRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
+func (r *txRepository) WithTx(ctx context.Context, fn func(context.Context, problemTransaction) error) error {
 	return fn(ctx, r)
 }
 

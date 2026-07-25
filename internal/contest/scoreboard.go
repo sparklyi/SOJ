@@ -40,7 +40,7 @@ type ScoreboardCell struct {
 }
 
 func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, requested ScoreboardView) (ScoreboardResponse, error) {
-	contest, err := s.repo.GetContest(ctx, contestID)
+	contest, err := s.contests.GetContest(ctx, contestID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
@@ -52,7 +52,7 @@ func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID in
 		return ScoreboardResponse{}, err
 	}
 	if view == ScoreboardViewFinal || view == ScoreboardViewFrozen {
-		snapshot, err := s.repo.LatestScoreSnapshot(ctx, contestID, view)
+		snapshot, err := s.scoreboards.LatestScoreSnapshot(ctx, contestID, view)
 		if err == nil {
 			return snapshot.Board, nil
 		}
@@ -68,7 +68,7 @@ func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (S
 	if limit <= 0 {
 		limit = 100
 	}
-	candidates, err := s.repo.ListScoreSnapshotCandidates(ctx, s.now(), limit)
+	candidates, err := s.scoreboards.ListScoreSnapshotCandidates(ctx, s.now(), limit)
 	if err != nil {
 		return ScoreSnapshotGenerationResult{}, err
 	}
@@ -82,7 +82,7 @@ func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (S
 		if err != nil {
 			return result, err
 		}
-		if _, err := s.repo.CreateScoreSnapshot(ctx, ScoreboardSnapshot{
+		if _, err := s.scoreboards.CreateScoreSnapshot(ctx, ScoreboardSnapshot{
 			ContestID:   candidate.Contest.ID,
 			View:        candidate.View,
 			Board:       board,
@@ -101,16 +101,16 @@ func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (S
 }
 
 func (s *Service) buildScoreboard(ctx context.Context, contest ContestRecord, view ScoreboardView, generatedAt time.Time) (ScoreboardResponse, error) {
-	problems, err := s.repo.ListContestProblems(ctx, contest.ID)
+	problems, err := s.catalog.ListContestProblems(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
-	registrations, err := s.repo.ListRegistrations(ctx, contest.ID)
+	registrations, err := s.registrations.ListRegistrations(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
 	if view == ScoreboardViewFrozen {
-		submissions, err := s.repo.ListTerminalSubmissions(ctx, contest.ID)
+		submissions, err := s.scoreboards.ListTerminalSubmissions(ctx, contest.ID)
 		if err != nil {
 			return ScoreboardResponse{}, err
 		}
@@ -118,7 +118,7 @@ func (s *Service) buildScoreboard(ctx context.Context, contest ContestRecord, vi
 			return buildBoardFromSubmissions(contest, view, problems, registrations, submissions, generatedAt), nil
 		}
 	}
-	results, err := s.repo.ListProblemResults(ctx, contest.ID)
+	results, err := s.scoreboards.ListProblemResults(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}

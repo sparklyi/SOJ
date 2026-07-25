@@ -194,14 +194,14 @@ func publishAsyncResult(ctx context.Context, publisher ResultPublisher, request 
 }
 
 type ResultConsumerOptions struct {
-	Repository ResultConsumerRepository
+	Store resultConsumerStore
 }
 
 type ResultConsumer struct {
-	repo ResultConsumerRepository
+	store resultConsumerStore
 }
 
-type ResultConsumerRepository interface {
+type resultConsumerStore interface {
 	CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error)
 }
 
@@ -228,7 +228,7 @@ type EnsureJudgeAttemptInput struct {
 }
 
 func NewResultConsumer(options ResultConsumerOptions) *ResultConsumer {
-	return &ResultConsumer{repo: options.Repository}
+	return &ResultConsumer{store: options.Store}
 }
 
 func (c *ResultConsumer) ProcessResultMessage(ctx context.Context, message queue.Message, resultQueue queue.TaskQueue) error {
@@ -254,7 +254,7 @@ func (c *ResultConsumer) ProcessResultMessage(ctx context.Context, message queue
 	if result.JudgedAt.IsZero() {
 		result.JudgedAt = event.JudgedAt
 	}
-	if _, _, err := c.repo.CompleteJudgeAttemptResult(ctx, CompleteJudgeAttemptResultInput{
+	if _, _, err := c.store.CompleteJudgeAttemptResult(ctx, CompleteJudgeAttemptResultInput{
 		EventID:        event.EventID,
 		RequestEventID: event.RequestEventID,
 		AttemptKey:     event.AttemptID,
