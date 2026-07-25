@@ -27,7 +27,7 @@ import (
 func TestCompleteSubmissionSkipsExistingTerminalStatus(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.submissions[1] = SubmissionRecord{ID: 1, Status: StatusAccepted, Score: 100}
-	service := NewService(ServiceOptions{Repository: repo})
+	service := NewService(ServiceOptions{Store: repo})
 
 	got, err := service.CompleteSubmission(context.Background(), 1, judge.Result{Verdict: judge.VerdictWrongAnswer})
 	if err != nil {
@@ -41,7 +41,7 @@ func TestCompleteSubmissionSkipsExistingTerminalStatus(t *testing.T) {
 func TestCompleteSubmissionPersistsJudgeEvidence(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
-	service := NewService(ServiceOptions{Repository: repo})
+	service := NewService(ServiceOptions{Store: repo})
 	exitCode := int32(1)
 
 	got, err := service.CompleteSubmission(context.Background(), 1, judge.Result{
@@ -121,7 +121,7 @@ func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 	engine := judge.NewFakeEngine()
 	engine.SetError(errors.New("engine unavailable"))
 	worker := NewWorker(WorkerOptions{
-		Repository:       repo,
+		Store:            repo,
 		Queue:            q,
 		Judge:            engine,
 		ProblemReader:    fakeProblemReader{},
@@ -159,7 +159,7 @@ func TestWorkerDeadLetterOrderAcksOriginalWhenDeadStreamFails(t *testing.T) {
 	engine := judge.NewFakeEngine()
 	engine.SetError(errors.New("engine unavailable"))
 	worker := NewWorker(WorkerOptions{
-		Repository:       repo,
+		Store:            repo,
 		Queue:            q,
 		Judge:            engine,
 		ProblemReader:    fakeProblemReader{},
@@ -197,7 +197,7 @@ func TestWorkerRejudgesClaimedRunningTaskWhenSubmissionIsNotTerminal(t *testing.
 	q := &memoryQueue{}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted})
 	worker := NewWorker(WorkerOptions{
-		Repository:       repo,
+		Store:            repo,
 		Queue:            q,
 		Judge:            engine,
 		ProblemReader:    fakeProblemReader{},
@@ -230,7 +230,7 @@ func TestWorkerRecordsJudgeTaskMetrics(t *testing.T) {
 	store.objects["source"] = []byte("package main")
 	metrics := &recordingWorkerMetrics{}
 	worker := NewWorker(WorkerOptions{
-		Repository:       repo,
+		Store:            repo,
 		Queue:            &memoryQueue{},
 		Judge:            judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted}),
 		ProblemReader:    fakeProblemReader{},
@@ -255,7 +255,7 @@ func TestCreateRunJudgesCustomStdinImmediately(t *testing.T) {
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "42\n", TimeMS: 12, MemoryKB: 256})
 	service := NewService(ServiceOptions{
-		Repository:    repo,
+		Store:         repo,
 		ProblemReader: fakeProblemReader{},
 		SourceStore:   NewMemorySourceStore(),
 		Judge:         engine,
@@ -282,7 +282,7 @@ func TestListPublicLanguagesReturnsEnabledCatalogForRegularUsers(t *testing.T) {
 	repo.languages[1] = LanguageRecord{ID: 1, Engine: "soj-agent", EngineLanguageID: "go", Name: "Go", Enabled: true}
 	repo.languages[2] = LanguageRecord{ID: 2, Engine: "soj-agent", EngineLanguageID: "cpp17", Name: "C++17", Enabled: false}
 	repo.languages[3] = LanguageRecord{ID: 3, Engine: "legacy", EngineLanguageID: "py", Name: "Python", Enabled: true}
-	service := NewService(ServiceOptions{Repository: repo})
+	service := NewService(ServiceOptions{Store: repo})
 
 	engine := "soj-agent"
 	items, total, err := service.ListPublicLanguages(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, ListLanguagesInput{Engine: &engine})
@@ -303,7 +303,7 @@ func TestCreateRunReturnsRunningWhenShortWaitExpiresAndCompletesAsync(t *testing
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "ok\n"})
 	engine.SetDelay(50 * time.Millisecond)
 	service := NewService(ServiceOptions{
-		Repository:    repo,
+		Store:         repo,
 		ProblemReader: fakeProblemReader{},
 		SourceStore:   NewMemorySourceStore(),
 		Judge:         engine,
@@ -331,7 +331,7 @@ func TestCreateRunRejectsWhenExecutionCapacityIsExhausted(t *testing.T) {
 	engine := newBlockingRunJudge()
 	defer engine.unblock()
 	service := NewService(ServiceOptions{
-		Repository:    repo,
+		Store:         repo,
 		ProblemReader: fakeProblemReader{},
 		SourceStore:   NewMemorySourceStore(),
 		Judge:         engine,
@@ -368,7 +368,7 @@ func TestHandlerCreateRunReturnsServiceUnavailableWhenExecutionCapacityIsExhaust
 	engine := newBlockingRunJudge()
 	defer engine.unblock()
 	service := NewService(ServiceOptions{
-		Repository:    repo,
+		Store:         repo,
 		ProblemReader: fakeProblemReader{},
 		SourceStore:   NewMemorySourceStore(),
 		Judge:         engine,
@@ -407,7 +407,7 @@ func TestServiceCloseCancelsActiveRunAndRejectsNewRuns(t *testing.T) {
 	engine := newBlockingRunJudge()
 	defer engine.unblock()
 	service := NewService(ServiceOptions{
-		Repository:    repo,
+		Store:         repo,
 		ProblemReader: fakeProblemReader{},
 		SourceStore:   NewMemorySourceStore(),
 		Judge:         engine,
@@ -447,7 +447,7 @@ func TestCreateRunRejectsWhenRunContextIsCanceled(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	service := NewService(ServiceOptions{
-		Repository:    repo,
+		Store:         repo,
 		ProblemReader: fakeProblemReader{},
 		SourceStore:   NewMemorySourceStore(),
 		Judge:         judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted}),
@@ -555,7 +555,7 @@ func TestCreateSubmissionStoresSourceAndCreatesPendingTask(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true}
 	service := NewService(ServiceOptions{
-		Repository:       repo,
+		Store:            repo,
 		ProblemReader:    fakeProblemReader{},
 		TestcaseResolver: fakeTestcaseResolver{},
 		SourceStore:      NewMemorySourceStore(),
@@ -576,7 +576,7 @@ func TestCreateSubmissionRollsBackSubmissionWhenTaskCreationFails(t *testing.T) 
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true}
 	repo.failCreateJudgeTask = errors.New("task insert failed")
 	service := NewService(ServiceOptions{
-		Repository:       repo,
+		Store:            repo,
 		ProblemReader:    fakeProblemReader{},
 		TestcaseResolver: fakeTestcaseResolver{},
 		SourceStore:      NewMemorySourceStore(),
@@ -604,7 +604,7 @@ func TestWorkerDefaultRetryPolicyUsesFiveRetriesAndConfiguredBackoff(t *testing.
 	engine := judge.NewFakeEngine()
 	engine.SetError(errors.New("engine unavailable"))
 	worker := NewWorker(WorkerOptions{
-		Repository:       repo,
+		Store:            repo,
 		Queue:            &memoryQueue{},
 		Judge:            engine,
 		ProblemReader:    fakeProblemReader{},
@@ -634,7 +634,7 @@ func TestWorkerRetryAndDeadLetterSynchronizeSubmissionStatus(t *testing.T) {
 	engine := judge.NewFakeEngine()
 	engine.SetError(errors.New("engine unavailable"))
 	worker := NewWorker(WorkerOptions{
-		Repository:       repo,
+		Store:            repo,
 		Queue:            &memoryQueue{},
 		Judge:            engine,
 		ProblemReader:    fakeProblemReader{},
@@ -675,7 +675,7 @@ func TestWorkerUsesSubmissionTestcaseSetSnapshot(t *testing.T) {
 	}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted})
 	worker := NewWorker(WorkerOptions{
-		Repository:       repo,
+		Store:            repo,
 		Queue:            &memoryQueue{},
 		Judge:            engine,
 		ProblemReader:    fakeProblemReader{},
@@ -700,7 +700,7 @@ func TestHandlerCreateSubmissionAcceptsSourceCodeField(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true}
 	handler := NewHandler(NewService(ServiceOptions{
-		Repository:       repo,
+		Store:            repo,
 		ProblemReader:    fakeProblemReader{},
 		TestcaseResolver: fakeTestcaseResolver{},
 		SourceStore:      NewMemorySourceStore(),
@@ -736,7 +736,7 @@ func TestHandlerListsSubmissions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued}
-	handler := NewHandler(NewService(ServiceOptions{Repository: repo}))
+	handler := NewHandler(NewService(ServiceOptions{Store: repo}))
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions?problem_id=11", nil)
 	req.Header.Set("X-User-ID", "5")
@@ -768,7 +768,7 @@ func TestListSubmissionsBuildsBatchedSummariesWithoutCaseDetails(t *testing.T) {
 	repo := newMemoryRepo()
 	policy := &batchedSubmissionVisibilityPolicy{}
 	seedSubmissionListSummaries(repo, 5, 7)
-	service := NewService(ServiceOptions{Repository: repo, ContestPolicy: policy})
+	service := NewService(ServiceOptions{Store: repo, ContestPolicy: policy})
 
 	views, total, err := service.ListSubmissions(t.Context(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, ListSubmissionsInput{Limit: 50})
 	if err != nil {
@@ -804,7 +804,7 @@ func TestListOwnSubmissionsByCursorUsesKeysetPagination(t *testing.T) {
 	repo.submissions[3] = SubmissionRecord{ID: 3, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest}
 	repo.submissions[2] = SubmissionRecord{ID: 2, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: older}
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 6, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest.Add(time.Minute)}
-	service := NewService(ServiceOptions{Repository: repo})
+	service := NewService(ServiceOptions{Store: repo})
 	actor := auth.Actor{UserID: 5, Role: auth.RoleUser}
 
 	first, err := service.ListOwnSubmissionsByCursor(t.Context(), actor, ListOwnSubmissionsCursorInput{Limit: 2})
@@ -838,7 +838,7 @@ func TestListSubmissionsByCursorReturnsNextCursor(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.submissions[2] = SubmissionRecord{ID: 2, UserID: 10, ProblemID: 1, Status: StatusQueued, SubmittedAt: submittedAt}
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 10, ProblemID: 1, Status: StatusQueued, SubmittedAt: submittedAt}
-	service := NewService(ServiceOptions{Repository: repo})
+	service := NewService(ServiceOptions{Store: repo})
 
 	page, err := service.ListSubmissionsByCursor(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, ListSubmissionsInput{Limit: 1})
 	if err != nil {
@@ -870,7 +870,7 @@ func TestHandlerListsOwnSubmissionsByCursor(t *testing.T) {
 	repo.submissions[3] = SubmissionRecord{ID: 3, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest}
 	repo.submissions[2] = SubmissionRecord{ID: 2, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest.Add(-time.Minute)}
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, Status: StatusQueued, SubmittedAt: newest.Add(-2 * time.Minute)}
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Repository: repo})))}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Store: repo})))}})
 
 	firstReq := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/mine?page_size=2", nil)
 	firstReq.Header.Set("X-User-ID", "5")
@@ -940,7 +940,7 @@ func TestHandlerListsOwnSubmissionsByCursor(t *testing.T) {
 
 func TestHandlerRejectsInvalidOwnSubmissionCursor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Repository: newMemoryRepo()})))}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Store: newMemoryRepo()})))}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/mine?cursor=invalid", nil)
 	req.Header.Set("X-User-ID", "5")
 	req.Header.Set("X-User-Role", "user")
@@ -955,7 +955,7 @@ func TestHandlerRejectsInvalidOwnSubmissionCursor(t *testing.T) {
 
 func TestHandlerRejectsEmptyOwnSubmissionCursor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Repository: newMemoryRepo()})))}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{Store: newMemoryRepo()})))}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/mine?cursor=", nil)
 	req.Header.Set("X-User-ID", "5")
 	req.Header.Set("X-User-Role", "user")
@@ -980,7 +980,7 @@ func TestHandlerListsSubmissionSummariesWithoutCaseDetails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
 	seedSubmissionListSummaries(repo, 5, 7)
-	handler := NewHandler(NewService(ServiceOptions{Repository: repo, ContestPolicy: &batchedSubmissionVisibilityPolicy{}}))
+	handler := NewHandler(NewService(ServiceOptions{Store: repo, ContestPolicy: &batchedSubmissionVisibilityPolicy{}}))
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions", nil)
 	req.Header.Set("X-User-ID", "5")
@@ -1021,7 +1021,7 @@ func TestListSubmissionsIncludesDiagnosticsAllowedForNonAdmin(t *testing.T) {
 	repo := newMemoryRepo()
 	policy := &batchedSubmissionVisibilityPolicy{showAdminDiagnostics: true}
 	seedSubmissionListSummaries(repo, 5, 7)
-	service := NewService(ServiceOptions{Repository: repo, ContestPolicy: policy})
+	service := NewService(ServiceOptions{Store: repo, ContestPolicy: policy})
 
 	views, _, err := service.ListSubmissions(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, ListSubmissionsInput{Limit: 50})
 	if err != nil {
@@ -1085,7 +1085,7 @@ func TestHandlerSubmissionDetailProjectsSafeResultForOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
-	service := NewService(ServiceOptions{Repository: repo})
+	service := NewService(ServiceOptions{Store: repo})
 	_, err := service.CompleteSubmission(context.Background(), 1, judge.Result{
 		Verdict: judge.VerdictWrongAnswer,
 		Cases: []judge.CaseResult{
@@ -1138,7 +1138,7 @@ func TestHandlerSubmissionDetailIncludesAdminDiagnosticsForAdmin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
-	service := NewService(ServiceOptions{Repository: repo})
+	service := NewService(ServiceOptions{Store: repo})
 	_, err := service.CompleteSubmission(context.Background(), 1, judge.Result{
 		Verdict: judge.VerdictWrongAnswer,
 		Manifest: judge.Manifest{
@@ -1213,12 +1213,12 @@ func TestHandlerSubmissionDetailIncludesAsyncOTelTraceIDForAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal result event: %v", err)
 	}
-	consumer := NewResultConsumer(ResultConsumerOptions{Repository: repo})
+	consumer := NewResultConsumer(ResultConsumerOptions{Store: repo})
 	if err := consumer.ProcessResultMessage(context.Background(), queue.Message{ID: "2-0", TaskID: 7, Payload: payload}, &memoryQueue{}); err != nil {
 		t.Fatalf("ProcessResultMessage returned error: %v", err)
 	}
 
-	handler := NewHandler(NewService(ServiceOptions{Repository: repo}))
+	handler := NewHandler(NewService(ServiceOptions{Store: repo}))
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/1", nil)
 	req.Header.Set("X-User-ID", "99")
@@ -1253,7 +1253,7 @@ func TestFrozenContestSubmissionHidesResultForContestant(t *testing.T) {
 	contestID := int64(7)
 	judgedAt := freeze.Add(2 * time.Minute)
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, ContestID: &contestID, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning, SubmittedAt: freeze.Add(time.Minute), JudgedAt: &judgedAt}
-	service := NewService(ServiceOptions{Repository: repo, ContestPolicy: policy, Now: func() time.Time { return freeze.Add(30 * time.Minute) }})
+	service := NewService(ServiceOptions{Store: repo, ContestPolicy: policy, Now: func() time.Time { return freeze.Add(30 * time.Minute) }})
 	_, err := service.CompleteSubmission(context.Background(), 1, judge.Result{Verdict: judge.VerdictAccepted})
 	if err != nil {
 		t.Fatalf("CompleteSubmission returned error: %v", err)
@@ -1273,7 +1273,7 @@ func TestQueuedRejudgeSubmissionDoesNotExposePreviousResult(t *testing.T) {
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, Status: StatusQueued}
 	repo.results[1] = SubmissionResultRecord{SubmissionID: 1, AttemptID: 9, Status: StatusAccepted}
 	repo.attempts[9] = JudgeAttemptRecord{ID: 9, SubmissionID: int64Ptr(1), Status: StatusAccepted}
-	service := NewService(ServiceOptions{Repository: repo})
+	service := NewService(ServiceOptions{Store: repo})
 
 	view, err := service.GetSubmission(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, 1)
 	if err != nil {
@@ -1313,7 +1313,7 @@ func TestHandlerSyncLanguagesReturnsAcceptedEmptyForRoot(t *testing.T) {
 	repo := newMemoryRepo()
 	engine := judge.NewFakeEngine()
 	engine.SetLanguages([]judge.Language{{ID: 71, Name: "Go", Enabled: true}})
-	handler := NewHandler(NewService(ServiceOptions{Repository: repo, Judge: engine}))
+	handler := NewHandler(NewService(ServiceOptions{Store: repo, Judge: engine}))
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/languages/sync", nil)
 	req.Header.Set("X-User-ID", "1")
@@ -1339,7 +1339,7 @@ func TestHandlerCreateRunReturnsOpenAPIShapeAndShortWaitStatus(t *testing.T) {
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "ok\n"})
 	handler := NewHandler(NewService(ServiceOptions{
-		Repository:    repo,
+		Store:         repo,
 		ProblemReader: fakeProblemReader{},
 		SourceStore:   NewMemorySourceStore(),
 		Judge:         engine,

@@ -71,7 +71,16 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 	queries := db.New(pool)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
-	problemService := problem.NewService(problem.NewPostgresRepository(pool), objectStore)
+	problemRepo := problem.NewPostgresRepository(pool)
+	problemService := problem.NewService(problem.ServiceOptions{
+		Problems:     problemRepo,
+		Catalog:      problemRepo,
+		Content:      problemRepo,
+		Checks:       problemRepo,
+		Stats:        problemRepo,
+		Transactions: problemRepo,
+		Storage:      objectStore,
+	})
 	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStore)
 	taskQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
 		Stream:     cfg.Redis.Stream,
@@ -97,7 +106,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	judgeEngine := newJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	worker := submission.NewWorker(submission.WorkerOptions{
-		Repository:       submissionRepo,
+		Store:            submissionRepo,
 		Queue:            taskQueue,
 		Judge:            judgeEngine,
 		ProblemReader:    problemService,
@@ -105,9 +114,18 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		SourceStore:      sourceStore,
 		Metrics:          metrics,
 	})
-	resultConsumer := submission.NewResultConsumer(submission.ResultConsumerOptions{Repository: submissionRepo})
+	resultConsumer := submission.NewResultConsumer(submission.ResultConsumerOptions{Store: submissionRepo})
 	reconciler := submission.NewReconciler(submissionRepo, worker, nil, metrics)
-	contestService := contest.NewService(contest.NewPostgresRepository(pool))
+	contestRepo := contest.NewPostgresRepository(pool)
+	contestService := contest.NewService(contest.ServiceOptions{
+		Contests:      contestRepo,
+		Catalog:       contestRepo,
+		Registrations: contestRepo,
+		Scoreboards:   contestRepo,
+		Projections:   contestRepo,
+		Archive:       contestRepo,
+		Transactions:  contestRepo,
+	})
 
 	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)
 	router := httpapi.NewRouter(httpapi.RouterOptions{

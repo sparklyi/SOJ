@@ -71,13 +71,29 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	userRepo := user.NewPostgresRepository(queries)
 	userService := user.NewService(userRepo, jwtManager, user.WithTokenTTLs(cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL))
 	problemRepo := problem.NewPostgresRepository(pool)
-	problemService := problem.NewService(problemRepo, objectStorage)
+	problemService := problem.NewService(problem.ServiceOptions{
+		Problems:     problemRepo,
+		Catalog:      problemRepo,
+		Content:      problemRepo,
+		Checks:       problemRepo,
+		Stats:        problemRepo,
+		Transactions: problemRepo,
+		Storage:      objectStorage,
+	})
 	contestRepo := contest.NewPostgresRepository(pool)
-	contestService := contest.NewService(contestRepo)
+	contestService := contest.NewService(contest.ServiceOptions{
+		Contests:      contestRepo,
+		Catalog:       contestRepo,
+		Registrations: contestRepo,
+		Scoreboards:   contestRepo,
+		Projections:   contestRepo,
+		Archive:       contestRepo,
+		Transactions:  contestRepo,
+	})
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
 	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStorage)
 	submissionService := submission.NewService(submission.ServiceOptions{
-		Repository:       submissionRepo,
+		Store:            submissionRepo,
 		ProblemReader:    problemService,
 		TestcaseResolver: testcaseResolver,
 		SourceStore:      submission.NewObjectSourceStore(objectStorage),

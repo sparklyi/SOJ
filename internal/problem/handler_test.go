@@ -152,7 +152,7 @@ func TestGetProblemCheckRejectsInvalidCheckID(t *testing.T) {
 func TestUploadTestcasesMissingArchiveReturnsTestcaseNotReady(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
-	service := NewService(repo, &fakeStorage{})
+	service := newServiceForTest(repo, &fakeStorage{})
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", strings.NewReader("case_count=1"))
@@ -173,7 +173,7 @@ func TestUploadTestcasesMissingArchiveReturnsTestcaseNotReady(t *testing.T) {
 func TestUploadTestcasesRejectsOversizedContentLengthBeforeMultipartParsing(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
-	service := NewService(repo, &fakeStorage{})
+	service := newServiceForTest(repo, &fakeStorage{})
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", strings.NewReader("archive=x"))
@@ -195,7 +195,7 @@ func TestUploadTestcasesRejectsOversizedContentLengthBeforeMultipartParsing(t *t
 func TestUploadTestcasesRejectsOversizedMultipartWithUnknownContentLength(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
-	handler := NewHandler(NewService(repo, &fakeStorage{}))
+	handler := NewHandler(newServiceForTest(repo, &fakeStorage{}))
 	router := httpapi.NewRouter(httpapi.RouterOptions{})
 	router.POST("/problems/:id/testcase-upload", func(c *gin.Context) {
 		handler.uploadTestcasesWithRequestLimit(c, 128)
@@ -237,7 +237,7 @@ func TestGetProblemAuthoringStateReturnsOwnerWorkspace(t *testing.T) {
 		ID: 1, ProblemID: 1, StatementID: 3, TestcaseSetID: 7, Status: ProblemCheckStatusCompleted,
 		Summary: json.RawMessage(`{"valid":true}`),
 	}
-	service := NewService(repo, &fakeStorage{})
+	service := newServiceForTest(repo, &fakeStorage{})
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems/1/authoring", nil)
 	req.Header.Set("X-User-ID", "10")
@@ -263,7 +263,7 @@ func TestGetProblemAuthoringStateReturnsOwnerWorkspace(t *testing.T) {
 func TestListProblemsMineScopesRequestToCurrentUser(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Owned", Status: StatusDraft, Visibility: VisibilityPrivate}
-	service := NewService(repo, &fakeStorage{})
+	service := newServiceForTest(repo, &fakeStorage{})
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems?mine=true", nil)
 	req.Header.Set("X-User-ID", "10")
@@ -282,7 +282,7 @@ func TestListProblemsMineScopesRequestToCurrentUser(t *testing.T) {
 
 func TestCreateProblemStoresTags(t *testing.T) {
 	repo := newFakeRepository()
-	service := NewService(repo, &fakeStorage{})
+	service := newServiceForTest(repo, &fakeStorage{})
 
 	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, CreateProblemInput{
 		Title:         "Two Sum",
