@@ -71,16 +71,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 	queries := db.New(pool)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
-	problemRepo := problem.NewPostgresRepository(pool)
-	problemService := problem.NewService(problem.ServiceOptions{
-		Problems:     problemRepo,
-		Catalog:      problemRepo,
-		Content:      problemRepo,
-		Checks:       problemRepo,
-		Stats:        problemRepo,
-		Transactions: problemRepo,
-		Storage:      objectStore,
-	})
+	problemService := problem.NewService(problem.NewPostgresRepository(pool), objectStore)
 	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStore)
 	taskQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
 		Stream:     cfg.Redis.Stream,
@@ -105,8 +96,16 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	}
 	judgeEngine := newJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStore)
-	worker := submission.NewWorker(submission.WorkerOptions{
+	dispatcher := submission.NewTaskDispatcher(submission.TaskDispatcherOptions{
 		Store:            submissionRepo,
+		Queue:            taskQueue,
+		TestcaseResolver: testcaseResolver,
+		Metrics:          metrics,
+	})
+	failures := submission.NewTaskFailureHandler(submissionRepo, taskQueue, 0, nil, nil)
+	processor := submission.NewTaskProcessor(submission.TaskProcessorOptions{
+		Store:            submissionRepo,
+		Failures:         failures,
 		Queue:            taskQueue,
 		Judge:            judgeEngine,
 		ProblemReader:    problemService,
@@ -114,18 +113,10 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		SourceStore:      sourceStore,
 		Metrics:          metrics,
 	})
-	resultConsumer := submission.NewResultConsumer(submission.ResultConsumerOptions{Store: submissionRepo})
-	reconciler := submission.NewReconciler(submissionRepo, worker, nil, metrics)
-	contestRepo := contest.NewPostgresRepository(pool)
-	contestService := contest.NewService(contest.ServiceOptions{
-		Contests:      contestRepo,
-		Catalog:       contestRepo,
-		Registrations: contestRepo,
-		Scoreboards:   contestRepo,
-		Projections:   contestRepo,
-		Archive:       contestRepo,
-		Transactions:  contestRepo,
-	})
+	worker := submission.NewWorker(dispatcher, processor, taskQueue)
+	resultConsumer := submission.NewResultConsumer(submissionRepo)
+	reconciler := submission.NewReconciler(submissionRepo, taskQueue, worker, nil, metrics)
+	contestService := contest.NewService(contest.NewPostgresRepository(pool))
 
 	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)
 	router := httpapi.NewRouter(httpapi.RouterOptions{

@@ -3,6 +3,8 @@ package submission
 import (
 	"context"
 	"time"
+
+	"SOJ/internal/queue"
 )
 
 type reconciliationStore interface {
@@ -10,9 +12,14 @@ type reconciliationStore interface {
 	ResetStaleJudgeTasks(context.Context, time.Time, string) ([]JudgeTaskRecord, error)
 }
 
+type taskMessageProcessor interface {
+	ProcessMessage(context.Context, queue.Message) error
+}
+
 type Reconciler struct {
 	store   reconciliationStore
-	worker  *Worker
+	queue   staleTaskClaimer
+	process taskMessageProcessor
 	now     func() time.Time
 	metrics ReconcilerMetrics
 }
@@ -21,7 +28,7 @@ type ReconcilerMetrics interface {
 	RecordReconcilerAction(action, result string, count int)
 }
 
-func NewReconciler(store reconciliationStore, worker *Worker, now func() time.Time, metrics ...ReconcilerMetrics) *Reconciler {
+func NewReconciler(store reconciliationStore, taskQueue staleTaskClaimer, processor taskMessageProcessor, now func() time.Time, metrics ...ReconcilerMetrics) *Reconciler {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
@@ -29,18 +36,18 @@ func NewReconciler(store reconciliationStore, worker *Worker, now func() time.Ti
 	if len(metrics) > 0 {
 		recorder = metrics[0]
 	}
-	return &Reconciler{store: store, worker: worker, now: now, metrics: recorder}
+	return &Reconciler{store: store, queue: taskQueue, process: processor, now: now, metrics: recorder}
 }
 
 func (r *Reconciler) ClaimStaleTasks(ctx context.Context, minIdle time.Duration, limit int) (int, error) {
-	messages, err := r.worker.queue.ClaimStale(ctx, minIdle, limit)
+	messages, err := r.queue.ClaimStale(ctx, minIdle, limit)
 	if err != nil {
 		r.record("claim_stale_tasks", "error", 1)
 		return 0, err
 	}
 	processed := 0
 	for _, message := range messages {
-		if err := r.worker.ProcessMessage(ctx, message); err != nil {
+		if err := r.process.ProcessMessage(ctx, message); err != nil {
 			r.record("claim_stale_tasks", "error", 1)
 			return processed, err
 		}

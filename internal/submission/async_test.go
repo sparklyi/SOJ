@@ -25,8 +25,8 @@ func TestDispatcherPublishesRequestEventWithoutCallingJudgeEngine(t *testing.T) 
 	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted})
 	q := &memoryQueue{}
-	worker := NewWorker(WorkerOptions{
-		Store:            repo,
+	worker := newWorkerForTest(workerTestOptions{
+		Repository:       repo,
 		Queue:            q,
 		Judge:            engine,
 		ProblemReader:    fakeProblemReader{},
@@ -93,8 +93,8 @@ func TestDispatcherPublishesW3CTraceContextFromActiveSpan(t *testing.T) {
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source/key", ChecksumSHA256: "sha256:source", SizeBytes: 12}
 	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	q := &memoryQueue{}
-	worker := NewWorker(WorkerOptions{
-		Store:            repo,
+	worker := newWorkerForTest(workerTestOptions{
+		Repository:       repo,
 		Queue:            q,
 		Judge:            judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted}),
 		ProblemReader:    fakeProblemReader{},
@@ -322,7 +322,7 @@ func TestResultConsumerIsIdempotentAndAcksAfterPersist(t *testing.T) {
 		t.Fatalf("marshal result: %v", err)
 	}
 	q := &memoryQueue{events: &repo.events}
-	consumer := NewResultConsumer(ResultConsumerOptions{Store: repo})
+	consumer := NewResultConsumer(repo)
 
 	if err := consumer.ProcessResultMessage(ctx, queue.Message{ID: "2-0", TaskID: 7, Payload: payload}, q); err != nil {
 		t.Fatalf("first ProcessResultMessage returned error: %v", err)

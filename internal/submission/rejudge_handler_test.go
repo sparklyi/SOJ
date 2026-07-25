@@ -17,7 +17,7 @@ func TestRejudgeHandlerCreateDetailAndCancel(t *testing.T) {
 		batch:   RejudgeBatchRecord{ID: 7, ProblemID: int64Ptr(11), RequestedBy: 5, Status: RejudgeBatchStatusRunning, TotalCount: 2},
 	}
 	rejudge := NewRejudgeService(repo, &fakeRejudgePolicy{}, time.Now)
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(NewService(ServiceOptions{}), rejudge))}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(NewHandler(newServiceForTest(serviceTestOptions{}), rejudge))}})
 
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/rejudge-batches", bytes.NewBufferString(`{"problem_id":11,"reason":"fixed testcase"}`))
 	create.Header.Set("Content-Type", "application/json")
