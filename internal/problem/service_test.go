@@ -22,7 +22,7 @@ func TestProblemAuthorizationAllowsOwnerAndAdmin(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	store := &fakeStorage{}
-	service := NewService(repo, store)
+	service := newProblemService(repo, store)
 	title := "Updated"
 
 	_, err := service.UpdateProblem(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1, UpdateProblemInput{Title: &title})
@@ -36,10 +36,24 @@ func TestProblemAuthorizationAllowsOwnerAndAdmin(t *testing.T) {
 	}
 }
 
+func newProblemService(repo *fakeRepository, objectStore *fakeStorage) *Service {
+	var readerArchives testcaseArchiveReader
+	var authoringArchives testcaseArchiveWriter
+	if objectStore != nil {
+		readerArchives = objectStore
+		authoringArchives = objectStore
+	}
+	return NewService(
+		NewProblemReader(repo, readerArchives),
+		NewProblemAuthoring(repo, authoringArchives),
+		NewProblemCheckService(repo, readerArchives, time.Now),
+	)
+}
+
 func TestAuthorizeProblemRejudgeUsesProblemOwnership(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 
 	if err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1); err != nil {
 		t.Fatalf("owner authorization returned error: %v", err)
@@ -83,7 +97,7 @@ func TestPublishRequiresValidCheckForCurrentTestcaseSet(t *testing.T) {
 			if tt.seedRun != nil {
 				repo.checkRuns[tt.seedRun.ID] = *tt.seedRun
 			}
-			service := NewService(repo, &fakeStorage{})
+			service := newProblemService(repo, &fakeStorage{})
 			status := StatusPublished
 
 			_, err := service.UpdateProblem(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, UpdateProblemInput{Status: &status})
@@ -100,7 +114,7 @@ func TestPublishAllowsValidCheckForCurrentTestcaseSet(t *testing.T) {
 		ID: 1, ProblemID: 1, StatementID: 3, TestcaseSetID: 7, Status: ProblemCheckStatusCompleted,
 		Summary: json.RawMessage(`{"valid":true,"error_count":0}`),
 	}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 	status := StatusPublished
 
 	updated, err := service.UpdateProblem(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, UpdateProblemInput{Status: &status})
@@ -122,7 +136,7 @@ func TestSavingNewStatementInvalidatesPreviousValidCheck(t *testing.T) {
 		Summary: json.RawMessage(`{"valid":true,"error_count":0}`),
 	}
 	store := &fakeStorage{}
-	service := NewService(repo, store)
+	service := newProblemService(repo, store)
 	actor := auth.Actor{UserID: 10, Role: auth.RoleUser}
 
 	statement, err := service.CreateStatement(t.Context(), actor, 1, CreateStatementInput{
@@ -176,7 +190,7 @@ func TestSavingNewStatementInvalidatesPreviousValidCheck(t *testing.T) {
 func TestProblemAuthoringStateReportsPublishBlockers(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 
 	state, err := service.GetProblemAuthoringState(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1)
 
@@ -198,7 +212,7 @@ func TestProblemAuthoringStateReturnsCurrentValidCheck(t *testing.T) {
 		ID: 1, ProblemID: 1, StatementID: 3, TestcaseSetID: 7, Status: ProblemCheckStatusCompleted,
 		Summary: json.RawMessage(`{"valid":true}`),
 	}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 
 	state, err := service.GetProblemAuthoringState(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1)
 
@@ -215,7 +229,7 @@ func TestProblemAuthoringStateReturnsCurrentValidCheck(t *testing.T) {
 
 func TestListProblemsMineRequiresAuthentication(t *testing.T) {
 	repo := newFakeRepository()
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 
 	_, err := service.ListProblems(t.Context(), auth.Actor{}, ListProblemsFilter{Mine: true})
 
@@ -235,7 +249,7 @@ func TestListProblemsByCursorReturnsNextCursor(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[2] = ProblemRecord{ID: 2, Title: "Second", Slug: "second", Status: StatusPublished, Visibility: VisibilityPublic, CreatedAt: now.Add(-time.Minute)}
 	repo.problems[1] = ProblemRecord{ID: 1, Title: "First", Slug: "first", Status: StatusPublished, Visibility: VisibilityPublic, CreatedAt: now.Add(-2 * time.Minute)}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 
 	page, err := service.ListProblemsByCursor(context.Background(), auth.Anonymous("req"), ListProblemsFilter{PageSize: 1})
 	if err != nil {
@@ -260,7 +274,7 @@ func TestListProblemsByCursorReturnsNextCursor(t *testing.T) {
 func TestCreateStatementSwitchesCurrentVersion(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 	actor := auth.Actor{UserID: 10, Role: auth.RoleUser}
 
 	first, err := service.CreateStatement(context.Background(), actor, 1, CreateStatementInput{Title: "A", Description: "desc"})
@@ -286,7 +300,7 @@ func TestCreateStatementSwitchesCurrentVersion(t *testing.T) {
 func TestCreateStatementDemotesPublishedProblemToDraft(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 
 	_, err := service.CreateStatement(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, CreateStatementInput{Title: "Updated", Description: "desc"})
 
@@ -302,7 +316,7 @@ func TestUploadTestcaseArchiveValidationFailure(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	store := &fakeStorage{}
-	service := NewService(repo, store)
+	service := newProblemService(repo, store)
 
 	archive := zipArchive(t, map[string]string{"input1.txt": "1\n", "output1.txt": "1\n"})
 	_, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, UploadTestcaseInput{
@@ -319,7 +333,7 @@ func TestUploadTestcaseArchiveValidationFailure(t *testing.T) {
 func TestUploadTestcaseArchiveRejectsIllegalFileName(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 	archive := zipArchive(t, map[string]string{
 		"input1.txt":  "1\n",
 		"output1.txt": "1\n",
@@ -340,7 +354,7 @@ func TestUploadTestcaseArchiveDeletesObjectWhenTransactionFails(t *testing.T) {
 	repo.failCreateTestcaseSet = true
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	store := &fakeStorage{}
-	service := NewService(repo, store)
+	service := newProblemService(repo, store)
 	archive := zipArchive(t, map[string]string{"input1.txt": "1\n", "output1.txt": "1\n"})
 
 	_, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, UploadTestcaseInput{
@@ -359,7 +373,7 @@ func TestUploadTestcaseArchiveDeletesObjectWhenTransactionFails(t *testing.T) {
 func TestUploadTestcaseArchiveDemotesPublishedProblemToDraft(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic}
-	service := NewService(repo, &fakeStorage{})
+	service := newProblemService(repo, &fakeStorage{})
 	archive := zipArchive(t, map[string]string{"input1.txt": "1\n", "output1.txt": "1\n"})
 
 	_, err := service.UploadTestcaseArchive(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, UploadTestcaseInput{Content: archive, CaseCount: 1, ChecksumSHA256: sha256Hex(archive)})
@@ -401,7 +415,7 @@ func TestCurrentReadyTestcaseSetLoadsCasesFromArchive(t *testing.T) {
 	store := &fakeStorage{objects: map[string][]byte{"cases.zip": archive}}
 	repo.testcaseSets[7] = TestcaseSetRecord{ID: 7, ProblemID: 1, Version: 3, StorageKey: "cases.zip", CaseCount: 2, Status: TestcaseStatusReady, IsCurrent: true}
 	repo.currentTestcase[1] = 7
-	service := NewService(repo, store)
+	service := newProblemService(repo, store)
 
 	got, err := service.CurrentReadyTestcaseSet(context.Background(), 1)
 	if err != nil {
@@ -425,7 +439,7 @@ func TestCurrentReadyTestcaseSetRequiresStorage(t *testing.T) {
 	repo := newFakeRepository()
 	repo.testcaseSets[7] = TestcaseSetRecord{ID: 7, ProblemID: 1, Version: 3, StorageKey: "cases.zip", CaseCount: 1, Status: TestcaseStatusReady, IsCurrent: true}
 	repo.currentTestcase[1] = 7
-	service := NewService(repo, nil)
+	service := newProblemService(repo, nil)
 
 	_, err := service.CurrentReadyTestcaseSet(context.Background(), 1)
 	assertAppCode(t, err, "service_unavailable")
@@ -435,7 +449,7 @@ func TestConcurrentUploadSerializesVersionAllocation(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	store := &fakeStorage{delay: 20 * time.Millisecond}
-	service := NewService(repo, store)
+	service := newProblemService(repo, store)
 	archive := zipArchive(t, map[string]string{"input1.txt": "1\n", "output1.txt": "1\n"})
 	actor := auth.Actor{UserID: 10, Role: auth.RoleUser}
 
@@ -480,7 +494,7 @@ func TestRunProblemCheckRequiresOwnerOrAdmin(t *testing.T) {
 		"input1.txt":  "1\n",
 		"output1.txt": "1\n",
 	}), 1)
-	service := NewService(repo, store)
+	service := newProblemService(repo, store)
 
 	_, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1)
 	assertAppCode(t, err, "problem.forbidden")
@@ -502,8 +516,8 @@ func TestRunProblemCheckPersistsCompletedRunAndSummary(t *testing.T) {
 		"input2.txt":  "2 3\n",
 		"output2.txt": "5\n",
 	}), 2)
-	service := NewService(repo, store)
-	service.now = func() time.Time { return time.Unix(100, 0).UTC() }
+	service := newProblemService(repo, store)
+	service.checks.now = func() time.Time { return time.Unix(100, 0).UTC() }
 
 	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1)
 	if err != nil {
@@ -580,7 +594,7 @@ func TestRunProblemCheckReportsArchiveFindings(t *testing.T) {
 			repo := newFakeRepository()
 			store := &fakeStorage{}
 			seedProblemCheckData(t, repo, store, `[]`, tt.archive, tt.caseCount)
-			service := NewService(repo, store)
+			service := newProblemService(repo, store)
 
 			result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1)
 			if err != nil {
@@ -621,7 +635,7 @@ func TestRunProblemCheckReportsStatementSampleJSONFindings(t *testing.T) {
 				"input1.txt":  "1\n",
 				"output1.txt": "1\n",
 			}), 1)
-			service := NewService(repo, store)
+			service := newProblemService(repo, store)
 
 			result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1)
 			if err != nil {
@@ -640,7 +654,7 @@ func TestGetProblemCheckReturnsCheckNotFoundForMissingRun(t *testing.T) {
 		"input1.txt":  "1\n",
 		"output1.txt": "1\n",
 	}), 1)
-	service := NewService(repo, store)
+	service := newProblemService(repo, store)
 
 	_, err := service.GetProblemCheck(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, 99)
 
@@ -728,7 +742,13 @@ func newFakeRepository() *fakeRepository {
 	}
 }
 
-func (r *fakeRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
+func (r *fakeRepository) WithProblemAuthoringTx(ctx context.Context, fn func(context.Context, problemAuthoringTx) error) error {
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
+	return fn(ctx, r)
+}
+
+func (r *fakeRepository) WithProblemCheckTx(ctx context.Context, fn func(context.Context, problemCheckTx) error) error {
 	r.txMu.Lock()
 	defer r.txMu.Unlock()
 	return fn(ctx, r)
@@ -1043,36 +1063,6 @@ func (r *fakeRepository) GetLatestCompletedProblemCheckRun(ctx context.Context, 
 	return latest, nil
 }
 
-func (r *fakeRepository) ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	runs := make([]ProblemCheckRunRecord, 0)
-	for _, run := range r.checkRuns {
-		if run.ProblemID == filter.ProblemID {
-			runs = append(runs, run)
-		}
-	}
-	sort.Slice(runs, func(i, j int) bool {
-		if runs[i].CreatedAt.Equal(runs[j].CreatedAt) {
-			return runs[i].ID > runs[j].ID
-		}
-		return runs[i].CreatedAt.After(runs[j].CreatedAt)
-	})
-	if filter.Offset >= int32(len(runs)) {
-		return nil, nil
-	}
-	start := int(filter.Offset)
-	end := start + int(filter.Limit)
-	if filter.Limit <= 0 {
-		end = start
-	}
-	if end > len(runs) {
-		end = len(runs)
-	}
-	return append([]ProblemCheckRunRecord(nil), runs[start:end]...), nil
-}
-
 func (r *fakeRepository) CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1089,28 +1079,6 @@ func (r *fakeRepository) CompleteProblemCheckRun(ctx context.Context, input Comp
 	run.Status = ProblemCheckStatusCompleted
 	run.Summary = jsonRawFromDB(input.Summary)
 	run.ErrorMessage = ""
-	run.FinishedAt = finishedAt
-	run.UpdatedAt = now
-	r.checkRuns[run.ID] = run
-	return run, nil
-}
-
-func (r *fakeRepository) FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	run, ok := r.checkRuns[input.ID]
-	if !ok || (run.Status != ProblemCheckStatusQueued && run.Status != ProblemCheckStatusRunning) {
-		return ProblemCheckRunRecord{}, apperror.NotFound("problem.not_found", "problem not found")
-	}
-	now := time.Now()
-	finishedAt := input.FinishedAt
-	if finishedAt.IsZero() {
-		finishedAt = now
-	}
-	run.Status = ProblemCheckStatusFailed
-	run.Summary = jsonRawFromDB(input.Summary)
-	run.ErrorMessage = input.ErrorMessage
 	run.FinishedAt = finishedAt
 	run.UpdatedAt = now
 	r.checkRuns[run.ID] = run
@@ -1135,20 +1103,6 @@ func (r *fakeRepository) CreateProblemCheckFinding(ctx context.Context, input Cr
 	}
 	r.checkFindings[finding.RunID] = append(r.checkFindings[finding.RunID], finding)
 	return finding, nil
-}
-
-func (r *fakeRepository) GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	for _, findings := range r.checkFindings {
-		for _, finding := range findings {
-			if finding.ID == id {
-				return finding, nil
-			}
-		}
-	}
-	return ProblemCheckFindingRecord{}, apperror.NotFound("problem.not_found", "problem not found")
 }
 
 func (r *fakeRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
