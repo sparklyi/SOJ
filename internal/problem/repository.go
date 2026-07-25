@@ -17,39 +17,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Repository interface {
-	WithTx(ctx context.Context, fn func(context.Context, Repository) error) error
-	CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error)
-	GetProblem(ctx context.Context, id int64) (ProblemRecord, error)
-	ListProblems(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error)
-	ListProblemsByCursor(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error)
-	CountProblems(ctx context.Context, filter ListProblemsFilter) (int64, error)
-	UpdateProblem(ctx context.Context, id int64, input UpdateProblemInput) (ProblemRecord, error)
-	ArchiveProblem(ctx context.Context, id int64) (ProblemRecord, error)
-	LockProblemForUpdate(ctx context.Context, id int64) (ProblemRecord, error)
-	NextProblemStatementVersion(ctx context.Context, problemID int64) (int32, error)
-	ClearCurrentProblemStatement(ctx context.Context, problemID int64) error
-	CreateProblemStatement(ctx context.Context, problemID int64, version int32, input CreateStatementInput) (Statement, error)
-	GetCurrentProblemStatement(ctx context.Context, problemID int64) (Statement, error)
-	ReplaceProblemTags(ctx context.Context, problemID int64, tags []TagInput) ([]Tag, error)
-	ListProblemTags(ctx context.Context, problemID int64) ([]Tag, error)
-	NextTestcaseSetVersion(ctx context.Context, problemID int64) (int32, error)
-	ClearCurrentTestcaseSet(ctx context.Context, problemID int64) error
-	CreateTestcaseSet(ctx context.Context, problemID int64, version int32, storageKey, checksum string, sizeBytes int64, caseCount int32, createdBy int64) (TestcaseSetRecord, error)
-	GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error)
-	CreateProblemCheckRun(ctx context.Context, input CreateProblemCheckRunInput) (ProblemCheckRunRecord, error)
-	GetProblemCheckRun(ctx context.Context, id int64) (ProblemCheckRunRecord, error)
-	GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error)
-	ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error)
-	CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error)
-	FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error)
-	CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error)
-	GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error)
-	ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error)
-	CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error)
-	GetProblemStats(ctx context.Context, problemID int64) (ProblemStats, error)
-}
-
 type CreateProblemCheckRunInput struct {
 	ProblemID     int64
 	StatementID   int64
@@ -59,23 +26,10 @@ type CreateProblemCheckRunInput struct {
 	Summary       json.RawMessage
 }
 
-type ListProblemCheckRunsFilter struct {
-	ProblemID int64
-	Offset    int32
-	Limit     int32
-}
-
 type CompleteProblemCheckRunInput struct {
 	ID         int64
 	Summary    json.RawMessage
 	FinishedAt time.Time
-}
-
-type FailProblemCheckRunInput struct {
-	ID           int64
-	Summary      json.RawMessage
-	ErrorMessage string
-	FinishedAt   time.Time
 }
 
 type CreateProblemCheckFindingInput struct {
@@ -124,9 +78,21 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool, queries: db.New(pool)}
 }
 
-func (r *PostgresRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
+func (r *PostgresRepository) withTx(ctx context.Context, fn func(*txRepository) error) error {
 	return postgres.WithPoolTx(ctx, r.pool, func(tx pgx.Tx) error {
-		return fn(ctx, &txRepository{queries: r.queries.WithTx(tx)})
+		return fn(&txRepository{queries: r.queries.WithTx(tx)})
+	})
+}
+
+func (r *PostgresRepository) WithProblemAuthoringTx(ctx context.Context, fn func(context.Context, problemAuthoringTx) error) error {
+	return r.withTx(ctx, func(tx *txRepository) error {
+		return fn(ctx, tx)
+	})
+}
+
+func (r *PostgresRepository) WithProblemCheckTx(ctx context.Context, fn func(context.Context, problemCheckTx) error) error {
+	return r.withTx(ctx, func(tx *txRepository) error {
+		return fn(ctx, tx)
 	})
 }
 
@@ -262,25 +228,12 @@ func (r *PostgresRepository) GetLatestCompletedProblemCheckRun(ctx context.Conte
 	return problemCheckRunFromDB(run), mapDBErr(err)
 }
 
-func (r *PostgresRepository) ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
-	return listProblemCheckRuns(ctx, r.queries, filter)
-}
-
 func (r *PostgresRepository) CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
 	return completeProblemCheckRun(ctx, r.queries, input)
 }
 
-func (r *PostgresRepository) FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
-	return failProblemCheckRun(ctx, r.queries, input)
-}
-
 func (r *PostgresRepository) CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
 	return createProblemCheckFinding(ctx, r.queries, input)
-}
-
-func (r *PostgresRepository) GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error) {
-	finding, err := r.queries.GetProblemCheckFindingByID(ctx, id)
-	return problemCheckFindingFromDB(finding), mapDBErr(err)
 }
 
 func (r *PostgresRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
@@ -298,10 +251,6 @@ func (r *PostgresRepository) GetProblemStats(ctx context.Context, problemID int6
 
 type txRepository struct {
 	queries *db.Queries
-}
-
-func (r *txRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
-	return fn(ctx, r)
 }
 
 func (r *txRepository) CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error) {
@@ -464,25 +413,12 @@ func (r *txRepository) GetLatestCompletedProblemCheckRun(ctx context.Context, pr
 	return problemCheckRunFromDB(run), mapDBErr(err)
 }
 
-func (r *txRepository) ListProblemCheckRuns(ctx context.Context, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
-	return listProblemCheckRuns(ctx, r.queries, filter)
-}
-
 func (r *txRepository) CompleteProblemCheckRun(ctx context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
 	return completeProblemCheckRun(ctx, r.queries, input)
 }
 
-func (r *txRepository) FailProblemCheckRun(ctx context.Context, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
-	return failProblemCheckRun(ctx, r.queries, input)
-}
-
 func (r *txRepository) CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
 	return createProblemCheckFinding(ctx, r.queries, input)
-}
-
-func (r *txRepository) GetProblemCheckFinding(ctx context.Context, id int64) (ProblemCheckFindingRecord, error) {
-	finding, err := r.queries.GetProblemCheckFindingByID(ctx, id)
-	return problemCheckFindingFromDB(finding), mapDBErr(err)
 }
 
 func (r *txRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
@@ -593,37 +529,11 @@ func createProblemCheckRun(ctx context.Context, q *db.Queries, input CreateProbl
 	return problemCheckRunFromDB(run), mapDBErr(err)
 }
 
-func listProblemCheckRuns(ctx context.Context, q *db.Queries, filter ListProblemCheckRunsFilter) ([]ProblemCheckRunRecord, error) {
-	rows, err := q.ListProblemCheckRunsByProblemID(ctx, db.ListProblemCheckRunsByProblemIDParams{
-		ProblemID: filter.ProblemID,
-		Offset:    filter.Offset,
-		Limit:     filter.Limit,
-	})
-	if err != nil {
-		return nil, mapDBErr(err)
-	}
-	runs := make([]ProblemCheckRunRecord, 0, len(rows))
-	for _, row := range rows {
-		runs = append(runs, problemCheckRunFromDB(row))
-	}
-	return runs, nil
-}
-
 func completeProblemCheckRun(ctx context.Context, q *db.Queries, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {
 	run, err := q.CompleteProblemCheckRun(ctx, db.CompleteProblemCheckRunParams{
 		ID:         input.ID,
 		Summary:    jsonbArg(input.Summary),
 		FinishedAt: timeArg(input.FinishedAt),
-	})
-	return problemCheckRunFromDB(run), mapDBErr(err)
-}
-
-func failProblemCheckRun(ctx context.Context, q *db.Queries, input FailProblemCheckRunInput) (ProblemCheckRunRecord, error) {
-	run, err := q.FailProblemCheckRun(ctx, db.FailProblemCheckRunParams{
-		ID:           input.ID,
-		Summary:      jsonbArg(input.Summary),
-		ErrorMessage: textValue(input.ErrorMessage),
-		FinishedAt:   timeArg(input.FinishedAt),
 	})
 	return problemCheckRunFromDB(run), mapDBErr(err)
 }

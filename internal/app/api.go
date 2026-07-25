@@ -71,7 +71,12 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	userRepo := user.NewPostgresRepository(queries)
 	userService := user.NewService(userRepo, jwtManager, user.WithTokenTTLs(cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL))
 	problemRepo := problem.NewPostgresRepository(pool)
-	problemService := problem.NewService(problemRepo, objectStorage)
+	problemReader := problem.NewProblemReader(problemRepo, objectStorage)
+	problemService := problem.NewService(
+		problemReader,
+		problem.NewProblemAuthoring(problemRepo, objectStorage),
+		problem.NewProblemCheckService(problemRepo, objectStorage, time.Now),
+	)
 	contestRepo := contest.NewPostgresRepository(pool)
 	contestService := contest.NewService(contestRepo)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
@@ -80,7 +85,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	sourceStore := submission.NewObjectSourceStore(objectStorage)
 	creator := submission.NewSubmissionCreator(submission.SubmissionCreatorOptions{
 		Store:            submissionRepo,
-		ProblemReader:    problemService,
+		ProblemReader:    problemReader,
 		TestcaseResolver: testcaseResolver,
 		SourceStore:      sourceStore,
 		ContestPolicy:    contestService,
@@ -88,7 +93,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	reader := submission.NewSubmissionReader(submissionRepo, contestService)
 	runs := submission.NewRunService(submission.RunServiceOptions{
 		Store:         submissionRepo,
-		ProblemReader: problemService,
+		ProblemReader: problemReader,
 		SourceStore:   sourceStore,
 		Judge:         judgeEngine,
 		Context:       ctx,
@@ -98,7 +103,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	languages := submission.NewLanguageService(submissionRepo, judgeEngine)
 	completer := submission.NewSubmissionCompleter(submissionRepo, contestService, nil)
 	submissionService := submission.NewService(creator, reader, runs, languages, completer)
-	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemService, contests: contestService}, nil, metrics)
+	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemReader, contests: contestService}, nil, metrics)
 
 	middleware := httpapi.DefaultMiddlewareSet()
 	middleware.Auth = actorMiddleware(jwtManager)
@@ -136,7 +141,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 }
 
 type rejudgeAuthorizationPolicy struct {
-	problems *problem.Service
+	problems *problem.ProblemReader
 	contests *contest.Service
 }
 

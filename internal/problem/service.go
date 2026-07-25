@@ -20,7 +20,6 @@ import (
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
-	"SOJ/internal/storage"
 )
 
 const (
@@ -282,682 +281,98 @@ type ProblemAuthoringState struct {
 	Blockers    []ProblemAuthoringBlocker `json:"blockers"`
 }
 
+// Service is the public problem API composed from focused collaborators.
 type Service struct {
-	repo    Repository
-	storage storage.ObjectStorage
-	now     func() time.Time
+	reader    *ProblemReader
+	authoring *ProblemAuthoring
+	checks    *ProblemCheckService
 }
 
-func NewService(repo Repository, objectStorage storage.ObjectStorage) *Service {
-	return &Service{repo: repo, storage: objectStorage, now: time.Now}
+// NewService composes the public problem API.
+// It panics if a collaborator is nil.
+func NewService(reader *ProblemReader, authoring *ProblemAuthoring, checks *ProblemCheckService) *Service {
+	if reader == nil {
+		panic("problem reader is required")
+	}
+	if authoring == nil {
+		panic("problem authoring is required")
+	}
+	if checks == nil {
+		panic("problem check service is required")
+	}
+	return &Service{reader: reader, authoring: authoring, checks: checks}
 }
 
 func (s *Service) CreateProblem(ctx context.Context, actor auth.Actor, input CreateProblemInput) (ProblemRecord, error) {
-	if err := requireAuthenticated(actor); err != nil {
-		return ProblemRecord{}, err
-	}
-	if err := validateCreateProblem(input); err != nil {
-		return ProblemRecord{}, err
-	}
-	tagInputs, err := tagInputsFromNames(input.Tags)
-	if err != nil {
-		return ProblemRecord{}, err
-	}
-	var created ProblemRecord
-	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		var err error
-		created, err = repo.CreateProblem(ctx, actor.UserID, input)
-		if err != nil {
-			return err
-		}
-		if len(tagInputs) > 0 {
-			_, err = repo.ReplaceProblemTags(ctx, created.ID, tagInputs)
-		}
-		return err
-	})
-	return created, err
+	return s.authoring.CreateProblem(ctx, actor, input)
 }
 
 func (s *Service) GetProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
-	p, err := s.repo.GetProblem(ctx, id)
-	if err != nil {
-		return ProblemRecord{}, err
-	}
-	if err := canReadProblem(actor, p); err != nil {
-		return ProblemRecord{}, err
-	}
-	return p, nil
+	return s.reader.GetProblem(ctx, actor, id)
 }
 
 func (s *Service) ListProblems(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemList, error) {
-	if filter.Mine && !actor.Authenticated() {
-		return ProblemList{}, requireAuthenticated(actor)
-	}
-	filter = normalizeListFilter(actor, filter)
-	items, err := s.repo.ListProblems(ctx, filter)
-	if err != nil {
-		return ProblemList{}, err
-	}
-	total, err := s.repo.CountProblems(ctx, filter)
-	if err != nil {
-		return ProblemList{}, err
-	}
-	responses := make([]ProblemResponse, 0, len(items))
-	for _, item := range items {
-		response, err := s.ProblemResponse(ctx, item)
-		if err != nil {
-			return ProblemList{}, err
-		}
-		responses = append(responses, response)
-	}
-	return ProblemList{Items: responses, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
+	return s.reader.ListProblems(ctx, actor, filter)
 }
 
 func (s *Service) ListProblemsByCursor(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemCursorPage, error) {
-	if filter.Mine && !actor.Authenticated() {
-		return ProblemCursorPage{}, requireAuthenticated(actor)
-	}
-	filter = normalizeListFilter(actor, filter)
-	limit := filter.PageSize
-	cursor := ProblemCursor{
-		CreatedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC),
-		ID:        1<<63 - 1,
-	}
-	if filter.Cursor != nil {
-		if filter.Cursor.ID <= 0 || filter.Cursor.CreatedAt.IsZero() {
-			return ProblemCursorPage{}, apperror.BadRequest("invalid_cursor", "cursor is invalid")
-		}
-		cursor = ProblemCursor{CreatedAt: filter.Cursor.CreatedAt.UTC(), ID: filter.Cursor.ID}
-	}
-	filter.Cursor = &cursor
-	filter.Limit = limit + 1
-	filter.Offset = 0
-	items, err := s.repo.ListProblemsByCursor(ctx, filter)
-	if err != nil {
-		return ProblemCursorPage{}, err
-	}
-	hasMore := len(items) > int(limit)
-	if hasMore {
-		items = items[:limit]
-	}
-	responses := make([]ProblemResponse, 0, len(items))
-	for _, item := range items {
-		response, err := s.ProblemResponse(ctx, item)
-		if err != nil {
-			return ProblemCursorPage{}, err
-		}
-		responses = append(responses, response)
-	}
-	page := ProblemCursorPage{Items: responses}
-	if hasMore {
-		last := items[len(items)-1]
-		page.NextCursor = &ProblemCursor{CreatedAt: last.CreatedAt, ID: last.ID}
-	}
-	return page, nil
+	return s.reader.ListProblemsByCursor(ctx, actor, filter)
 }
 
 func (s *Service) GetProblemAuthoringState(ctx context.Context, actor auth.Actor, id int64) (ProblemAuthoringState, error) {
-	p, err := s.repo.GetProblem(ctx, id)
-	if err != nil {
-		return ProblemAuthoringState{}, err
-	}
-	if err := canWriteProblem(actor, p); err != nil {
-		return ProblemAuthoringState{}, err
-	}
-	response, err := s.ProblemResponse(ctx, p)
-	if err != nil {
-		return ProblemAuthoringState{}, err
-	}
-	readiness, err := loadProblemAuthoringReadiness(ctx, s.repo, id)
-	if err != nil {
-		return ProblemAuthoringState{}, err
-	}
-	return ProblemAuthoringState{
-		Problem:     response,
-		Statement:   readiness.statement,
-		TestcaseSet: readiness.testcaseSet,
-		LatestCheck: readiness.latestCheck,
-		Publishable: len(readiness.blockers) == 0,
-		Blockers:    readiness.blockers,
-	}, nil
+	return s.reader.GetProblemAuthoringState(ctx, actor, id)
 }
 
 func (s *Service) UpdateProblem(ctx context.Context, actor auth.Actor, id int64, input UpdateProblemInput) (ProblemRecord, error) {
-	var updated ProblemRecord
-	err := s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		current, err := repo.LockProblemForUpdate(ctx, id)
-		if err != nil {
-			return err
-		}
-		if err := canWriteProblem(actor, current); err != nil {
-			return err
-		}
-		if input.Status != nil && *input.Status == StatusPublished {
-			if err := ensurePublishable(ctx, repo, id); err != nil {
-				return err
-			}
-		}
-		if err := validateUpdateProblem(input); err != nil {
-			return err
-		}
-		tagInputs, err := tagInputsFromNames(input.Tags)
-		if err != nil {
-			return err
-		}
-		updated, err = repo.UpdateProblem(ctx, id, input)
-		if err != nil {
-			return err
-		}
-		if input.Tags != nil {
-			_, err = repo.ReplaceProblemTags(ctx, id, tagInputs)
-		}
-		return err
-	})
-	return updated, err
+	return s.authoring.UpdateProblem(ctx, actor, id, input)
 }
 
 func (s *Service) ArchiveProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
-	var archived ProblemRecord
-	err := s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		current, err := repo.LockProblemForUpdate(ctx, id)
-		if err != nil {
-			return err
-		}
-		if err := canWriteProblem(actor, current); err != nil {
-			return err
-		}
-		archived, err = repo.ArchiveProblem(ctx, id)
-		return err
-	})
-	return archived, err
+	return s.authoring.ArchiveProblem(ctx, actor, id)
 }
 
 func (s *Service) CreateStatement(ctx context.Context, actor auth.Actor, problemID int64, input CreateStatementInput) (Statement, error) {
-	if !input.MakeCurrent {
-		input.MakeCurrent = true
-	}
-	if err := validateStatement(input); err != nil {
-		return Statement{}, err
-	}
-	var statement Statement
-	err := s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		p, err := repo.LockProblemForUpdate(ctx, problemID)
-		if err != nil {
-			return err
-		}
-		if err := canWriteProblem(actor, p); err != nil {
-			return err
-		}
-		version, err := repo.NextProblemStatementVersion(ctx, problemID)
-		if err != nil {
-			return err
-		}
-		if input.MakeCurrent {
-			if err := repo.ClearCurrentProblemStatement(ctx, problemID); err != nil {
-				return err
-			}
-		}
-		statement, err = repo.CreateProblemStatement(ctx, problemID, version, input)
-		if err != nil {
-			return err
-		}
-		return demotePublishedProblem(ctx, repo, p)
-	})
-	return statement, err
+	return s.authoring.CreateStatement(ctx, actor, problemID, input)
 }
 
 func (s *Service) CurrentStatement(ctx context.Context, actor auth.Actor, problemID int64) (Statement, error) {
-	p, err := s.repo.GetProblem(ctx, problemID)
-	if err != nil {
-		return Statement{}, err
-	}
-	if err := canReadProblem(actor, p); err != nil {
-		return Statement{}, err
-	}
-	return s.repo.GetCurrentProblemStatement(ctx, problemID)
+	return s.reader.CurrentStatement(ctx, actor, problemID)
 }
 
 func (s *Service) AssignTags(ctx context.Context, actor auth.Actor, problemID int64, input AssignTagsInput) ([]Tag, error) {
-	if err := validateTags(input.Tags); err != nil {
-		return nil, err
-	}
-	var tags []Tag
-	err := s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		p, err := repo.LockProblemForUpdate(ctx, problemID)
-		if err != nil {
-			return err
-		}
-		if err := canWriteProblem(actor, p); err != nil {
-			return err
-		}
-		tags, err = repo.ReplaceProblemTags(ctx, problemID, input.Tags)
-		return err
-	})
-	return tags, err
+	return s.authoring.AssignTags(ctx, actor, problemID, input)
 }
 
 func (s *Service) UploadTestcaseArchive(ctx context.Context, actor auth.Actor, problemID int64, input UploadTestcaseInput) (TestcaseSetRecord, error) {
-	if s.storage == nil {
-		return TestcaseSetRecord{}, apperror.ServiceUnavailable("object storage unavailable")
-	}
-	if err := validateTestcaseArchive(input.Content, input.CaseCount, input.ChecksumSHA256, defaultMaxTestcaseArchiveBytes); err != nil {
-		return TestcaseSetRecord{}, err
-	}
-	current, err := s.repo.GetProblem(ctx, problemID)
-	if err != nil {
-		return TestcaseSetRecord{}, err
-	}
-	if err := canWriteProblem(actor, current); err != nil {
-		return TestcaseSetRecord{}, err
-	}
-
-	actualChecksum := sha256Hex(input.Content)
-	contentType := input.ContentType
-	if contentType == "" {
-		contentType = "application/zip"
-	}
-	key, err := testcaseArchiveKey(problemID, actualChecksum)
-	if err != nil {
-		return TestcaseSetRecord{}, err
-	}
-	if _, err := s.storage.Put(ctx, storage.Object{
-		Key:         key,
-		ContentType: contentType,
-		Size:        int64(len(input.Content)),
-		Metadata: map[string]string{
-			"problem-id": fmt.Sprint(problemID),
-			"sha256":     actualChecksum,
-		},
-		Body: bytes.NewReader(input.Content),
-	}); err != nil {
-		return TestcaseSetRecord{}, err
-	}
-
-	var created TestcaseSetRecord
-	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		p, err := repo.LockProblemForUpdate(ctx, problemID)
-		if err != nil {
-			return err
-		}
-		if err := canWriteProblem(actor, p); err != nil {
-			return err
-		}
-		version, err := repo.NextTestcaseSetVersion(ctx, problemID)
-		if err != nil {
-			return err
-		}
-		artifact, err := repo.CreateArtifact(ctx, ArtifactRecord{
-			OwnerType:      "testcase",
-			OwnerID:        problemID,
-			Kind:           "testcase_archive",
-			StorageKey:     key,
-			ChecksumSHA256: actualChecksum,
-			SizeBytes:      int64(len(input.Content)),
-			ContentType:    contentType,
-		})
-		if err != nil {
-			return err
-		}
-		if artifact.ID == 0 {
-			return apperror.Internal()
-		}
-		if err := repo.ClearCurrentTestcaseSet(ctx, problemID); err != nil {
-			return err
-		}
-		created, err = repo.CreateTestcaseSet(ctx, problemID, version, key, actualChecksum, int64(len(input.Content)), input.CaseCount, actor.UserID)
-		if err != nil {
-			return err
-		}
-		return demotePublishedProblem(ctx, repo, p)
-	})
-	if err != nil {
-		_ = s.storage.Delete(ctx, key)
-	}
-	return created, err
+	return s.authoring.UploadTestcaseArchive(ctx, actor, problemID, input)
 }
 
 func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problemID int64) (ProblemCheckResult, error) {
-	p, err := s.repo.GetProblem(ctx, problemID)
-	if err != nil {
-		return ProblemCheckResult{}, err
-	}
-	if err := canWriteProblem(actor, p); err != nil {
-		return ProblemCheckResult{}, err
-	}
-
-	statement, err := s.repo.GetCurrentProblemStatement(ctx, problemID)
-	if err != nil {
-		return ProblemCheckResult{}, err
-	}
-	set, err := s.repo.GetCurrentReadyTestcaseSet(ctx, problemID)
-	if err != nil {
-		return ProblemCheckResult{}, err
-	}
-
-	findings := validateProblemCheckStatementSamples(statement)
-	storageReadable := false
-	zipReadable := false
-	caseCount := 0
-	if s.storage == nil {
-		findings = append(findings, problemCheckFindingDraft{
-			severity: ProblemCheckSeverityError,
-			code:     "testcase.storage_unreadable",
-			message:  "testcase object storage is unavailable",
-			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
-		})
-	} else if strings.TrimSpace(set.StorageKey) == "" {
-		findings = append(findings, problemCheckFindingDraft{
-			severity: ProblemCheckSeverityError,
-			code:     "testcase.storage_unreadable",
-			message:  "testcase archive storage key is missing",
-		})
-	} else {
-		body, _, err := s.storage.Get(ctx, set.StorageKey)
-		if err != nil {
-			findings = append(findings, problemCheckFindingDraft{
-				severity: ProblemCheckSeverityError,
-				code:     "testcase.storage_unreadable",
-				message:  "testcase archive cannot be read from storage",
-				details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
-			})
-		} else {
-			storageReadable = true
-			data, err := readAllAndClose(body, defaultMaxTestcaseArchiveBytes)
-			if err != nil {
-				if resourceErr, ok := err.(*testcaseArchiveResourceError); ok {
-					findings = append(findings, problemCheckFindingDraft{
-						severity: ProblemCheckSeverityError,
-						code:     resourceErr.code,
-						message:  resourceErr.message,
-						details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
-					})
-				} else {
-					storageReadable = false
-					findings = append(findings, problemCheckFindingDraft{
-						severity: ProblemCheckSeverityError,
-						code:     "testcase.storage_unreadable",
-						message:  "testcase archive cannot be read from storage",
-						details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
-					})
-				}
-			} else {
-				archiveResult := validateProblemCheckArchive(data, set)
-				zipReadable = archiveResult.zipReadable
-				caseCount = archiveResult.caseCount
-				findings = append(findings, archiveResult.findings...)
-			}
-		}
-	}
-
-	summary := problemCheckSummary(set.CaseCount, caseCount, storageReadable, zipReadable, findings)
-	summaryJSON, err := marshalProblemCheckSummary(summary)
-	if err != nil {
-		return ProblemCheckResult{}, err
-	}
-
-	var runRecord ProblemCheckRunRecord
-	persistedFindings := make([]ProblemCheckFinding, 0, len(findings))
-	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		run, err := repo.CreateProblemCheckRun(ctx, CreateProblemCheckRunInput{
-			ProblemID:     problemID,
-			StatementID:   statement.ID,
-			TestcaseSetID: set.ID,
-			RequestedBy:   actor.UserID,
-			Status:        ProblemCheckStatusRunning,
-			Summary:       json.RawMessage(`{}`),
-		})
-		if err != nil {
-			return err
-		}
-		for _, finding := range findings {
-			record, err := repo.CreateProblemCheckFinding(ctx, CreateProblemCheckFindingInput{
-				RunID:       run.ID,
-				Severity:    finding.severity,
-				Code:        finding.code,
-				Message:     finding.message,
-				CaseIndex:   finding.caseIndex,
-				TestcaseKey: finding.testcaseKey,
-				Details:     finding.details,
-			})
-			if err != nil {
-				return err
-			}
-			persistedFindings = append(persistedFindings, serviceProblemCheckFindingFromRecord(record))
-		}
-		runRecord, err = repo.CompleteProblemCheckRun(ctx, CompleteProblemCheckRunInput{
-			ID:         run.ID,
-			Summary:    summaryJSON,
-			FinishedAt: s.now(),
-		})
-		return err
-	})
-	if err != nil {
-		return ProblemCheckResult{}, err
-	}
-	return ProblemCheckResult{Run: serviceProblemCheckRunFromRecord(runRecord), Findings: persistedFindings}, nil
+	return s.checks.RunProblemCheck(ctx, actor, problemID)
 }
 
 func (s *Service) GetProblemCheck(ctx context.Context, actor auth.Actor, problemID int64, checkID int64) (ProblemCheckResult, error) {
-	p, err := s.repo.GetProblem(ctx, problemID)
-	if err != nil {
-		return ProblemCheckResult{}, err
-	}
-	if err := canWriteProblem(actor, p); err != nil {
-		return ProblemCheckResult{}, err
-	}
-	run, err := s.repo.GetProblemCheckRun(ctx, checkID)
-	if err != nil {
-		return ProblemCheckResult{}, problemCheckNotFoundErr(err)
-	}
-	if run.ProblemID != problemID {
-		return ProblemCheckResult{}, apperror.NotFound("problem_check.not_found", "problem check not found")
-	}
-	records, err := s.repo.ListProblemCheckFindings(ctx, checkID)
-	if err != nil {
-		return ProblemCheckResult{}, err
-	}
-	findings := make([]ProblemCheckFinding, 0, len(records))
-	for _, record := range records {
-		findings = append(findings, serviceProblemCheckFindingFromRecord(record))
-	}
-	return ProblemCheckResult{Run: serviceProblemCheckRunFromRecord(run), Findings: findings}, nil
+	return s.checks.GetProblemCheck(ctx, actor, problemID, checkID)
 }
 
 func (s *Service) ProblemResponse(ctx context.Context, p ProblemRecord) (ProblemResponse, error) {
-	tags, err := s.repo.ListProblemTags(ctx, p.ID)
-	if err != nil {
-		return ProblemResponse{}, err
-	}
-	tagNames := make([]string, 0, len(tags))
-	for _, tag := range tags {
-		tagNames = append(tagNames, tag.Name)
-	}
-	return ProblemResponse{
-		ID:         p.ID,
-		Title:      p.Title,
-		Slug:       p.Slug,
-		Difficulty: p.Difficulty,
-		Visibility: p.Visibility,
-		Status:     p.Status,
-		Tags:       tagNames,
-		Limits: ProblemLimits{
-			TimeLimitMS:   p.TimeLimitMS,
-			MemoryLimitKB: p.MemoryLimitKB,
-		},
-		OwnerUserID: p.OwnerUserID,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
-		PublishedAt: p.PublishedAt,
-	}, nil
+	return s.reader.ProblemResponse(ctx, p)
 }
 
 func (s *Service) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
-	set, err := s.repo.GetCurrentReadyTestcaseSet(ctx, problemID)
-	if err != nil {
-		return TestcaseSet{}, err
-	}
-	if s.storage == nil {
-		return TestcaseSet{}, apperror.ServiceUnavailable("testcase object storage unavailable")
-	}
-	if strings.TrimSpace(set.StorageKey) == "" {
-		return TestcaseSet{}, apperror.BadRequest("testcase.archive_missing", "testcase archive storage key is missing")
-	}
-	p, err := s.repo.GetProblem(ctx, problemID)
-	if err != nil {
-		return TestcaseSet{}, err
-	}
-	body, _, err := s.storage.Get(ctx, set.StorageKey)
-	if err != nil {
-		return TestcaseSet{}, err
-	}
-	data, err := readAllAndClose(body, defaultMaxTestcaseArchiveBytes)
-	if err != nil {
-		if _, ok := err.(*testcaseArchiveResourceError); ok {
-			return TestcaseSet{}, testcaseArchiveBadRequest(err)
-		}
-		return TestcaseSet{}, err
-	}
-	cases, err := parseTestcaseArchiveCases(data, time.Duration(p.TimeLimitMS)*time.Millisecond, int64(p.MemoryLimitKB))
-	if err != nil {
-		return TestcaseSet{}, err
-	}
-	if set.CaseCount > 0 && int32(len(cases)) != set.CaseCount {
-		return TestcaseSet{}, apperror.BadRequest("testcase.case_count_mismatch", "case_count does not match input/output pairs")
-	}
-	return TestcaseSet{
-		ID:        set.ID,
-		ProblemID: set.ProblemID,
-		Version:   int(set.Version),
-		Status:    set.Status,
-		Cases:     cases,
-	}, nil
+	return s.reader.CurrentReadyTestcaseSet(ctx, problemID)
 }
 
 func (s *Service) GetForJudge(ctx context.Context, problemID int64) (Problem, error) {
-	p, err := s.repo.GetProblem(ctx, problemID)
-	if err != nil {
-		return Problem{}, err
-	}
-	if p.Status != StatusPublished || p.CurrentStatementID == 0 || p.CurrentTestcaseSetID == 0 || p.CurrentTestcaseStatus != TestcaseStatusReady {
-		return Problem{}, apperror.NotFound("problem.not_ready", "problem is not ready for judge")
-	}
-	return Problem{
-		ID:                   p.ID,
-		Slug:                 p.Slug,
-		Title:                p.Title,
-		Visibility:           p.Visibility,
-		OwnerUserID:          p.OwnerUserID,
-		CurrentStatementID:   p.CurrentStatementID,
-		CurrentTestcaseSetID: p.CurrentTestcaseSetID,
-	}, nil
+	return s.reader.GetForJudge(ctx, problemID)
 }
 
 func (s *Service) AuthorizeProblemRejudge(ctx context.Context, actor auth.Actor, id int64) error {
-	problem, err := s.repo.GetProblem(ctx, id)
-	if err != nil {
-		return err
-	}
-	return canWriteProblem(actor, problem)
+	return s.reader.AuthorizeProblemRejudge(ctx, actor, id)
 }
 
 func (s *Service) Stats(ctx context.Context, actor auth.Actor, problemID int64) (ProblemStats, error) {
-	p, err := s.repo.GetProblem(ctx, problemID)
-	if err != nil {
-		return ProblemStats{}, err
-	}
-	if err := canReadProblem(actor, p); err != nil {
-		return ProblemStats{}, err
-	}
-	stats, err := s.repo.GetProblemStats(ctx, problemID)
-	if err != nil {
-		return ProblemStats{}, err
-	}
-	if stats.TotalSubmissions > 0 {
-		stats.AcceptanceRate = float64(stats.AcceptedSubmissions) / float64(stats.TotalSubmissions)
-	}
-	return stats, nil
-}
-
-func ensurePublishable(ctx context.Context, repo Repository, problemID int64) error {
-	readiness, err := loadProblemAuthoringReadiness(ctx, repo, problemID)
-	if err != nil {
-		return err
-	}
-	if len(readiness.blockers) > 0 {
-		blocker := readiness.blockers[0]
-		return apperror.Unprocessable(blocker.Code, blocker.Message)
-	}
-	return nil
-}
-
-func demotePublishedProblem(ctx context.Context, repo Repository, problem ProblemRecord) error {
-	if problem.Status != StatusPublished {
-		return nil
-	}
-	status := StatusDraft
-	_, err := repo.UpdateProblem(ctx, problem.ID, UpdateProblemInput{Status: &status})
-	return err
-}
-
-type problemAuthoringReadiness struct {
-	statement   *Statement
-	testcaseSet *TestcaseSetRecord
-	latestCheck *ProblemCheckRun
-	blockers    []ProblemAuthoringBlocker
-}
-
-func loadProblemAuthoringReadiness(ctx context.Context, repo Repository, problemID int64) (problemAuthoringReadiness, error) {
-	state := problemAuthoringReadiness{blockers: []ProblemAuthoringBlocker{}}
-	statement, err := repo.GetCurrentProblemStatement(ctx, problemID)
-	if err != nil {
-		if !isNotFoundError(err) {
-			return problemAuthoringReadiness{}, err
-		}
-		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.statement_required", Message: "current statement is required before publishing"})
-	} else {
-		state.statement = &statement
-	}
-
-	testcaseSet, err := repo.GetCurrentReadyTestcaseSet(ctx, problemID)
-	if err != nil {
-		if !isNotFoundError(err) {
-			return problemAuthoringReadiness{}, err
-		}
-		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.testcase_required", Message: "current ready testcase set is required before publishing"})
-		return state, nil
-	}
-	state.testcaseSet = &testcaseSet
-
-	if state.statement == nil {
-		return state, nil
-	}
-	runRecord, err := repo.GetLatestCompletedProblemCheckRun(ctx, problemID, state.statement.ID, testcaseSet.ID)
-	if err != nil {
-		if !isNotFoundError(err) {
-			return problemAuthoringReadiness{}, err
-		}
-		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.check_required", Message: "run a problem check for the current testcase set before publishing"})
-		return state, nil
-	}
-	run := problemCheckRunFromRecord(runRecord)
-	findings, err := repo.ListProblemCheckFindings(ctx, run.ID)
-	if err != nil {
-		return problemAuthoringReadiness{}, err
-	}
-	run.Findings = make([]ProblemCheckFinding, 0, len(findings))
-	for _, finding := range findings {
-		run.Findings = append(run.Findings, problemCheckFindingFromRecord(finding))
-	}
-	state.latestCheck = &run
-	if !run.Summary.Valid {
-		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.check_failed", Message: "the current testcase set has validation errors"})
-	}
-	return state, nil
-}
-
-func isNotFoundError(err error) bool {
-	appErr, ok := apperror.From(err)
-	return ok && appErr.HTTPStatus == http.StatusNotFound
+	return s.reader.Stats(ctx, actor, problemID)
 }
 
 type problemCheckFindingDraft struct {
@@ -1181,45 +596,6 @@ func problemCheckDetails(value map[string]any) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return json.RawMessage(data)
-}
-
-func serviceProblemCheckRunFromRecord(record ProblemCheckRunRecord) ProblemCheckRun {
-	summary := ProblemCheckSummary{}
-	if len(record.Summary) > 0 {
-		_ = json.Unmarshal(record.Summary, &summary)
-	}
-	return ProblemCheckRun{
-		ID:            record.ID,
-		ProblemID:     record.ProblemID,
-		StatementID:   record.StatementID,
-		TestcaseSetID: record.TestcaseSetID,
-		RequestedBy:   record.RequestedBy,
-		Status:        record.Status,
-		Summary:       summary,
-		ErrorMessage:  record.ErrorMessage,
-		StartedAt:     record.StartedAt,
-		FinishedAt:    record.FinishedAt,
-		CreatedAt:     record.CreatedAt,
-		UpdatedAt:     record.UpdatedAt,
-	}
-}
-
-func serviceProblemCheckFindingFromRecord(record ProblemCheckFindingRecord) ProblemCheckFinding {
-	details := record.Details
-	if len(details) == 0 {
-		details = json.RawMessage(`{}`)
-	}
-	return ProblemCheckFinding{
-		ID:          record.ID,
-		RunID:       record.RunID,
-		Severity:    record.Severity,
-		Code:        record.Code,
-		Message:     record.Message,
-		CaseIndex:   record.CaseIndex,
-		TestcaseKey: record.TestcaseKey,
-		Details:     details,
-		CreatedAt:   record.CreatedAt,
-	}
 }
 
 func problemCheckNotFoundErr(err error) error {
