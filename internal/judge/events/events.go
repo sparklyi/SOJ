@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	RequestEventType    = "judge.request.v1"
+	RequestEventType    = "judge.request.v2"
 	ProgressEventType   = "judge.progress.v1"
 	ResultEventType     = "judge.result.v1"
 	DeadLetterEventType = "judge.dead_letter.v1"
@@ -21,18 +21,12 @@ type ArtifactRef struct {
 }
 
 type TestcaseSetRef struct {
-	ID   int64  `json:"id"`
-	Hash string `json:"hash"`
-}
-
-type TestcaseRef struct {
-	Index             int    `json:"index"`
-	GroupName         string `json:"group_name,omitempty"`
-	InputKey          string `json:"input_key"`
-	ExpectedOutputKey string `json:"expected_output_key"`
-	TimeLimitMS       int64  `json:"time_limit_ms,omitempty"`
-	MemoryKB          int64  `json:"memory_kb,omitempty"`
-	Score             int32  `json:"score,omitempty"`
+	ID             int64  `json:"id"`
+	ChecksumSHA256 string `json:"checksum_sha256"`
+	StorageKey     string `json:"storage_key"`
+	CaseCount      int32  `json:"case_count"`
+	TimeLimitMS    int64  `json:"time_limit_ms,omitempty"`
+	MemoryKB       int64  `json:"memory_kb,omitempty"`
 }
 
 type TraceContext struct {
@@ -56,7 +50,6 @@ type RequestEvent struct {
 	LanguageSlug    string         `json:"language_slug,omitempty"`
 	SourceArtifact  ArtifactRef    `json:"source_artifact"`
 	TestcaseSet     TestcaseSetRef `json:"testcase_set"`
-	Testcases       []TestcaseRef  `json:"testcases,omitempty"`
 	TimeoutMS       int64          `json:"timeout_ms,omitempty"`
 	MemoryKB        int64          `json:"memory_kb,omitempty"`
 	Priority        string         `json:"priority,omitempty"`
@@ -94,8 +87,14 @@ func (e RequestEvent) Validate() error {
 	if e.TestcaseSet.ID == 0 {
 		return fmt.Errorf("testcase_set.id is required")
 	}
-	if e.TestcaseSet.Hash == "" {
-		return fmt.Errorf("testcase_set.hash is required")
+	if e.TestcaseSet.ChecksumSHA256 == "" {
+		return fmt.Errorf("testcase_set.checksum_sha256 is required")
+	}
+	if e.TestcaseSet.StorageKey == "" {
+		return fmt.Errorf("testcase_set.storage_key is required")
+	}
+	if e.TestcaseSet.CaseCount <= 0 {
+		return fmt.Errorf("testcase_set.case_count must be positive")
 	}
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/judgecore"
 	"SOJ/internal/judgecore/language"
+	"SOJ/internal/problem"
 	"SOJ/internal/queue"
 
 	"go.opentelemetry.io/otel/trace"
@@ -70,12 +71,18 @@ func TestDispatcherPublishesRequestEventWithoutCallingJudgeEngine(t *testing.T) 
 	if event.TraceContext != (judgeevents.TraceContext{}) {
 		t.Fatalf("trace_context = %+v, want empty when tracing is disabled", event.TraceContext)
 	}
+	if event.TestcaseSet.StorageKey != "cases.zip" || event.TestcaseSet.CaseCount != 1 || event.TestcaseSet.ChecksumSHA256 != "cases-hash" {
+		t.Fatalf("testcase reference = %+v", event.TestcaseSet)
+	}
 	var raw map[string]any
 	if err := json.Unmarshal(q.payloads[0], &raw); err != nil {
 		t.Fatalf("decode raw request event: %v", err)
 	}
 	if _, ok := raw["trace_context"]; ok {
 		t.Fatalf("trace_context serialized while tracing is disabled: %s", q.payloads[0])
+	}
+	if _, ok := raw["testcases"]; ok {
+		t.Fatalf("testcase contents serialized in request event: %s", q.payloads[0])
 	}
 }
 
@@ -137,7 +144,7 @@ func TestFakeAsyncAgentPublishesResultBeforeRequestAck(t *testing.T) {
 		SubmissionID:   9,
 		LanguageID:     71,
 		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
-		TestcaseSet:    judgeevents.TestcaseSetRef{ID: 3, Hash: "cases-hash"},
+		TestcaseSet:    testRequestTestcaseSet(),
 		TimeoutMS:      1000,
 		CreatedAt:      time.Unix(100, 0).UTC(),
 	}
@@ -193,7 +200,7 @@ func TestFakeAsyncAgentPropagatesRequestTraceContextToJudgeAndResult(t *testing.
 			StorageKey:  "source/key",
 			ContentHash: "sha256:source",
 		},
-		TestcaseSet: judgeevents.TestcaseSetRef{ID: 3, Hash: "cases-hash"},
+		TestcaseSet: testRequestTestcaseSet(),
 		TimeoutMS:   1000,
 		CreatedAt:   time.Unix(100, 0).UTC(),
 	}
@@ -238,17 +245,10 @@ func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
 		SubmissionID:   9,
 		LanguageID:     language.GoID,
 		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
-		TestcaseSet:    judgeevents.TestcaseSetRef{ID: 3, Hash: "cases-hash"},
-		Testcases: []judgeevents.TestcaseRef{{
-			Index:             1,
-			InputKey:          "1 2\n",
-			ExpectedOutputKey: "3\n",
-			TimeLimitMS:       5000,
-			MemoryKB:          262144,
-		}},
-		TimeoutMS: 5000,
-		MemoryKB:  262144,
-		CreatedAt: time.Unix(100, 0).UTC(),
+		TestcaseSet:    testRequestTestcaseSet(),
+		TimeoutMS:      5000,
+		MemoryKB:       262144,
+		CreatedAt:      time.Unix(100, 0).UTC(),
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -258,6 +258,7 @@ func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
 	agent := NewCoreAsyncAgent(CoreAsyncAgentOptions{
 		Core:            judgecore.New(judgecore.Options{}),
 		SourceStore:     store,
+		TestcaseLoader:  asyncTestcaseLoader{cases: []problem.Testcase{{InputKey: "1 2\n", OutputKey: "3\n", TimeLimit: 5 * time.Second, MemoryKB: 262144}}},
 		ResultPublisher: resultQueue,
 		Now:             func() time.Time { return time.Unix(101, 0).UTC() },
 	})
@@ -291,6 +292,25 @@ func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
 	if result.Result.Manifest.TestcaseSetHash != "cases-hash" || result.Result.Manifest.TraceID != "trace-core" {
 		t.Fatalf("manifest = %+v", result.Result.Manifest)
 	}
+}
+
+func testRequestTestcaseSet() judgeevents.TestcaseSetRef {
+	return judgeevents.TestcaseSetRef{
+		ID:             3,
+		ChecksumSHA256: "cases-hash",
+		StorageKey:     "cases.zip",
+		CaseCount:      1,
+		TimeLimitMS:    5000,
+		MemoryKB:       262144,
+	}
+}
+
+type asyncTestcaseLoader struct {
+	cases []problem.Testcase
+}
+
+func (l asyncTestcaseLoader) Load(context.Context, judgeevents.TestcaseSetRef) ([]problem.Testcase, error) {
+	return append([]problem.Testcase(nil), l.cases...), nil
 }
 
 func TestResultConsumerIsIdempotentAndAcksAfterPersist(t *testing.T) {

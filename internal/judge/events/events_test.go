@@ -18,7 +18,7 @@ func TestTraceContextSerializesSeparatelyFromTraceID(t *testing.T) {
 		SubmissionID:   7,
 		LanguageID:     71,
 		SourceArtifact: ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:abc"},
-		TestcaseSet:    TestcaseSetRef{ID: 3, Hash: "cases-hash"},
+		TestcaseSet:    testTestcaseSetRef(),
 		CreatedAt:      time.Unix(100, 0).UTC(),
 	}
 	if err := event.Validate(); err != nil {
@@ -57,7 +57,7 @@ func TestRequestEventValidateAllowsAbsentOrMalformedTraceContext(t *testing.T) {
 		SubmissionID:   7,
 		LanguageID:     71,
 		SourceArtifact: ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:abc"},
-		TestcaseSet:    TestcaseSetRef{ID: 3, Hash: "cases-hash"},
+		TestcaseSet:    testTestcaseSetRef(),
 		CreatedAt:      time.Unix(100, 0).UTC(),
 	}
 	if err := event.Validate(); err != nil {
@@ -78,7 +78,7 @@ func TestRequestEventValidateRequiresProductionIdentityAndArtifactRef(t *testing
 		SubmissionID:   7,
 		LanguageID:     71,
 		SourceArtifact: ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:abc"},
-		TestcaseSet:    TestcaseSetRef{ID: 3, Hash: "cases-hash"},
+		TestcaseSet:    testTestcaseSetRef(),
 		TimeoutMS:      1000,
 		CreatedAt:      time.Unix(100, 0).UTC(),
 	}
@@ -97,6 +97,10 @@ func TestRequestEventValidateRequiresProductionIdentityAndArtifactRef(t *testing
 	if err := event.Validate(); err == nil || !strings.Contains(err.Error(), "source_artifact.content_hash") {
 		t.Fatalf("Validate error = %v, want source artifact content hash", err)
 	}
+}
+
+func testTestcaseSetRef() TestcaseSetRef {
+	return TestcaseSetRef{ID: 3, ChecksumSHA256: "cases-hash", StorageKey: "cases.zip", CaseCount: 1}
 }
 
 func TestResultProgressAndDeadLetterRequireRequestEventID(t *testing.T) {
