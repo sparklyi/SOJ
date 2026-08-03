@@ -19,6 +19,10 @@ func (testcaseSnapshotResolverStub) ReadyTestcaseSet(_ context.Context, problemI
 	return problem.TestcaseSet{ID: testcaseSetID, ProblemID: problemID}, nil
 }
 
+func (testcaseSnapshotResolverStub) ReadyTestcaseMetadata(_ context.Context, problemID, testcaseSetID int64) (testcaseMetadata, error) {
+	return testcaseMetadata{ID: testcaseSetID, StorageKey: "cases.zip", ChecksumSHA256: "cases-hash", CaseCount: 1}, nil
+}
+
 type taskPublisherStub struct{}
 
 func (taskPublisherStub) Publish(context.Context, int64, []byte) (string, error) {

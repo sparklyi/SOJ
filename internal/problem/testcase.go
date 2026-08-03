@@ -18,7 +18,9 @@ import (
 var caseNameRE = regexp.MustCompile(`^(?:input|output)([0-9]+)\.(?:txt|in|out)$`)
 
 const (
-	defaultMaxTestcaseArchiveBytes       = 128 << 20
+	// MaxTestcaseArchiveBytes is the maximum stored testcase archive size.
+	MaxTestcaseArchiveBytes              = 128 << 20
+	defaultMaxTestcaseArchiveBytes       = MaxTestcaseArchiveBytes
 	defaultMaxTestcaseUploadRequestBytes = defaultMaxTestcaseArchiveBytes + (1 << 20)
 	defaultMaxTestcaseEntryBytes         = 16 << 20
 	defaultMaxTestcaseTotalBytes         = 128 << 20
@@ -35,11 +37,48 @@ type testcaseArchiveLimits struct {
 }
 
 var defaultTestcaseArchiveLimits = testcaseArchiveLimits{
-	maxArchiveBytes:     defaultMaxTestcaseArchiveBytes,
+	maxArchiveBytes:     MaxTestcaseArchiveBytes,
 	maxEntryBytes:       defaultMaxTestcaseEntryBytes,
 	maxTotalBytes:       defaultMaxTestcaseTotalBytes,
 	maxFiles:            defaultMaxTestcaseFiles,
 	maxCompressionRatio: defaultMaxTestcaseCompressionRatio,
+}
+
+// TestcaseArchiveOptions controls testcase archive validation and case limits.
+type TestcaseArchiveOptions struct {
+	ExpectedCaseCount int32
+	ExpectedSHA256    string
+	MaxSizeBytes      int64
+	TimeLimit         time.Duration
+	MemoryKB          int64
+}
+
+// ParseTestcaseArchive validates and parses a testcase archive into judge cases.
+func ParseTestcaseArchive(data []byte, options TestcaseArchiveOptions) ([]Testcase, error) {
+	maxSizeBytes := options.MaxSizeBytes
+	if maxSizeBytes <= 0 {
+		maxSizeBytes = MaxTestcaseArchiveBytes
+	}
+	if strings.TrimSpace(options.ExpectedSHA256) != "" {
+		if err := validateTestcaseArchive(data, options.ExpectedCaseCount, options.ExpectedSHA256, maxSizeBytes); err != nil {
+			return nil, err
+		}
+	} else {
+		limits := defaultTestcaseArchiveLimits
+		limits.maxArchiveBytes = maxSizeBytes
+		if err := validateTestcaseArchiveResources(data, limits); err != nil {
+			return nil, testcaseArchiveBadRequest(err)
+		}
+	}
+
+	cases, err := parseTestcaseArchiveCases(data, options.TimeLimit, options.MemoryKB)
+	if err != nil {
+		return nil, err
+	}
+	if options.ExpectedCaseCount > 0 && int32(len(cases)) != options.ExpectedCaseCount {
+		return nil, apperror.BadRequest("testcase.case_count_mismatch", "case_count does not match input/output pairs")
+	}
+	return cases, nil
 }
 
 type testcaseArchiveResourceError struct {

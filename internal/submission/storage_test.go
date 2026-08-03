@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"SOJ/internal/problem"
 	"SOJ/internal/storage"
 )
 
@@ -23,15 +24,15 @@ func TestObjectSourceStoreGetReturnsCloseError(t *testing.T) {
 	}
 }
 
-func TestParseSnapshotTestcaseCasesAppliesProblemLimits(t *testing.T) {
+func TestParseTestcaseArchiveAppliesProblemLimits(t *testing.T) {
 	archive := snapshotZipArchive(t, map[string]string{
 		"input1.txt":  "1 1\n",
 		"output1.txt": "2\n",
 	})
 
-	cases, err := parseSnapshotTestcaseCases(archive, 10*time.Second, 262144)
+	cases, err := problem.ParseTestcaseArchive(archive, problem.TestcaseArchiveOptions{TimeLimit: 10 * time.Second, MemoryKB: 262144})
 	if err != nil {
-		t.Fatalf("parseSnapshotTestcaseCases returned error: %v", err)
+		t.Fatalf("ParseTestcaseArchive returned error: %v", err)
 	}
 	if len(cases) != 1 {
 		t.Fatalf("cases = %d, want 1", len(cases))

@@ -252,7 +252,7 @@ func judgeAgentMessageLanguageKey(message queue.Message) string {
 	return ""
 }
 
-func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, observer sandbox.SandboxObserver, logger *slog.Logger, publisher submission.ResultPublisher) (judgeRequestProcessor, observability.CheckFunc, error) {
+func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, metrics *observability.Metrics, logger *slog.Logger, publisher submission.ResultPublisher) (judgeRequestProcessor, observability.CheckFunc, error) {
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	if backend == sandbox.BackendFake {
 		return submission.NewFakeAsyncAgent(submission.FakeAsyncAgentOptions{
@@ -261,7 +261,7 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 			ResultPublisher: publisher,
 		}), nil, nil
 	}
-	runtimeSandbox, err := newJudgeAgentSandbox(backend, cfg.Judge.CleanupTimeout, observer, logger)
+	runtimeSandbox, err := newJudgeAgentSandbox(backend, cfg.Judge.CleanupTimeout, metrics, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -279,9 +279,11 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 		}
 		return sandbox.ValidateProductionCapabilities(cfg.Env, capabilities)
 	}
+	testcaseCache := submission.NewTestcaseCache(objectStore, submission.TestcaseCacheOptions{Metrics: metrics})
 	return submission.NewCoreAsyncAgent(submission.CoreAsyncAgentOptions{
 		Core:            judgecore.New(judgecore.Options{Sandbox: runtimeSandbox, CleanupTimeout: cfg.Judge.CleanupTimeout}),
 		SourceStore:     sourceStore,
+		TestcaseLoader:  testcaseCache,
 		ResultPublisher: publisher,
 	}), sandboxReady, nil
 }

@@ -29,13 +29,14 @@ type taskDispatchStore interface {
 
 type taskDispatchMetrics interface {
 	RecordJudgeTaskDispatch(result string)
+	RecordJudgeRequestPayloadSize(bytes int)
 }
 
 // TaskDispatcher turns pending judge tasks into queue messages.
 type TaskDispatcher struct {
 	store     taskDispatchStore
 	queue     taskPublisher
-	testcases testcaseSnapshotResolver
+	testcases testcaseMetadataResolver
 	metrics   taskDispatchMetrics
 	now       func() time.Time
 	backoff   func(int32) time.Duration
@@ -44,7 +45,7 @@ type TaskDispatcher struct {
 type TaskDispatcherOptions struct {
 	Store            taskDispatchStore
 	Queue            taskPublisher
-	TestcaseResolver testcaseSnapshotResolver
+	TestcaseResolver testcaseMetadataResolver
 	Metrics          taskDispatchMetrics
 	Now              func() time.Time
 	Backoff          func(int32) time.Duration
@@ -87,6 +88,9 @@ func (d *TaskDispatcher) DispatchPending(ctx context.Context, limit int32) (int,
 		if err != nil {
 			return dispatched, err
 		}
+		if d.metrics != nil {
+			d.metrics.RecordJudgeRequestPayloadSize(len(payload))
+		}
 		streamID, err := d.queue.Publish(ctx, task.ID, payload)
 		if err != nil {
 			d.record("error")
@@ -116,19 +120,9 @@ func (d *TaskDispatcher) requestEvent(ctx context.Context, task JudgeTaskRecord)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
-	testcaseSet, err := d.testcases.ReadyTestcaseSet(ctx, submission.ProblemID, submission.TestcaseSetID)
+	testcaseSet, err := d.testcases.ReadyTestcaseMetadata(ctx, submission.ProblemID, submission.TestcaseSetID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
-	}
-	testcases := make([]judgeevents.TestcaseRef, 0, len(testcaseSet.Cases))
-	for i, testcase := range testcaseSet.Cases {
-		testcases = append(testcases, judgeevents.TestcaseRef{
-			Index:             i + 1,
-			InputKey:          testcase.InputKey,
-			ExpectedOutputKey: testcase.OutputKey,
-			TimeLimitMS:       testcase.TimeLimit.Milliseconds(),
-			MemoryKB:          testcase.MemoryKB,
-		})
 	}
 	now := d.now()
 	if submission.Status == StatusQueued {
@@ -143,7 +137,7 @@ func (d *TaskDispatcher) requestEvent(ctx context.Context, task JudgeTaskRecord)
 		TaskID:          task.ID,
 		LanguageID:      language.ID,
 		TestcaseSetID:   testcaseSet.ID,
-		TestcaseSetHash: fmt.Sprintf("testcase-set-%d", testcaseSet.ID),
+		TestcaseSetHash: testcaseSet.ChecksumSHA256,
 		ProtocolVersion: judgeevents.RequestEventType,
 		JudgeEngine:     judge.EngineSOJAgent,
 		TraceID:         traceID,
@@ -168,10 +162,13 @@ func (d *TaskDispatcher) requestEvent(ctx context.Context, task JudgeTaskRecord)
 			ContentHash: artifact.ChecksumSHA256,
 		},
 		TestcaseSet: judgeevents.TestcaseSetRef{
-			ID:   testcaseSet.ID,
-			Hash: fmt.Sprintf("testcase-set-%d", testcaseSet.ID),
+			ID:             testcaseSet.ID,
+			ChecksumSHA256: testcaseSet.ChecksumSHA256,
+			StorageKey:     testcaseSet.StorageKey,
+			CaseCount:      testcaseSet.CaseCount,
+			TimeLimitMS:    testcaseSet.TimeLimit.Milliseconds(),
+			MemoryKB:       testcaseSet.MemoryKB,
 		},
-		Testcases: testcases,
 		TimeoutMS: language.DefaultTimeLimit.Milliseconds(),
 		MemoryKB:  language.DefaultMemoryKB,
 		Priority:  "formal",
@@ -429,6 +426,10 @@ func (w *Worker) Run(ctx context.Context, limit int, block time.Duration) error 
 
 type testcaseSnapshotResolver interface {
 	ReadyTestcaseSet(ctx context.Context, problemID, testcaseSetID int64) (problem.TestcaseSet, error)
+}
+
+type testcaseMetadataResolver interface {
+	ReadyTestcaseMetadata(ctx context.Context, problemID, testcaseSetID int64) (testcaseMetadata, error)
 }
 
 func traceIdentityFromContext(ctx context.Context, fallback string) (string, judgeevents.TraceContext) {
