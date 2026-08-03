@@ -206,12 +206,14 @@ func (r *ProblemReader) CurrentReadyTestcaseSet(ctx context.Context, problemID i
 		}
 		return TestcaseSet{}, err
 	}
-	cases, err := parseTestcaseArchiveCases(data, time.Duration(p.TimeLimitMS)*time.Millisecond, int64(p.MemoryLimitKB))
+	cases, err := ParseTestcaseArchive(data, TestcaseArchiveOptions{
+		ExpectedCaseCount: set.CaseCount,
+		ExpectedSHA256:    set.ChecksumSHA256,
+		TimeLimit:         time.Duration(p.TimeLimitMS) * time.Millisecond,
+		MemoryKB:          int64(p.MemoryLimitKB),
+	})
 	if err != nil {
 		return TestcaseSet{}, err
-	}
-	if set.CaseCount > 0 && int32(len(cases)) != set.CaseCount {
-		return TestcaseSet{}, apperror.BadRequest("testcase.case_count_mismatch", "case_count does not match input/output pairs")
 	}
 	return TestcaseSet{
 		ID:        set.ID,

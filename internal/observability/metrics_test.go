@@ -22,6 +22,13 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 	metrics.RecordJudgeTaskRecovery("recover_dead_task", "success")
 	metrics.RecordReconcilerAction("reset_stale_tasks", "success", 2)
 	metrics.RecordRejudgeBatch("create", "problem", "success")
+	metrics.RecordJudgeRequestPayloadSize(1024)
+	metrics.RecordTestcaseCache("miss")
+	metrics.RecordTestcaseCache("hit")
+	metrics.ObserveTestcaseCachePhase("download", "success", 20*time.Millisecond)
+	metrics.ObserveTestcaseCachePhase("unpack", "error", 30*time.Millisecond)
+	metrics.ObserveTestcaseCacheBytes(4096)
+	metrics.RecordTestcaseCacheEviction()
 
 	rec := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
@@ -44,6 +51,11 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 		"soj_worker_judge_task_recovery_total",
 		"soj_worker_reconciliation_total",
 		`soj_rejudge_batches_total{action="create",result="success",service="test",target="problem"} 1`,
+		"soj_worker_judge_request_payload_size_bytes",
+		"soj_judge_agent_testcase_cache_total",
+		"soj_judge_agent_testcase_cache_phase_duration_seconds",
+		`soj_judge_agent_testcase_cache_bytes{service="test"} 4096`,
+		"soj_judge_agent_testcase_cache_evictions_total",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics body missing %s:\n%s", want, body)

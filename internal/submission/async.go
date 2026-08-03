@@ -40,6 +40,7 @@ type CoreJudge interface {
 type CoreAsyncAgentOptions struct {
 	Core            CoreJudge
 	SourceStore     sourceReader
+	TestcaseLoader  testcaseLoader
 	ResultPublisher ResultPublisher
 	Now             func() time.Time
 }
@@ -47,6 +48,7 @@ type CoreAsyncAgentOptions struct {
 type CoreAsyncAgent struct {
 	core            CoreJudge
 	sourceStore     sourceReader
+	testcaseLoader  testcaseLoader
 	resultPublisher ResultPublisher
 	now             func() time.Time
 }
@@ -64,7 +66,7 @@ func NewCoreAsyncAgent(options CoreAsyncAgentOptions) *CoreAsyncAgent {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &CoreAsyncAgent{core: options.Core, sourceStore: options.SourceStore, resultPublisher: options.ResultPublisher, now: now}
+	return &CoreAsyncAgent{core: options.Core, sourceStore: options.SourceStore, testcaseLoader: options.TestcaseLoader, resultPublisher: options.ResultPublisher, now: now}
 }
 
 func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue MessageAcker) error {
@@ -126,15 +128,21 @@ func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 	if err != nil {
 		return err
 	}
-	cases := make([]judgecore.Case, 0, len(request.Testcases))
-	for _, item := range request.Testcases {
+	if a.testcaseLoader == nil {
+		return fmt.Errorf("testcase loader is required")
+	}
+	testcaseSet, err := a.testcaseLoader.Load(ctx, request.TestcaseSet)
+	if err != nil {
+		return err
+	}
+	cases := make([]judgecore.Case, 0, len(testcaseSet))
+	for i, item := range testcaseSet {
 		cases = append(cases, judgecore.Case{
-			Index:          item.Index,
+			Index:          i + 1,
 			Input:          item.InputKey,
-			ExpectedOutput: item.ExpectedOutputKey,
-			TimeLimit:      time.Duration(item.TimeLimitMS) * time.Millisecond,
+			ExpectedOutput: item.OutputKey,
+			TimeLimit:      item.TimeLimit,
 			MemoryKB:       item.MemoryKB,
-			Score:          item.Score,
 		})
 	}
 	result, err := a.core.Judge(ctx, judgecore.Request{
@@ -147,7 +155,7 @@ func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 	if err != nil {
 		return err
 	}
-	result.Manifest.TestcaseSetHash = request.TestcaseSet.Hash
+	result.Manifest.TestcaseSetHash = request.TestcaseSet.ChecksumSHA256
 	result.Manifest.TraceID = request.TraceID
 	attachTestcaseKeys(request, result.Cases)
 	if err := publishAsyncResult(ctx, a.resultPublisher, request, result, a.now); err != nil {

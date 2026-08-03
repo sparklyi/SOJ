@@ -80,15 +80,13 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	contestRepo := contest.NewPostgresRepository(pool)
 	contestService := contest.NewService(contestRepo)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
-	testcaseResolver := submission.NewTestcaseSnapshotResolver(queries, objectStorage)
 	judgeEngine := newJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStorage)
 	creator := submission.NewSubmissionCreator(submission.SubmissionCreatorOptions{
-		Store:            submissionRepo,
-		ProblemReader:    problemReader,
-		TestcaseResolver: testcaseResolver,
-		SourceStore:      sourceStore,
-		ContestPolicy:    contestService,
+		Store:         submissionRepo,
+		ProblemReader: problemReader,
+		SourceStore:   sourceStore,
+		ContestPolicy: contestService,
 	})
 	reader := submission.NewSubmissionReader(submissionRepo, contestService)
 	runs := submission.NewRunService(submission.RunServiceOptions{

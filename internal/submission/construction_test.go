@@ -30,10 +30,6 @@ func newServiceForTest(options serviceTestOptions) *Service {
 	if problems == nil {
 		problems = fakeProblemReader{}
 	}
-	testcases := options.TestcaseResolver
-	if testcases == nil {
-		testcases = fakeTestcaseResolver{}
-	}
 	sourceStore := options.SourceStore
 	if sourceStore == nil {
 		sourceStore = NewMemorySourceStore()
@@ -43,12 +39,11 @@ func newServiceForTest(options serviceTestOptions) *Service {
 		judgeEngine = judge.NewFakeEngine()
 	}
 	creator := NewSubmissionCreator(SubmissionCreatorOptions{
-		Store:            options.Repository,
-		ProblemReader:    problems,
-		TestcaseResolver: testcases,
-		SourceStore:      sourceStore,
-		ContestPolicy:    options.ContestSubmissionPolicy,
-		Now:              options.Now,
+		Store:         options.Repository,
+		ProblemReader: problems,
+		SourceStore:   sourceStore,
+		ContestPolicy: options.ContestSubmissionPolicy,
+		Now:           options.Now,
 	})
 	reader := NewSubmissionReader(options.Repository, options.ContestVisibilityPolicy)
 	runs := NewRunService(RunServiceOptions{
@@ -72,7 +67,7 @@ type workerTestOptions struct {
 	Queue            queue.TaskQueue
 	Judge            judgeRunner
 	ProblemReader    problem.Reader
-	TestcaseResolver testcaseSnapshotResolver
+	TestcaseResolver workerTestcaseResolver
 	SourceStore      sourceReader
 	MaxAttempts      int32
 	Backoff          func(int32) time.Duration
@@ -83,6 +78,11 @@ type workerTestOptions struct {
 type workerTestMetrics interface {
 	taskDispatchMetrics
 	taskProcessMetrics
+}
+
+type workerTestcaseResolver interface {
+	testcaseSnapshotResolver
+	testcaseMetadataResolver
 }
 
 func newWorkerForTest(options workerTestOptions) *Worker {

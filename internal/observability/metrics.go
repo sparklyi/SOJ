@@ -16,6 +16,7 @@ type Metrics struct {
 	httpRequests           *prometheus.CounterVec
 	httpRequestDuration    *prometheus.HistogramVec
 	judgeDispatches        *prometheus.CounterVec
+	judgeRequestPayload    prometheus.Histogram
 	judgeTasks             *prometheus.CounterVec
 	judgeTaskDuration      *prometheus.HistogramVec
 	resultConsumer         *prometheus.CounterVec
@@ -25,6 +26,10 @@ type Metrics struct {
 	queueOldestPending     *prometheus.GaugeVec
 	judgeAgentSlotsUsed    *prometheus.GaugeVec
 	judgeAgentSlotsCap     *prometheus.GaugeVec
+	testcaseCache          *prometheus.CounterVec
+	testcaseCachePhase     *prometheus.HistogramVec
+	testcaseCacheBytes     prometheus.Gauge
+	testcaseCacheEvictions prometheus.Counter
 	sandboxPhaseDuration   *prometheus.HistogramVec
 	sandboxBackendErrors   *prometheus.CounterVec
 	sandboxCleanupFails    *prometheus.CounterVec
@@ -64,6 +69,14 @@ func NewMetrics(service string) *Metrics {
 			Help:        "Total number of judge task dispatch attempts.",
 			ConstLabels: labels,
 		}, []string{"result"}),
+		judgeRequestPayload: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace:   "soj",
+			Subsystem:   "worker",
+			Name:        "judge_request_payload_size_bytes",
+			Help:        "Judge request payload size in bytes.",
+			ConstLabels: labels,
+			Buckets:     []float64{512, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304},
+		}),
 		judgeTasks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace:   "soj",
 			Subsystem:   "worker",
@@ -126,6 +139,35 @@ func NewMetrics(service string) *Metrics {
 			Help:        "Configured judge-agent sandbox slot capacity.",
 			ConstLabels: labels,
 		}, []string{"scope", "language"}),
+		testcaseCache: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "judge_agent",
+			Name:        "testcase_cache_total",
+			Help:        "Testcase cache lookups by outcome.",
+			ConstLabels: labels,
+		}, []string{"result"}),
+		testcaseCachePhase: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace:   "soj",
+			Subsystem:   "judge_agent",
+			Name:        "testcase_cache_phase_duration_seconds",
+			Help:        "Testcase cache download and unpack duration in seconds.",
+			ConstLabels: labels,
+			Buckets:     []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+		}, []string{"phase", "result"}),
+		testcaseCacheBytes: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace:   "soj",
+			Subsystem:   "judge_agent",
+			Name:        "testcase_cache_bytes",
+			Help:        "Current bytes held by the judge-agent testcase cache.",
+			ConstLabels: labels,
+		}),
+		testcaseCacheEvictions: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace:   "soj",
+			Subsystem:   "judge_agent",
+			Name:        "testcase_cache_evictions_total",
+			Help:        "Testcase cache entries evicted by the judge agent.",
+			ConstLabels: labels,
+		}),
 		sandboxPhaseDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace:   "soj",
 			Subsystem:   "sandbox",
@@ -197,6 +239,7 @@ func NewMetrics(service string) *Metrics {
 		metrics.httpRequests,
 		metrics.httpRequestDuration,
 		metrics.judgeDispatches,
+		metrics.judgeRequestPayload,
 		metrics.judgeTasks,
 		metrics.judgeTaskDuration,
 		metrics.resultConsumer,
@@ -206,6 +249,10 @@ func NewMetrics(service string) *Metrics {
 		metrics.queueOldestPending,
 		metrics.judgeAgentSlotsUsed,
 		metrics.judgeAgentSlotsCap,
+		metrics.testcaseCache,
+		metrics.testcaseCachePhase,
+		metrics.testcaseCacheBytes,
+		metrics.testcaseCacheEvictions,
 		metrics.sandboxPhaseDuration,
 		metrics.sandboxBackendErrors,
 		metrics.sandboxCleanupFails,
@@ -231,6 +278,37 @@ func (m *Metrics) ObserveHTTPRequest(method, route string, status int, duration 
 
 func (m *Metrics) RecordJudgeTaskDispatch(result string) {
 	m.judgeDispatches.WithLabelValues(result).Inc()
+}
+
+// RecordJudgeRequestPayloadSize records the serialized judge request size.
+func (m *Metrics) RecordJudgeRequestPayloadSize(bytes int) {
+	if bytes < 0 {
+		bytes = 0
+	}
+	m.judgeRequestPayload.Observe(float64(bytes))
+}
+
+// RecordTestcaseCache records a testcase cache lookup outcome.
+func (m *Metrics) RecordTestcaseCache(result string) {
+	m.testcaseCache.WithLabelValues(testcaseCacheResultLabel(result)).Inc()
+}
+
+// ObserveTestcaseCachePhase records testcase archive loading work.
+func (m *Metrics) ObserveTestcaseCachePhase(phase, result string, duration time.Duration) {
+	m.testcaseCachePhase.WithLabelValues(testcaseCachePhaseLabel(phase), testcaseCachePhaseResultLabel(result)).Observe(duration.Seconds())
+}
+
+// ObserveTestcaseCacheBytes records the current parsed testcase cache size.
+func (m *Metrics) ObserveTestcaseCacheBytes(bytes int64) {
+	if bytes < 0 {
+		bytes = 0
+	}
+	m.testcaseCacheBytes.Set(float64(bytes))
+}
+
+// RecordTestcaseCacheEviction records a testcase cache eviction.
+func (m *Metrics) RecordTestcaseCacheEviction() {
+	m.testcaseCacheEvictions.Inc()
 }
 
 func (m *Metrics) RecordJudgeTaskProcess(result string, duration time.Duration) {
@@ -308,5 +386,32 @@ func boundedResultLabel(result string) string {
 		return result
 	default:
 		return "error"
+	}
+}
+
+func testcaseCacheResultLabel(result string) string {
+	switch result {
+	case "hit", "miss", "error":
+		return result
+	default:
+		return "error"
+	}
+}
+
+func testcaseCachePhaseResultLabel(result string) string {
+	switch result {
+	case "success", "error":
+		return result
+	default:
+		return "error"
+	}
+}
+
+func testcaseCachePhaseLabel(phase string) string {
+	switch phase {
+	case "download", "unpack":
+		return phase
+	default:
+		return "unknown"
 	}
 }

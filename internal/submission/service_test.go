@@ -1374,7 +1374,7 @@ func TestHandlerCreateRunReturnsOpenAPIShapeAndShortWaitStatus(t *testing.T) {
 type fakeProblemReader struct{}
 
 func (fakeProblemReader) GetForJudge(ctx context.Context, problemID int64) (problem.Problem, error) {
-	return problem.Problem{ID: problemID}, nil
+	return problem.Problem{ID: problemID, CurrentTestcaseSetID: 3}, nil
 }
 
 type fakeTestcaseResolver struct{}
@@ -1385,6 +1385,10 @@ func (fakeTestcaseResolver) CurrentReadyTestcaseSet(ctx context.Context, problem
 
 func (fakeTestcaseResolver) ReadyTestcaseSet(ctx context.Context, problemID, testcaseSetID int64) (problem.TestcaseSet, error) {
 	return problem.TestcaseSet{ID: testcaseSetID, ProblemID: problemID, Status: "ready", Cases: []problem.Testcase{{InputKey: "in", OutputKey: "out", TimeLimit: time.Second, MemoryKB: 262144}}}, nil
+}
+
+func (fakeTestcaseResolver) ReadyTestcaseMetadata(ctx context.Context, problemID, testcaseSetID int64) (testcaseMetadata, error) {
+	return testcaseMetadata{ID: testcaseSetID, StorageKey: "cases.zip", ChecksumSHA256: "cases-hash", CaseCount: 1, TimeLimit: time.Second, MemoryKB: 262144}, nil
 }
 
 type fakeSnapshotTestcaseResolver struct {
@@ -1398,6 +1402,11 @@ func (r fakeSnapshotTestcaseResolver) CurrentReadyTestcaseSet(ctx context.Contex
 
 func (r fakeSnapshotTestcaseResolver) ReadyTestcaseSet(ctx context.Context, problemID, testcaseSetID int64) (problem.TestcaseSet, error) {
 	return r.byID[testcaseSetID], nil
+}
+
+func (r fakeSnapshotTestcaseResolver) ReadyTestcaseMetadata(ctx context.Context, problemID, testcaseSetID int64) (testcaseMetadata, error) {
+	set := r.byID[testcaseSetID]
+	return testcaseMetadata{ID: testcaseSetID, StorageKey: "cases.zip", ChecksumSHA256: "cases-hash", CaseCount: int32(len(set.Cases)), TimeLimit: time.Second, MemoryKB: 262144}, nil
 }
 
 type memoryQueue struct {
@@ -1450,6 +1459,8 @@ type recordingWorkerMetrics struct {
 func (m *recordingWorkerMetrics) RecordJudgeTaskDispatch(result string) {
 	m.dispatched = append(m.dispatched, result)
 }
+
+func (m *recordingWorkerMetrics) RecordJudgeRequestPayloadSize(bytes int) {}
 
 func (m *recordingWorkerMetrics) RecordJudgeTaskProcess(result string, duration time.Duration) {
 	m.processed = append(m.processed, recordedWorkerProcess{result: result, duration: duration})
