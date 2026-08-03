@@ -1,7 +1,6 @@
 package submission
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	crand "crypto/rand"
@@ -10,9 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
-	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -82,34 +78,22 @@ func NewTestcaseSnapshotResolver(q *db.Queries, objectStorage storage.ObjectStor
 	return &TestcaseSnapshotResolver{q: q, storage: objectStorage}
 }
 
-func (r *TestcaseSnapshotResolver) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (problem.TestcaseSet, error) {
-	row, err := r.q.GetCurrentReadyTestcaseSet(ctx, problemID)
-	if err != nil {
-		return problem.TestcaseSet{}, err
-	}
-	return r.testcaseSetFromRow(ctx, row.ID, row.ProblemID, int(row.Version), row.Status, row.StorageKey)
-}
-
 func (r *TestcaseSnapshotResolver) ReadyTestcaseSet(ctx context.Context, problemID, testcaseSetID int64) (problem.TestcaseSet, error) {
 	row, err := r.q.GetReadyTestcaseSetByID(ctx, db.GetReadyTestcaseSetByIDParams{ID: testcaseSetID, ProblemID: problemID})
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
-	return r.testcaseSetFromRow(ctx, row.ID, row.ProblemID, int(row.Version), row.Status, row.StorageKey)
-}
-
-func (r *TestcaseSnapshotResolver) testcaseSetFromRow(ctx context.Context, id, problemID int64, version int, status, storageKey string) (problem.TestcaseSet, error) {
 	if r.storage == nil {
 		return problem.TestcaseSet{}, apperror.ServiceUnavailable("testcase object storage unavailable")
 	}
-	if strings.TrimSpace(storageKey) == "" {
+	if strings.TrimSpace(row.StorageKey) == "" {
 		return problem.TestcaseSet{}, apperror.BadRequest("testcase.archive_missing", "testcase archive storage key is missing")
 	}
 	problemRow, err := r.q.GetProblemByID(ctx, problemID)
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
-	body, _, err := r.storage.Get(ctx, storageKey)
+	body, _, err := r.storage.Get(ctx, row.StorageKey)
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
@@ -117,79 +101,51 @@ func (r *TestcaseSnapshotResolver) testcaseSetFromRow(ctx context.Context, id, p
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
-	cases, err := parseSnapshotTestcaseCases(data, time.Duration(problemRow.TimeLimitMs)*time.Millisecond, int64(problemRow.MemoryLimitKb))
+	cases, err := problem.ParseTestcaseArchive(data, problem.TestcaseArchiveOptions{
+		ExpectedCaseCount: row.CaseCount,
+		ExpectedSHA256:    row.ChecksumSha256,
+		TimeLimit:         time.Duration(problemRow.TimeLimitMs) * time.Millisecond,
+		MemoryKB:          int64(problemRow.MemoryLimitKb),
+	})
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
-	return problem.TestcaseSet{ID: id, ProblemID: problemID, Version: version, Status: status, Cases: cases}, nil
+	return problem.TestcaseSet{ID: row.ID, ProblemID: row.ProblemID, Version: int(row.Version), Status: row.Status, Cases: cases}, nil
 }
 
-var snapshotCaseNameRE = regexp.MustCompile(`^(input|output)(\d+)\.txt$`)
-
-func parseSnapshotTestcaseCases(data []byte, defaultTimeLimit time.Duration, defaultMemoryKB int64) ([]problem.Testcase, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return nil, apperror.BadRequest("testcase.zip_invalid", "testcase archive must be a valid zip file")
-	}
-	inputs := map[string]string{}
-	outputs := map[string]string{}
-	for _, file := range reader.File {
-		if file.FileInfo().IsDir() {
-			continue
-		}
-		name := strings.ToLower(path.Base(file.Name))
-		matches := snapshotCaseNameRE.FindStringSubmatch(name)
-		if len(matches) != 3 {
-			continue
-		}
-		content, err := readSnapshotZipFile(file)
-		if err != nil {
-			return nil, err
-		}
-		if matches[1] == "input" {
-			inputs[matches[2]] = content
-		} else {
-			outputs[matches[2]] = content
-		}
-	}
-
-	ids := make([]string, 0, len(inputs))
-	for id := range inputs {
-		if _, ok := outputs[id]; !ok {
-			return nil, apperror.BadRequest("testcase.output_missing", "each input must have a matching output")
-		}
-		ids = append(ids, id)
-	}
-	for id := range outputs {
-		if _, ok := inputs[id]; !ok {
-			return nil, apperror.BadRequest("testcase.input_missing", "each output must have a matching input")
-		}
-	}
-	sort.Slice(ids, func(i, j int) bool {
-		if len(ids[i]) != len(ids[j]) {
-			return len(ids[i]) < len(ids[j])
-		}
-		return ids[i] < ids[j]
-	})
-
-	cases := make([]problem.Testcase, 0, len(ids))
-	for i, id := range ids {
-		cases = append(cases, problem.Testcase{ID: int64(i + 1), InputKey: inputs[id], OutputKey: outputs[id], TimeLimit: defaultTimeLimit, MemoryKB: defaultMemoryKB})
-	}
-	if len(cases) == 0 {
-		return nil, apperror.BadRequest("testcase.case_count_mismatch", "testcase archive has no input/output pairs")
-	}
-	return cases, nil
+type testcaseMetadata struct {
+	ID             int64
+	StorageKey     string
+	ChecksumSHA256 string
+	CaseCount      int32
+	TimeLimit      time.Duration
+	MemoryKB       int64
 }
 
-func readSnapshotZipFile(file *zip.File) (string, error) {
-	reader, err := file.Open()
+func (r *TestcaseSnapshotResolver) ReadyTestcaseMetadata(ctx context.Context, problemID, testcaseSetID int64) (testcaseMetadata, error) {
+	row, err := r.q.GetReadyTestcaseSetByID(ctx, db.GetReadyTestcaseSetByIDParams{ID: testcaseSetID, ProblemID: problemID})
 	if err != nil {
-		return "", fmt.Errorf("open testcase file %s: %w", file.Name, err)
+		return testcaseMetadata{}, err
 	}
-	data, err := readAllAndClose(reader)
+	problemRow, err := r.q.GetProblemByID(ctx, problemID)
 	if err != nil {
-		return "", fmt.Errorf("read testcase file %s: %w", file.Name, err)
+		return testcaseMetadata{}, err
 	}
-	return string(data), nil
+	if strings.TrimSpace(row.StorageKey) == "" {
+		return testcaseMetadata{}, apperror.BadRequest("testcase.archive_missing", "testcase archive storage key is missing")
+	}
+	if strings.TrimSpace(row.ChecksumSha256) == "" {
+		return testcaseMetadata{}, apperror.BadRequest("testcase.checksum_missing", "testcase archive checksum is missing")
+	}
+	if row.CaseCount <= 0 {
+		return testcaseMetadata{}, apperror.BadRequest("testcase.case_count_mismatch", "testcase archive case count is invalid")
+	}
+	return testcaseMetadata{
+		ID:             row.ID,
+		StorageKey:     row.StorageKey,
+		ChecksumSHA256: row.ChecksumSha256,
+		CaseCount:      row.CaseCount,
+		TimeLimit:      time.Duration(problemRow.TimeLimitMs) * time.Millisecond,
+		MemoryKB:       int64(problemRow.MemoryLimitKb),
+	}, nil
 }

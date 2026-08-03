@@ -34,13 +34,7 @@ func (s *submissionCreatorStoreStub) CreateSubmissionWithTask(_ context.Context,
 type submissionCreatorProblemReaderStub struct{}
 
 func (submissionCreatorProblemReaderStub) GetForJudge(context.Context, int64) (problem.Problem, error) {
-	return problem.Problem{ID: 1}, nil
-}
-
-type submissionCreatorTestcaseResolverStub struct{}
-
-func (submissionCreatorTestcaseResolverStub) CurrentReadyTestcaseSet(context.Context, int64) (problem.TestcaseSet, error) {
-	return problem.TestcaseSet{ID: 3}, nil
+	return problem.Problem{ID: 1, CurrentTestcaseSetID: 3}, nil
 }
 
 type sourceWriterStub struct{}
@@ -70,12 +64,11 @@ func (contestSubmissionPolicyStub) ValidateSubmission(context.Context, auth.Acto
 func TestSubmissionCreatorUsesOnlyCreationStore(t *testing.T) {
 	contestID := int64(2)
 	creator := NewSubmissionCreator(SubmissionCreatorOptions{
-		Store:            &submissionCreatorStoreStub{},
-		ProblemReader:    submissionCreatorProblemReaderStub{},
-		TestcaseResolver: submissionCreatorTestcaseResolverStub{},
-		SourceStore:      sourceWriterStub{},
-		ContestPolicy:    contestSubmissionPolicyStub{},
-		Now:              func() time.Time { return time.Unix(10, 0).UTC() },
+		Store:         &submissionCreatorStoreStub{},
+		ProblemReader: submissionCreatorProblemReaderStub{},
+		SourceStore:   sourceWriterStub{},
+		ContestPolicy: contestSubmissionPolicyStub{},
+		Now:           func() time.Time { return time.Unix(10, 0).UTC() },
 	})
 
 	created, err := creator.CreateSubmission(t.Context(), auth.Actor{UserID: 7, Role: auth.RoleUser}, CreateSubmissionInput{
@@ -87,7 +80,7 @@ func TestSubmissionCreatorUsesOnlyCreationStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSubmission() error = %v", err)
 	}
-	if created.Submission.ID == 0 || created.Task.SubmissionID != created.Submission.ID {
+	if created.Submission.ID == 0 || created.Task.SubmissionID != created.Submission.ID || created.Submission.TestcaseSetID != 3 {
 		t.Fatalf("CreateSubmission() = %+v", created)
 	}
 }
