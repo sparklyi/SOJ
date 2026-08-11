@@ -16,27 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Repository interface {
-	WithTx(ctx context.Context, fn func(context.Context, Repository) error) error
-	CreateContest(ctx context.Context, input ContestRecord) (ContestRecord, error)
-	GetContest(ctx context.Context, id int64) (ContestRecord, error)
-	ListContests(ctx context.Context, filter ListContestFilter) ([]ContestRecord, int64, error)
-	ListContestsByCursor(ctx context.Context, filter ListContestFilter) ([]ContestRecord, error)
-	UpdateContest(ctx context.Context, id int64, input ContestUpdateInput) (ContestRecord, error)
-	ArchiveContest(ctx context.Context, id int64) (ContestRecord, error)
-	ReplaceContestProblems(ctx context.Context, contestID int64, problems []ContestProblem) error
-	ListContestProblems(ctx context.Context, contestID int64) ([]ContestProblem, error)
-	CreateRegistration(ctx context.Context, input ContestRegistration) (ContestRegistration, error)
-	GetRegistration(ctx context.Context, contestID, userID int64) (ContestRegistration, error)
-	ListRegistrations(ctx context.Context, contestID int64) ([]ContestRegistration, error)
-	ListProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error)
-	ListTerminalSubmissions(ctx context.Context, contestID int64) ([]ContestSubmissionResult, error)
-	UpsertProblemResult(ctx context.Context, result ContestProblemResult) (ContestProblemResult, error)
-	ListScoreSnapshotCandidates(ctx context.Context, now time.Time, limit int32) ([]ScoreSnapshotCandidate, error)
-	CreateScoreSnapshot(ctx context.Context, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error)
-	LatestScoreSnapshot(ctx context.Context, contestID int64, view ScoreboardView) (ScoreboardSnapshot, error)
-}
-
 type PostgresRepository struct {
 	pool    *pgxpool.Pool
 	queries *db.Queries
@@ -46,7 +25,7 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool, queries: db.New(pool)}
 }
 
-func (r *PostgresRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
+func (r *PostgresRepository) WithTx(ctx context.Context, fn func(context.Context, contestTransaction) error) error {
 	return postgres.WithPoolTx(ctx, r.pool, func(tx pgx.Tx) error {
 		return fn(ctx, &txRepository{queries: r.queries.WithTx(tx)})
 	})
@@ -127,7 +106,7 @@ type txRepository struct {
 	queries *db.Queries
 }
 
-func (r *txRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
+func (r *txRepository) WithTx(ctx context.Context, fn func(context.Context, contestTransaction) error) error {
 	return fn(ctx, r)
 }
 

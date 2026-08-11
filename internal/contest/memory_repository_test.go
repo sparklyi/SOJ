@@ -37,7 +37,7 @@ func (r *memoryRepository) id() int64 {
 	return r.nextID
 }
 
-func (r *memoryRepository) WithTx(ctx context.Context, fn func(context.Context, Repository) error) error {
+func (r *memoryRepository) WithTx(ctx context.Context, fn func(context.Context, contestTransaction) error) error {
 	return fn(ctx, r)
 }
 

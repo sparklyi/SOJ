@@ -39,12 +39,38 @@ type ScoreboardCell struct {
 	LastSubmissionID *int64     `json:"last_submission_id,omitempty"`
 }
 
-func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, requested ScoreboardView) (ScoreboardResponse, error) {
-	contest, err := s.repo.GetContest(ctx, contestID)
+type scoreboardStore interface {
+	ListProblemResults(context.Context, int64) ([]ContestProblemResult, error)
+	ListTerminalSubmissions(context.Context, int64) ([]ContestSubmissionResult, error)
+	ListScoreSnapshotCandidates(context.Context, time.Time, int32) ([]ScoreSnapshotCandidate, error)
+	CreateScoreSnapshot(context.Context, ScoreboardSnapshot) (ScoreboardSnapshot, error)
+	LatestScoreSnapshot(context.Context, int64, ScoreboardView) (ScoreboardSnapshot, error)
+}
+
+// ScoreboardService owns scoreboard reads and snapshot generation.
+type ScoreboardService struct {
+	reader *ContestReader
+	store  scoreboardStore
+}
+
+// NewScoreboardService builds scoreboard workflows from contest reads and score storage.
+func NewScoreboardService(reader *ContestReader, store scoreboardStore) *ScoreboardService {
+	if reader == nil {
+		panic("scoreboard reader is required")
+	}
+	if store == nil {
+		panic("scoreboard store is required")
+	}
+	return &ScoreboardService{reader: reader, store: store}
+}
+
+// Scoreboard returns the requested contest scoreboard view.
+func (s *ScoreboardService) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, requested ScoreboardView) (ScoreboardResponse, error) {
+	contest, err := s.reader.getContest(ctx, contestID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
-	if err := s.canReadContest(ctx, actor, contest); err != nil {
+	if err := s.reader.canReadContest(ctx, actor, contest); err != nil {
 		return ScoreboardResponse{}, err
 	}
 	view := s.defaultScoreboardView(contest, requested)
@@ -52,7 +78,7 @@ func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID in
 		return ScoreboardResponse{}, err
 	}
 	if view == ScoreboardViewFinal || view == ScoreboardViewFrozen {
-		snapshot, err := s.repo.LatestScoreSnapshot(ctx, contestID, view)
+		snapshot, err := s.store.LatestScoreSnapshot(ctx, contestID, view)
 		if err == nil {
 			return snapshot.Board, nil
 		}
@@ -61,14 +87,15 @@ func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID in
 			return ScoreboardResponse{}, err
 		}
 	}
-	return s.buildScoreboard(ctx, contest, view, s.now())
+	return s.buildScoreboard(ctx, contest, view, s.reader.now())
 }
 
-func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (ScoreSnapshotGenerationResult, error) {
+// GenerateDueScoreSnapshots builds missing frozen and final snapshots.
+func (s *ScoreboardService) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (ScoreSnapshotGenerationResult, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	candidates, err := s.repo.ListScoreSnapshotCandidates(ctx, s.now(), limit)
+	candidates, err := s.store.ListScoreSnapshotCandidates(ctx, s.reader.now(), limit)
 	if err != nil {
 		return ScoreSnapshotGenerationResult{}, err
 	}
@@ -77,12 +104,12 @@ func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (S
 		if candidate.View != ScoreboardViewFrozen && candidate.View != ScoreboardViewFinal {
 			continue
 		}
-		generatedAt := s.now()
+		generatedAt := s.reader.now()
 		board, err := s.buildScoreboard(ctx, candidate.Contest, candidate.View, generatedAt)
 		if err != nil {
 			return result, err
 		}
-		if _, err := s.repo.CreateScoreSnapshot(ctx, ScoreboardSnapshot{
+		if _, err := s.store.CreateScoreSnapshot(ctx, ScoreboardSnapshot{
 			ContestID:   candidate.Contest.ID,
 			View:        candidate.View,
 			Board:       board,
@@ -100,17 +127,17 @@ func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (S
 	return result, nil
 }
 
-func (s *Service) buildScoreboard(ctx context.Context, contest ContestRecord, view ScoreboardView, generatedAt time.Time) (ScoreboardResponse, error) {
-	problems, err := s.repo.ListContestProblems(ctx, contest.ID)
+func (s *ScoreboardService) buildScoreboard(ctx context.Context, contest ContestRecord, view ScoreboardView, generatedAt time.Time) (ScoreboardResponse, error) {
+	problems, err := s.reader.listContestProblems(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
-	registrations, err := s.repo.ListRegistrations(ctx, contest.ID)
+	registrations, err := s.reader.listRegistrations(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
 	if view == ScoreboardViewFrozen {
-		submissions, err := s.repo.ListTerminalSubmissions(ctx, contest.ID)
+		submissions, err := s.store.ListTerminalSubmissions(ctx, contest.ID)
 		if err != nil {
 			return ScoreboardResponse{}, err
 		}
@@ -118,18 +145,18 @@ func (s *Service) buildScoreboard(ctx context.Context, contest ContestRecord, vi
 			return buildBoardFromSubmissions(contest, view, problems, registrations, submissions, generatedAt), nil
 		}
 	}
-	results, err := s.repo.ListProblemResults(ctx, contest.ID)
+	results, err := s.store.ListProblemResults(ctx, contest.ID)
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
 	return buildBoardFromResults(contest, view, problems, registrations, results, generatedAt), nil
 }
 
-func (s *Service) defaultScoreboardView(contest ContestRecord, requested ScoreboardView) ScoreboardView {
+func (s *ScoreboardService) defaultScoreboardView(contest ContestRecord, requested ScoreboardView) ScoreboardView {
 	if requested != "" {
 		return requested
 	}
-	now := s.now()
+	now := s.reader.now()
 	if !now.Before(contest.EndAt) {
 		return ScoreboardViewFinal
 	}
@@ -139,8 +166,8 @@ func (s *Service) defaultScoreboardView(contest ContestRecord, requested Scorebo
 	return ScoreboardViewLive
 }
 
-func (s *Service) canViewScoreboard(actor auth.Actor, contest ContestRecord, view ScoreboardView) error {
-	now := s.now()
+func (s *ScoreboardService) canViewScoreboard(actor auth.Actor, contest ContestRecord, view ScoreboardView) error {
+	now := s.reader.now()
 	switch view {
 	case ScoreboardViewLive:
 		if now.Before(contest.FreezeAt) || actor.Admin() || actor.UserID == contest.OwnerUserID {

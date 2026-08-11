@@ -6,13 +6,43 @@ import (
 	"SOJ/internal/submission"
 )
 
-func (s *Service) recordTerminalSubmission(ctx context.Context, terminal submission.TerminalSubmission) error {
+type scoreboardProjectionStore interface {
+	ListProblemResults(context.Context, int64) ([]ContestProblemResult, error)
+	UpsertProblemResult(context.Context, ContestProblemResult) (ContestProblemResult, error)
+}
+
+// ScoreboardProjection updates the contest result projection after terminal submissions.
+type ScoreboardProjection struct {
+	reader *ContestReader
+	store  scoreboardProjectionStore
+}
+
+// NewScoreboardProjection builds the terminal result projection workflow.
+func NewScoreboardProjection(reader *ContestReader, store scoreboardProjectionStore) *ScoreboardProjection {
+	if reader == nil {
+		panic("scoreboard projection reader is required")
+	}
+	if store == nil {
+		panic("scoreboard projection store is required")
+	}
+	return &ScoreboardProjection{reader: reader, store: store}
+}
+
+// AfterSubmissionTerminal updates the contest result projection for a terminal submission.
+func (s *ScoreboardProjection) AfterSubmissionTerminal(ctx context.Context, terminal submission.TerminalSubmission) error {
+	if terminal.ContestID == nil {
+		return nil
+	}
+	return s.recordTerminalSubmission(ctx, terminal)
+}
+
+func (s *ScoreboardProjection) recordTerminalSubmission(ctx context.Context, terminal submission.TerminalSubmission) error {
 	contestID := *terminal.ContestID
-	contest, err := s.repo.GetContest(ctx, contestID)
+	contest, err := s.reader.getContest(ctx, contestID)
 	if err != nil {
 		return err
 	}
-	problems, err := s.repo.ListContestProblems(ctx, contestID)
+	problems, err := s.reader.listContestProblems(ctx, contestID)
 	if err != nil {
 		return err
 	}
@@ -20,7 +50,7 @@ func (s *Service) recordTerminalSubmission(ctx context.Context, terminal submiss
 		return nil
 	}
 	existing := ContestProblemResult{ContestID: contestID, UserID: terminal.UserID, ProblemID: terminal.ProblemID, Status: CellNone}
-	results, err := s.repo.ListProblemResults(ctx, contestID)
+	results, err := s.store.ListProblemResults(ctx, contestID)
 	if err != nil {
 		return err
 	}
@@ -48,6 +78,6 @@ func (s *Service) recordTerminalSubmission(ctx context.Context, terminal submiss
 	} else {
 		existing.Status = CellAttempted
 	}
-	_, err = s.repo.UpsertProblemResult(ctx, existing)
+	_, err = s.store.UpsertProblemResult(ctx, existing)
 	return err
 }
