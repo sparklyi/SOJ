@@ -182,382 +182,98 @@ type ContestCursorPage struct {
 	NextCursor *ContestCursor  `json:"next_cursor,omitempty"`
 }
 
+type contestTransaction interface {
+	CreateContest(context.Context, ContestRecord) (ContestRecord, error)
+	UpdateContest(context.Context, int64, ContestUpdateInput) (ContestRecord, error)
+	ReplaceContestProblems(context.Context, int64, []ContestProblem) error
+}
+
 type Service struct {
-	repo Repository
-	now  func() time.Time
+	authoring  *ContestAuthoring
+	reader     *ContestReader
+	policy     *ContestPolicy
+	scoreboard *ScoreboardService
+	projection *ScoreboardProjection
 }
 
-type Option func(*Service)
-
-func WithNow(now func() time.Time) Option {
-	return func(s *Service) {
-		if now != nil {
-			s.now = now
-		}
+// NewService composes the public contest API from focused workflows.
+func NewService(reader *ContestReader, authoring *ContestAuthoring, policy *ContestPolicy, scoreboard *ScoreboardService, projection *ScoreboardProjection) *Service {
+	if reader == nil {
+		panic("contest reader is required")
 	}
-}
-
-func NewService(repo Repository, options ...Option) *Service {
-	s := &Service{repo: repo, now: func() time.Time { return time.Now().UTC() }}
-	for _, option := range options {
-		option(s)
+	if authoring == nil {
+		panic("contest authoring is required")
 	}
-	return s
+	if policy == nil {
+		panic("contest policy is required")
+	}
+	if scoreboard == nil {
+		panic("contest scoreboard is required")
+	}
+	if projection == nil {
+		panic("contest projection is required")
+	}
+	return &Service{authoring: authoring, reader: reader, policy: policy, scoreboard: scoreboard, projection: projection}
 }
 
 func (s *Service) CreateContest(ctx context.Context, actor auth.Actor, input ContestInput) (ContestRecord, error) {
-	if !actor.Authenticated() {
-		return ContestRecord{}, apperror.Unauthorized("auth_required", "authentication required")
-	}
-	if input.Status == "" {
-		input.Status = StatusDraft
-	}
-	if err := validateContestInput(input); err != nil {
-		return ContestRecord{}, err
-	}
-	problems, err := contestProblems(0, input.Problems)
-	if err != nil {
-		return ContestRecord{}, err
-	}
-	record := ContestRecord{
-		OwnerUserID:    actor.UserID,
-		Title:          strings.TrimSpace(input.Title),
-		Description:    input.Description,
-		Visibility:     input.Visibility,
-		Status:         input.Status,
-		StartAt:        input.StartAt.UTC(),
-		EndAt:          input.EndAt.UTC(),
-		FreezeAt:       input.FreezeAt.UTC(),
-		InviteCodeHash: hashInviteCode(input.InviteCode),
-	}
-
-	var created ContestRecord
-	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		var err error
-		created, err = repo.CreateContest(ctx, record)
-		if err != nil {
-			return err
-		}
-		for i := range problems {
-			problems[i].ContestID = created.ID
-		}
-		if err := repo.ReplaceContestProblems(ctx, created.ID, problems); err != nil {
-			return err
-		}
-		created.Problems = problems
-		return nil
-	})
-	created.ScoringMode = ScoringModeACM
-	return created, err
+	return s.authoring.CreateContest(ctx, actor, input)
 }
 
 func (s *Service) GetContest(ctx context.Context, actor auth.Actor, id int64) (ContestRecord, error) {
-	record, err := s.repo.GetContest(ctx, id)
-	if err != nil {
-		return ContestRecord{}, err
-	}
-	if err := s.canReadContest(ctx, actor, record); err != nil {
-		return ContestRecord{}, err
-	}
-	return s.withFrontendContract(ctx, actor, record)
+	return s.reader.GetContest(ctx, actor, id)
 }
 
 func (s *Service) ListContests(ctx context.Context, actor auth.Actor, filter ListContestFilter) (ContestList, error) {
-	if filter.Page <= 0 {
-		filter.Page = 1
-	}
-	if filter.PageSize <= 0 || filter.PageSize > 100 {
-		filter.PageSize = 20
-	}
-	if actor.Admin() {
-		filter.IncludePrivate = true
-	} else if actor.Authenticated() {
-		filter.VisibleToUserID = actor.UserID
-	}
-	filter.Limit = filter.PageSize
-	filter.Offset = (filter.Page - 1) * filter.PageSize
-	items, total, err := s.repo.ListContests(ctx, filter)
-	if err != nil {
-		return ContestList{}, err
-	}
-	for i := range items {
-		withProblems, err := s.withFrontendContract(ctx, actor, items[i])
-		if err != nil {
-			return ContestList{}, err
-		}
-		items[i] = withProblems
-	}
-	return ContestList{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
+	return s.reader.ListContests(ctx, actor, filter)
 }
 
 func (s *Service) ListContestsByCursor(ctx context.Context, actor auth.Actor, filter ListContestFilter) (ContestCursorPage, error) {
-	if filter.PageSize <= 0 || filter.PageSize > 100 {
-		filter.PageSize = 20
-	}
-	if actor.Admin() {
-		filter.IncludePrivate = true
-	} else if actor.Authenticated() {
-		filter.VisibleToUserID = actor.UserID
-	}
-	limit := filter.PageSize
-	cursor := ContestCursor{
-		StartAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC),
-		ID:      1<<63 - 1,
-	}
-	if filter.Cursor != nil {
-		if filter.Cursor.ID <= 0 || filter.Cursor.StartAt.IsZero() {
-			return ContestCursorPage{}, apperror.BadRequest("invalid_cursor", "cursor is invalid")
-		}
-		cursor = ContestCursor{StartAt: filter.Cursor.StartAt.UTC(), ID: filter.Cursor.ID}
-	}
-	filter.Cursor = &cursor
-	filter.Limit = limit + 1
-	filter.Offset = 0
-	items, err := s.repo.ListContestsByCursor(ctx, filter)
-	if err != nil {
-		return ContestCursorPage{}, err
-	}
-	hasMore := len(items) > int(limit)
-	if hasMore {
-		items = items[:limit]
-	}
-	for i := range items {
-		withProblems, err := s.withFrontendContract(ctx, actor, items[i])
-		if err != nil {
-			return ContestCursorPage{}, err
-		}
-		items[i] = withProblems
-	}
-	page := ContestCursorPage{Items: items}
-	if hasMore {
-		last := items[len(items)-1]
-		page.NextCursor = &ContestCursor{StartAt: last.StartAt, ID: last.ID}
-	}
-	return page, nil
+	return s.reader.ListContestsByCursor(ctx, actor, filter)
 }
 
 func (s *Service) UpdateContest(ctx context.Context, actor auth.Actor, id int64, input ContestUpdateInput) (ContestRecord, error) {
-	current, err := s.repo.GetContest(ctx, id)
-	if err != nil {
-		return ContestRecord{}, err
-	}
-	if err := requireContestWriter(actor, current); err != nil {
-		return ContestRecord{}, err
-	}
-	if err := validateContestUpdate(current, input); err != nil {
-		return ContestRecord{}, err
-	}
-	var updated ContestRecord
-	err = s.repo.WithTx(ctx, func(ctx context.Context, repo Repository) error {
-		var err error
-		updated, err = repo.UpdateContest(ctx, id, input)
-		if err != nil {
-			return err
-		}
-		if input.Problems != nil {
-			problems, err := contestProblems(id, *input.Problems)
-			if err != nil {
-				return err
-			}
-			if err := repo.ReplaceContestProblems(ctx, id, problems); err != nil {
-				return err
-			}
-			updated.Problems = problems
-			updated.ScoringMode = ScoringModeACM
-			updated.Registered = s.actorRegisteredForContest(ctx, actor, updated.ID)
-			return nil
-		}
-		updated, err = s.withFrontendContract(ctx, actor, updated)
-		return err
-	})
-	return updated, err
+	return s.authoring.UpdateContest(ctx, actor, id, input)
 }
 
 func (s *Service) DeleteContest(ctx context.Context, actor auth.Actor, id int64) (ContestRecord, error) {
-	current, err := s.repo.GetContest(ctx, id)
-	if err != nil {
-		return ContestRecord{}, err
-	}
-	if err := requireContestWriter(actor, current); err != nil {
-		return ContestRecord{}, err
-	}
-	return s.repo.ArchiveContest(ctx, id)
+	return s.authoring.DeleteContest(ctx, actor, id)
 }
 
 func (s *Service) AuthorizeContestRejudge(ctx context.Context, actor auth.Actor, id int64) error {
-	contest, err := s.repo.GetContest(ctx, id)
-	if err != nil {
-		return err
-	}
-	return requireContestWriter(actor, contest)
+	return s.policy.AuthorizeContestRejudge(ctx, actor, id)
 }
 
 func (s *Service) ValidateContestRejudgeTarget(ctx context.Context, id int64) error {
-	contest, err := s.repo.GetContest(ctx, id)
-	if err != nil {
-		return err
-	}
-	if contest.Status != StatusEnded {
-		return apperror.Conflict("rejudge.contest_not_ended", "contest must be ended before rejudge")
-	}
-	return nil
+	return s.policy.ValidateContestRejudgeTarget(ctx, id)
 }
 
 func (s *Service) Register(ctx context.Context, actor auth.Actor, contestID int64, input RegistrationInput) (ContestRegistration, error) {
-	if !actor.Authenticated() {
-		return ContestRegistration{}, apperror.Unauthorized("auth_required", "authentication required")
-	}
-	contest, err := s.repo.GetContest(ctx, contestID)
-	if err != nil {
-		return ContestRegistration{}, err
-	}
-	if contest.Visibility == VisibilityPrivate && contest.InviteCodeHash == "" {
-		return ContestRegistration{}, apperror.Forbidden("contest.invite_code_required", "invite code is required")
-	}
-	if contest.Visibility == VisibilityPrivate && contest.InviteCodeHash != hashInviteCode(input.InviteCode) {
-		return ContestRegistration{}, apperror.Forbidden("contest.invite_code_invalid", "invite code is invalid")
-	}
-	displayName := strings.TrimSpace(input.DisplayName)
-	email := strings.TrimSpace(input.Email)
-	if displayName == "" || email == "" {
-		return ContestRegistration{}, apperror.BadRequest("request.invalid", "display_name and email are required")
-	}
-	return s.repo.CreateRegistration(ctx, ContestRegistration{
-		ContestID:   contestID,
-		UserID:      actor.UserID,
-		DisplayName: displayName,
-		Email:       email,
-		Status:      RegistrationActive,
-	})
+	return s.policy.Register(ctx, actor, contestID, input)
 }
 
 func (s *Service) ValidateSubmission(ctx context.Context, actor auth.Actor, problemID, contestID int64) error {
-	if !actor.Authenticated() {
-		return apperror.Unauthorized("auth_required", "authentication required")
-	}
-	contest, err := s.repo.GetContest(ctx, contestID)
-	if err != nil {
-		return err
-	}
-	if contest.Status != StatusPublished && contest.Status != StatusRunning {
-		return apperror.Forbidden("contest.not_started", "contest is not accepting submissions")
-	}
-	now := s.now()
-	if now.Before(contest.StartAt) {
-		return apperror.Forbidden("contest.not_started", "contest has not started")
-	}
-	if !now.Before(contest.EndAt) {
-		return apperror.Forbidden("contest.ended", "contest has ended")
-	}
-	problems, err := s.repo.ListContestProblems(ctx, contestID)
-	if err != nil {
-		return err
-	}
-	if !containsProblem(problems, problemID) {
-		return apperror.NotFound("contest.problem_not_found", "problem is not in contest")
-	}
-	if actor.Admin() || actor.UserID == contest.OwnerUserID {
-		return nil
-	}
-	registration, err := s.repo.GetRegistration(ctx, contestID, actor.UserID)
-	if err != nil || registration.Status != RegistrationActive {
-		return apperror.Forbidden("contest.registration_required", "contest registration required")
-	}
-	return nil
+	return s.policy.ValidateSubmission(ctx, actor, problemID, contestID)
 }
 
 func (s *Service) SubmissionResultVisibility(ctx context.Context, actor auth.Actor, sub submission.ContestSubmissionVisibility) (submission.SubmissionResultVisibility, error) {
-	contest, err := s.repo.GetContest(ctx, sub.ContestID)
-	if err != nil {
-		return submission.SubmissionResultVisibility{}, err
-	}
-	if err := s.canReadContest(ctx, actor, contest); err != nil {
-		return submission.SubmissionResultVisibility{}, err
-	}
-	return submissionResultVisibility(contest, actor, sub, s.now()), nil
+	return s.policy.SubmissionResultVisibility(ctx, actor, sub)
 }
 
 func (s *Service) SubmissionResultVisibilities(ctx context.Context, actor auth.Actor, submissions []submission.ContestSubmissionVisibility) (map[int64]submission.SubmissionResultVisibility, error) {
-	visibilities := make(map[int64]submission.SubmissionResultVisibility, len(submissions))
-	contests := make(map[int64]ContestRecord)
-	now := s.now()
-	for _, sub := range submissions {
-		contest, ok := contests[sub.ContestID]
-		if !ok {
-			var err error
-			contest, err = s.repo.GetContest(ctx, sub.ContestID)
-			if err != nil {
-				return nil, err
-			}
-			if err := s.canReadContest(ctx, actor, contest); err != nil {
-				return nil, err
-			}
-			contests[sub.ContestID] = contest
-		}
-		visibilities[sub.ID] = submissionResultVisibility(contest, actor, sub, now)
-	}
-	return visibilities, nil
+	return s.policy.SubmissionResultVisibilities(ctx, actor, submissions)
 }
 
-func submissionResultVisibility(contest ContestRecord, actor auth.Actor, sub submission.ContestSubmissionVisibility, now time.Time) submission.SubmissionResultVisibility {
-	if actor.Admin() || actor.UserID == contest.OwnerUserID {
-		return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: true, Visibility: "visible"}
-	}
-	visible := submissionVisibleInFrozenWindow(contest, sub, now)
-	if !visible {
-		return submission.SubmissionResultVisibility{Visibility: "frozen"}
-	}
-	return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, Visibility: "visible"}
+func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, requested ScoreboardView) (ScoreboardResponse, error) {
+	return s.scoreboard.Scoreboard(ctx, actor, contestID, requested)
 }
 
-func submissionVisibleInFrozenWindow(contest ContestRecord, sub submission.ContestSubmissionVisibility, now time.Time) bool {
-	if now.Before(contest.FreezeAt) || !now.Before(contest.EndAt) {
-		return true
-	}
-	if sub.JudgedAt == nil {
-		return sub.SubmittedAt.Before(contest.FreezeAt)
-	}
-	return sub.SubmittedAt.Before(contest.FreezeAt) && !sub.JudgedAt.After(contest.FreezeAt)
+func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (ScoreSnapshotGenerationResult, error) {
+	return s.scoreboard.GenerateDueScoreSnapshots(ctx, limit)
 }
 
 func (s *Service) AfterSubmissionTerminal(ctx context.Context, terminal submission.TerminalSubmission) error {
-	if terminal.ContestID == nil {
-		return nil
-	}
-	return s.recordTerminalSubmission(ctx, terminal)
-}
-
-func (s *Service) withFrontendContract(ctx context.Context, actor auth.Actor, record ContestRecord) (ContestRecord, error) {
-	problems, err := s.repo.ListContestProblems(ctx, record.ID)
-	if err != nil {
-		return ContestRecord{}, err
-	}
-	record.Problems = problems
-	record.ScoringMode = ScoringModeACM
-	record.Registered = s.actorRegisteredForContest(ctx, actor, record.ID)
-	return record, nil
-}
-
-func (s *Service) actorRegisteredForContest(ctx context.Context, actor auth.Actor, contestID int64) bool {
-	if !actor.Authenticated() {
-		return false
-	}
-	registration, err := s.repo.GetRegistration(ctx, contestID, actor.UserID)
-	return err == nil && registration.Status == RegistrationActive
-}
-
-func (s *Service) canReadContest(ctx context.Context, actor auth.Actor, contest ContestRecord) error {
-	if contest.Visibility == VisibilityPublic || actor.Admin() || actor.UserID == contest.OwnerUserID {
-		return nil
-	}
-	if !actor.Authenticated() {
-		return apperror.Unauthorized("auth_required", "authentication required")
-	}
-	registration, err := s.repo.GetRegistration(ctx, contest.ID, actor.UserID)
-	if err == nil && registration.Status == RegistrationActive {
-		return nil
-	}
-	return apperror.Forbidden("contest.not_allowed", "contest access denied")
+	return s.projection.AfterSubmissionTerminal(ctx, terminal)
 }
 
 func requireContestWriter(actor auth.Actor, contest ContestRecord) error {
