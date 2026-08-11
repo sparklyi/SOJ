@@ -116,7 +116,9 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	worker := submission.NewWorker(dispatcher, processor, taskQueue)
 	resultConsumer := submission.NewResultConsumer(submissionRepo)
 	reconciler := submission.NewReconciler(submissionRepo, taskQueue, worker, nil, metrics)
-	contestService := contest.NewService(contest.NewPostgresRepository(pool))
+	contestRepo := contest.NewPostgresRepository(pool)
+	contestReader := contest.NewContestReader(contestRepo, time.Now)
+	scoreboardService := contest.NewScoreboardService(contestReader, contestRepo)
 
 	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)
 	router := httpapi.NewRouter(httpapi.RouterOptions{
@@ -140,7 +142,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, contestService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block)
+		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block)
 	}()
 
 	err = <-errCh
