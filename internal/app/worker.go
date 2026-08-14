@@ -358,7 +358,7 @@ func runWorkerRecoverDeadTask(ctx context.Context, args []string, stdout io.Writ
 	}
 	defer pool.Close()
 
-	repo := submission.NewSQLRepository(db.New(pool))
+	repo := submission.NewSQLRepositoryWithTxRunner(db.New(pool), pool)
 	task, err := repo.RecoverDeadJudgeTask(ctx, *taskID, time.Now().UTC(), *reason)
 	if err != nil {
 		return err

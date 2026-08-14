@@ -67,3 +67,27 @@ func TestBuildBoardFromSubmissionsUsesACMSubmissionOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildBoardFromSubmissionsUsesFirstJudgedAtForFrozenVisibility(t *testing.T) {
+	start := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	freeze := start.Add(time.Hour)
+	firstJudgedAt := freeze.Add(-time.Minute)
+	rejudgedAt := freeze.Add(time.Minute)
+	contest := ContestRecord{ID: 1, StartAt: start, FreezeAt: freeze}
+	problems := []ContestProblem{{ContestID: 1, ProblemID: 101, Alias: "A", SortOrder: 1}}
+	registrations := []ContestRegistration{{
+		ID: 1, ContestID: 1, UserID: 20, DisplayName: "alice", Status: RegistrationActive,
+	}}
+
+	board := buildBoardFromSubmissions(contest, ScoreboardViewFrozen, problems, registrations, []ContestSubmissionResult{
+		{
+			ID: 1, ContestID: 1, UserID: 20, ProblemID: 101, Status: submission.StatusAccepted,
+			SubmittedAt: start.Add(20 * time.Minute), JudgedAt: rejudgedAt, FirstJudgedAt: &firstJudgedAt,
+		},
+	}, freeze.Add(2*time.Minute))
+
+	cell := board.Rows[0].Cells[0]
+	if cell.Status != CellAccepted || cell.FrozenAttempts != 0 {
+		t.Fatalf("cell = %+v, want accepted result from first judgment before freeze", cell)
+	}
+}

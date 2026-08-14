@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"SOJ/internal/auth"
-	"SOJ/internal/submission"
 )
 
 type contestReaderStoreStub struct{}
@@ -61,6 +60,14 @@ func (scoreboardStoreStub) ListProblemResults(context.Context, int64) ([]Contest
 	return nil, nil
 }
 
+func (scoreboardStoreStub) ListScoreboardRegistrations(context.Context, int64, scoreboardRowsQuery) ([]ContestRegistration, error) {
+	return nil, nil
+}
+
+func (scoreboardStoreStub) ListProblemResultsForUsers(context.Context, int64, []int64) ([]ContestProblemResult, error) {
+	return nil, nil
+}
+
 func (scoreboardStoreStub) ListTerminalSubmissions(context.Context, int64) ([]ContestSubmissionResult, error) {
 	return nil, nil
 }
@@ -77,17 +84,8 @@ func (scoreboardStoreStub) LatestScoreSnapshot(context.Context, int64, Scoreboar
 	return ScoreboardSnapshot{}, nil
 }
 
-type scoreboardProjectionStoreStub struct {
-	called bool
-}
-
-func (scoreboardProjectionStoreStub) ListProblemResults(context.Context, int64) ([]ContestProblemResult, error) {
-	return nil, nil
-}
-
-func (s *scoreboardProjectionStoreStub) UpsertProblemResult(_ context.Context, result ContestProblemResult) (ContestProblemResult, error) {
-	s.called = true
-	return result, nil
+func (scoreboardStoreStub) ScoreSnapshotPage(context.Context, int64, ScoreboardView, int32, int32) (scoreSnapshotPageResult, error) {
+	return scoreSnapshotPageResult{}, nil
 }
 
 type contestTransactionStub struct{}
@@ -109,8 +107,6 @@ func TestContestComponentsUseFocusedPorts(t *testing.T) {
 	authoring := NewContestAuthoring(contestAuthoringStoreStub{}, reader)
 	policy := NewContestPolicy(reader, contestRegistrationWriterStub{})
 	scoreboard := NewScoreboardService(reader, scoreboardStoreStub{})
-	projectionStore := &scoreboardProjectionStoreStub{}
-	projection := NewScoreboardProjection(reader, projectionStore)
 
 	if _, err := reader.GetContest(t.Context(), auth.Anonymous("request"), 1); err != nil {
 		t.Fatalf("ContestReader.GetContest() error = %v", err)
@@ -124,14 +120,6 @@ func TestContestComponentsUseFocusedPorts(t *testing.T) {
 	if _, err := scoreboard.GenerateDueScoreSnapshots(t.Context(), 1); err != nil {
 		t.Fatalf("ScoreboardService.GenerateDueScoreSnapshots() error = %v", err)
 	}
-	contestID := int64(1)
-	judgedAt := time.Unix(100, 0).UTC()
-	if err := projection.AfterSubmissionTerminal(t.Context(), submission.TerminalSubmission{ContestID: &contestID, UserID: 8, ProblemID: 101, Status: submission.StatusWrongAnswer, SubmittedAt: judgedAt, JudgedAt: judgedAt}); err != nil {
-		t.Fatalf("ScoreboardProjection.AfterSubmissionTerminal() error = %v", err)
-	}
-	if !projectionStore.called {
-		t.Fatal("ScoreboardProjection did not write the projection store")
-	}
 }
 
 func TestServiceAuthorizeContestRejudgeUsesReaderComponent(t *testing.T) {
@@ -141,7 +129,6 @@ func TestServiceAuthorizeContestRejudgeUsesReaderComponent(t *testing.T) {
 		NewContestAuthoring(contestAuthoringStoreStub{}, reader),
 		NewContestPolicy(reader, contestRegistrationWriterStub{}),
 		NewScoreboardService(reader, scoreboardStoreStub{}),
-		NewScoreboardProjection(reader, &scoreboardProjectionStoreStub{}),
 	)
 
 	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1); err != nil {
@@ -151,7 +138,6 @@ func TestServiceAuthorizeContestRejudgeUsesReaderComponent(t *testing.T) {
 
 func TestContestConstructorsRejectMissingDependencies(t *testing.T) {
 	reader := NewContestReader(contestReaderStoreStub{}, nil)
-	projectionStore := &scoreboardProjectionStoreStub{}
 	tests := []struct {
 		name string
 		new  func()
@@ -163,10 +149,8 @@ func TestContestConstructorsRejectMissingDependencies(t *testing.T) {
 		{name: "policy writer", new: func() { NewContestPolicy(reader, nil) }},
 		{name: "scoreboard reader", new: func() { NewScoreboardService(nil, scoreboardStoreStub{}) }},
 		{name: "scoreboard store", new: func() { NewScoreboardService(reader, nil) }},
-		{name: "projection reader", new: func() { NewScoreboardProjection(nil, projectionStore) }},
-		{name: "projection store", new: func() { NewScoreboardProjection(reader, nil) }},
 		{name: "service reader", new: func() {
-			NewService(nil, NewContestAuthoring(contestAuthoringStoreStub{}, reader), NewContestPolicy(reader, contestRegistrationWriterStub{}), NewScoreboardService(reader, scoreboardStoreStub{}), NewScoreboardProjection(reader, projectionStore))
+			NewService(nil, NewContestAuthoring(contestAuthoringStoreStub{}, reader), NewContestPolicy(reader, contestRegistrationWriterStub{}), NewScoreboardService(reader, scoreboardStoreStub{}))
 		}},
 	}
 

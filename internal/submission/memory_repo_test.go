@@ -489,6 +489,9 @@ func (r *memoryRepo) MarkJudgeTaskDead(ctx context.Context, id int64, reason str
 	row.Status = "dead"
 	row.LastError = reason
 	r.tasks[id] = row
+	if _, err := r.MarkSubmissionSystemError(ctx, row.SubmissionID, reason); err != nil {
+		return JudgeTaskRecord{}, err
+	}
 	r.events = append(r.events, "db_dead")
 	return row, nil
 }

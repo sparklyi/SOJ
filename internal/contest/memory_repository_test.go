@@ -199,8 +199,75 @@ func (r *memoryRepository) ListRegistrations(ctx context.Context, contestID int6
 	return append([]ContestRegistration(nil), r.registrations[contestID]...), nil
 }
 
+func (r *memoryRepository) ListScoreboardRegistrations(ctx context.Context, contestID int64, query scoreboardRowsQuery) ([]ContestRegistration, error) {
+	rows := append([]ContestRegistration(nil), r.registrations[contestID]...)
+	rows = filterActiveScoreboardRegistrations(rows)
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].AcceptedCount != rows[j].AcceptedCount {
+			return rows[i].AcceptedCount > rows[j].AcceptedCount
+		}
+		if rows[i].PenaltyMinutes != rows[j].PenaltyMinutes {
+			return rows[i].PenaltyMinutes < rows[j].PenaltyMinutes
+		}
+		if rows[i].DisplayName != rows[j].DisplayName {
+			return rows[i].DisplayName < rows[j].DisplayName
+		}
+		return rows[i].UserID < rows[j].UserID
+	})
+	if query.HasCursor {
+		filtered := rows[:0]
+		for _, row := range rows {
+			if afterScoreboardRow(row, query) {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
+	if query.PageSize > 0 && len(rows) > int(query.PageSize) {
+		rows = rows[:query.PageSize]
+	}
+	return rows, nil
+}
+
+func filterActiveScoreboardRegistrations(rows []ContestRegistration) []ContestRegistration {
+	filtered := rows[:0]
+	for _, row := range rows {
+		if row.Status == RegistrationActive {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func afterScoreboardRow(row ContestRegistration, query scoreboardRowsQuery) bool {
+	if row.AcceptedCount != query.AfterAcceptedCount {
+		return row.AcceptedCount < query.AfterAcceptedCount
+	}
+	if row.PenaltyMinutes != query.AfterPenalty {
+		return row.PenaltyMinutes > query.AfterPenalty
+	}
+	if row.DisplayName != query.AfterDisplayName {
+		return row.DisplayName > query.AfterDisplayName
+	}
+	return row.UserID > query.AfterUserID
+}
+
 func (r *memoryRepository) ListProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error) {
 	return append([]ContestProblemResult(nil), r.results[contestID]...), nil
+}
+
+func (r *memoryRepository) ListProblemResultsForUsers(ctx context.Context, contestID int64, userIDs []int64) ([]ContestProblemResult, error) {
+	allowed := make(map[int64]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		allowed[userID] = struct{}{}
+	}
+	var rows []ContestProblemResult
+	for _, result := range r.results[contestID] {
+		if _, ok := allowed[result.UserID]; ok {
+			rows = append(rows, result)
+		}
+	}
+	return rows, nil
 }
 
 func (r *memoryRepository) ListTerminalSubmissions(ctx context.Context, contestID int64) ([]ContestSubmissionResult, error) {
@@ -213,11 +280,36 @@ func (r *memoryRepository) UpsertProblemResult(ctx context.Context, result Conte
 		if row.UserID == result.UserID && row.ProblemID == result.ProblemID {
 			rows[i] = result
 			r.results[result.ContestID] = rows
+			r.refreshRegistrationScore(result.ContestID, result.UserID)
 			return result, nil
 		}
 	}
 	r.results[result.ContestID] = append(rows, result)
+	r.refreshRegistrationScore(result.ContestID, result.UserID)
 	return result, nil
+}
+
+func (r *memoryRepository) refreshRegistrationScore(contestID, userID int64) {
+	acceptedCount := int32(0)
+	penaltyMinutes := int32(0)
+	for _, result := range r.results[contestID] {
+		if result.UserID != userID || result.Status != CellAccepted {
+			continue
+		}
+		acceptedCount++
+		penaltyMinutes += result.PenaltyMinutes
+	}
+	for i := range r.registrations[contestID] {
+		if r.registrations[contestID][i].UserID != userID {
+			continue
+		}
+		r.registrations[contestID][i].AcceptedCount = acceptedCount
+		r.registrations[contestID][i].PenaltyMinutes = penaltyMinutes
+		contest := r.contests[contestID]
+		contest.ScoreRevision++
+		r.contests[contestID] = contest
+		return
+	}
 }
 
 func (r *memoryRepository) ListScoreSnapshotCandidates(ctx context.Context, now time.Time, limit int32) ([]ScoreSnapshotCandidate, error) {
@@ -235,7 +327,7 @@ func (r *memoryRepository) ListScoreSnapshotCandidates(ctx context.Context, now 
 		if int32(len(rows)) >= limit {
 			break
 		}
-		if !now.Before(contest.EndAt) && !r.hasSnapshot(contest.ID, ScoreboardViewFinal) {
+		if !now.Before(contest.EndAt) && r.finalSnapshotDue(contest.ID) {
 			rows = append(rows, ScoreSnapshotCandidate{Contest: contest, View: ScoreboardViewFinal})
 		}
 		if int32(len(rows)) >= limit {
@@ -246,16 +338,14 @@ func (r *memoryRepository) ListScoreSnapshotCandidates(ctx context.Context, now 
 }
 
 func (r *memoryRepository) CreateScoreSnapshot(ctx context.Context, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error) {
+	for _, existing := range r.snapshots[snapshot.ContestID] {
+		if existing.View == snapshot.View && existing.SourceRevision == snapshot.SourceRevision {
+			existing.Created = false
+			return existing, nil
+		}
+	}
 	snapshot.ID = r.id()
-	if snapshot.ContestID == 0 {
-		snapshot.ContestID = snapshot.Board.ContestID
-	}
-	if snapshot.View == "" {
-		snapshot.View = snapshot.Board.View
-	}
-	if snapshot.GeneratedAt.IsZero() {
-		snapshot.GeneratedAt = snapshot.Board.GeneratedAt
-	}
+	snapshot.Created = true
 	r.snapshots[snapshot.ContestID] = append(r.snapshots[snapshot.ContestID], snapshot)
 	return snapshot, nil
 }
@@ -270,7 +360,38 @@ func (r *memoryRepository) LatestScoreSnapshot(ctx context.Context, contestID in
 	return ScoreboardSnapshot{}, apperror.NotFound("contest.score_snapshot_not_found", "contest score snapshot not found")
 }
 
+func (r *memoryRepository) ScoreSnapshotPage(ctx context.Context, contestID int64, view ScoreboardView, afterOrdinal, limit int32) (scoreSnapshotPageResult, error) {
+	snapshot, err := r.LatestScoreSnapshot(ctx, contestID, view)
+	if err != nil {
+		return scoreSnapshotPageResult{}, err
+	}
+	rows := snapshot.Rows
+	start := int(afterOrdinal)
+	if start > len(rows) {
+		return scoreSnapshotPageResult{}, apperror.BadRequest("invalid_cursor", "scoreboard snapshot cursor is invalid")
+	}
+	end := start + int(limit)
+	if end > len(rows) {
+		end = len(rows)
+	}
+	pageRows := append([]ScoreboardRow(nil), rows[start:end]...)
+	return scoreSnapshotPageResult{Snapshot: snapshot, Rows: pageRows, HasMore: end < len(rows)}, nil
+}
+
 func (r *memoryRepository) hasSnapshot(contestID int64, view ScoreboardView) bool {
 	_, err := r.LatestScoreSnapshot(context.Background(), contestID, view)
 	return err == nil
+}
+
+func (r *memoryRepository) finalSnapshotDue(contestID int64) bool {
+	for _, submission := range r.submissions[contestID] {
+		if submission.Status == "queued" || submission.Status == "running" {
+			return false
+		}
+	}
+	snapshot, err := r.LatestScoreSnapshot(context.Background(), contestID, ScoreboardViewFinal)
+	if err != nil {
+		return true
+	}
+	return r.contests[contestID].ScoreRevision > snapshot.SourceRevision
 }
