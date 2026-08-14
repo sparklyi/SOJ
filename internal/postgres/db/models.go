@@ -33,6 +33,7 @@ type Contest struct {
 	EndAt          pgtype.Timestamptz `db:"end_at" json:"end_at"`
 	FreezeAt       pgtype.Timestamptz `db:"freeze_at" json:"freeze_at"`
 	InviteCodeHash pgtype.Text        `db:"invite_code_hash" json:"invite_code_hash"`
+	ScoreRevision  int64              `db:"score_revision" json:"score_revision"`
 	CreatedAt      pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
@@ -60,21 +61,35 @@ type ContestProblemResult struct {
 }
 
 type ContestRegistration struct {
-	ID           int64              `db:"id" json:"id"`
-	ContestID    int64              `db:"contest_id" json:"contest_id"`
-	UserID       int64              `db:"user_id" json:"user_id"`
-	DisplayName  string             `db:"display_name" json:"display_name"`
-	Email        string             `db:"email" json:"email"`
-	Status       string             `db:"status" json:"status"`
-	RegisteredAt pgtype.Timestamptz `db:"registered_at" json:"registered_at"`
+	ID             int64              `db:"id" json:"id"`
+	ContestID      int64              `db:"contest_id" json:"contest_id"`
+	UserID         int64              `db:"user_id" json:"user_id"`
+	DisplayName    string             `db:"display_name" json:"display_name"`
+	Email          string             `db:"email" json:"email"`
+	Status         string             `db:"status" json:"status"`
+	RegisteredAt   pgtype.Timestamptz `db:"registered_at" json:"registered_at"`
+	AcceptedCount  int32              `db:"accepted_count" json:"accepted_count"`
+	PenaltyMinutes int32              `db:"penalty_minutes" json:"penalty_minutes"`
 }
 
 type ContestScoreSnapshot struct {
-	ID          int64              `db:"id" json:"id"`
-	ContestID   int64              `db:"contest_id" json:"contest_id"`
-	Kind        string             `db:"kind" json:"kind"`
-	Payload     []byte             `db:"payload" json:"payload"`
-	GeneratedAt pgtype.Timestamptz `db:"generated_at" json:"generated_at"`
+	ID             int64              `db:"id" json:"id"`
+	ContestID      int64              `db:"contest_id" json:"contest_id"`
+	Kind           string             `db:"kind" json:"kind"`
+	Problems       []byte             `db:"problems" json:"problems"`
+	SourceRevision int64              `db:"source_revision" json:"source_revision"`
+	GeneratedAt    pgtype.Timestamptz `db:"generated_at" json:"generated_at"`
+}
+
+type ContestScoreSnapshotRow struct {
+	SnapshotID     int64  `db:"snapshot_id" json:"snapshot_id"`
+	Ordinal        int32  `db:"ordinal" json:"ordinal"`
+	Rank           int32  `db:"rank" json:"rank"`
+	UserID         int64  `db:"user_id" json:"user_id"`
+	DisplayName    string `db:"display_name" json:"display_name"`
+	AcceptedCount  int32  `db:"accepted_count" json:"accepted_count"`
+	PenaltyMinutes int32  `db:"penalty_minutes" json:"penalty_minutes"`
+	Cells          []byte `db:"cells" json:"cells"`
 }
 
 type JudgeAttempt struct {
@@ -311,6 +326,7 @@ type Submission struct {
 	ErrorMessage     pgtype.Text        `db:"error_message" json:"error_message"`
 	SubmittedAt      pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
 	JudgedAt         pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
+	FirstJudgedAt    pgtype.Timestamptz `db:"first_judged_at" json:"first_judged_at"`
 	UpdatedAt        pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
 

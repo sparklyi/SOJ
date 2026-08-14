@@ -52,6 +52,7 @@ type ContestRecord struct {
 	EndAt          time.Time        `json:"end_at"`
 	FreezeAt       time.Time        `json:"freeze_at"`
 	InviteCodeHash string           `json:"-"`
+	ScoreRevision  int64            `json:"-"`
 	ScoringMode    string           `json:"scoring_mode"`
 	Registered     bool             `json:"registered"`
 	Problems       []ContestProblem `json:"problems,omitempty"`
@@ -68,13 +69,15 @@ type ContestProblem struct {
 }
 
 type ContestRegistration struct {
-	ID           int64     `json:"id"`
-	ContestID    int64     `json:"contest_id"`
-	UserID       int64     `json:"user_id"`
-	DisplayName  string    `json:"display_name"`
-	Email        string    `json:"email"`
-	Status       string    `json:"status"`
-	RegisteredAt time.Time `json:"registered_at"`
+	ID             int64     `json:"id"`
+	ContestID      int64     `json:"contest_id"`
+	UserID         int64     `json:"user_id"`
+	DisplayName    string    `json:"display_name"`
+	Email          string    `json:"email"`
+	Status         string    `json:"status"`
+	RegisteredAt   time.Time `json:"registered_at"`
+	AcceptedCount  int32     `json:"-"`
+	PenaltyMinutes int32     `json:"-"`
 }
 
 type ContestProblemResult struct {
@@ -90,21 +93,26 @@ type ContestProblemResult struct {
 }
 
 type ContestSubmissionResult struct {
-	ID          int64
-	ContestID   int64
-	UserID      int64
-	ProblemID   int64
-	Status      string
-	SubmittedAt time.Time
-	JudgedAt    time.Time
+	ID            int64
+	ContestID     int64
+	UserID        int64
+	ProblemID     int64
+	Status        string
+	SubmittedAt   time.Time
+	JudgedAt      time.Time
+	FirstJudgedAt *time.Time
 }
 
 type ScoreboardSnapshot struct {
-	ID          int64
-	ContestID   int64
-	View        ScoreboardView
-	Board       ScoreboardResponse
-	GeneratedAt time.Time
+	ID             int64
+	ContestID      int64
+	View           ScoreboardView
+	Board          ScoreboardResponse
+	Problems       []ContestProblem
+	Rows           []ScoreboardRow
+	SourceRevision int64
+	GeneratedAt    time.Time
+	Created        bool
 }
 
 type ScoreSnapshotCandidate struct {
@@ -193,11 +201,10 @@ type Service struct {
 	reader     *ContestReader
 	policy     *ContestPolicy
 	scoreboard *ScoreboardService
-	projection *ScoreboardProjection
 }
 
 // NewService composes the public contest API from focused workflows.
-func NewService(reader *ContestReader, authoring *ContestAuthoring, policy *ContestPolicy, scoreboard *ScoreboardService, projection *ScoreboardProjection) *Service {
+func NewService(reader *ContestReader, authoring *ContestAuthoring, policy *ContestPolicy, scoreboard *ScoreboardService) *Service {
 	if reader == nil {
 		panic("contest reader is required")
 	}
@@ -210,10 +217,7 @@ func NewService(reader *ContestReader, authoring *ContestAuthoring, policy *Cont
 	if scoreboard == nil {
 		panic("contest scoreboard is required")
 	}
-	if projection == nil {
-		panic("contest projection is required")
-	}
-	return &Service{authoring: authoring, reader: reader, policy: policy, scoreboard: scoreboard, projection: projection}
+	return &Service{authoring: authoring, reader: reader, policy: policy, scoreboard: scoreboard}
 }
 
 func (s *Service) CreateContest(ctx context.Context, actor auth.Actor, input ContestInput) (ContestRecord, error) {
@@ -264,16 +268,12 @@ func (s *Service) SubmissionResultVisibilities(ctx context.Context, actor auth.A
 	return s.policy.SubmissionResultVisibilities(ctx, actor, submissions)
 }
 
-func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, requested ScoreboardView) (ScoreboardResponse, error) {
-	return s.scoreboard.Scoreboard(ctx, actor, contestID, requested)
+func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, query ScoreboardQuery) (ScoreboardResponse, error) {
+	return s.scoreboard.Scoreboard(ctx, actor, contestID, query)
 }
 
 func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (ScoreSnapshotGenerationResult, error) {
 	return s.scoreboard.GenerateDueScoreSnapshots(ctx, limit)
-}
-
-func (s *Service) AfterSubmissionTerminal(ctx context.Context, terminal submission.TerminalSubmission) error {
-	return s.projection.AfterSubmissionTerminal(ctx, terminal)
 }
 
 func requireContestWriter(actor auth.Actor, contest ContestRecord) error {

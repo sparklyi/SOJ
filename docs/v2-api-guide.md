@@ -154,6 +154,7 @@ Contest create/update notes:
 - Contest responses include `scoring_mode`, currently `acm`, `registered` for the current authenticated user, and enriched `problems[].title` values when the linked problem is available.
 - `invite_code` is required when creating a private contest or switching a contest to private without an existing invite code.
 - Private contest list/detail access is limited to owner, admin/root, or active registrants.
+- Scoreboard requests accept `view=live|frozen|final`, `page_size` (1-100), and an opaque `cursor`. Live pages use the maintained registration score projection; frozen/final pages require the worker-generated snapshot and return `503 scoreboard_not_ready` until it is available.
 
 Admin:
 

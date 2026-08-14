@@ -97,20 +97,6 @@ type SubmissionResultVisibility struct {
 	Visibility           string
 }
 
-type TerminalHook interface {
-	AfterSubmissionTerminal(ctx context.Context, submission TerminalSubmission) error
-}
-
-type TerminalSubmission struct {
-	SubmissionID int64
-	UserID       int64
-	ProblemID    int64
-	ContestID    *int64
-	Status       string
-	SubmittedAt  time.Time
-	JudgedAt     time.Time
-}
-
 // Service is the HTTP-facing composition of submission use cases.
 type Service struct {
 	creator   *SubmissionCreator

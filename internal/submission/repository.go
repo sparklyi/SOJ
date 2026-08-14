@@ -45,6 +45,7 @@ type SubmissionRecord struct {
 	ErrorMessage     *string
 	SubmittedAt      time.Time
 	JudgedAt         *time.Time
+	FirstJudgedAt    *time.Time
 	UpdatedAt        time.Time
 }
 
@@ -218,29 +219,73 @@ func (r *SQLRepository) CreateRejudgeBatchWithItems(ctx context.Context, input C
 		if len(submissions) == 0 {
 			return ErrNoRejudgeSubmissions
 		}
+		type rejudgeTarget struct {
+			submission db.Submission
+			task       db.JudgeTask
+		}
+		targets := make([]rejudgeTarget, 0, len(submissions))
+		for _, candidate := range submissions {
+			task, err := q.GetJudgeTaskBySubmissionID(ctx, candidate.ID)
+			if err != nil {
+				return err
+			}
+			targets = append(targets, rejudgeTarget{submission: candidate, task: task})
+		}
+		sort.Slice(targets, func(i, j int) bool {
+			if targets[i].task.ID != targets[j].task.ID {
+				return targets[i].task.ID < targets[j].task.ID
+			}
+			return targets[i].submission.ID < targets[j].submission.ID
+		})
+		for i := range targets {
+			lockedTask, err := q.LockJudgeTaskByID(ctx, targets[i].task.ID)
+			if err != nil {
+				return err
+			}
+			targets[i].task = lockedTask
+		}
+		sort.Slice(targets, func(i, j int) bool {
+			if targets[i].submission.ID != targets[j].submission.ID {
+				return targets[i].submission.ID < targets[j].submission.ID
+			}
+			return targets[i].task.ID < targets[j].task.ID
+		})
+		for i := range targets {
+			lockedSubmission, err := q.LockSubmissionByID(ctx, targets[i].submission.ID)
+			if err != nil {
+				return err
+			}
+			targets[i].submission = lockedSubmission
+			if !terminalStatus(lockedSubmission.Status) || (targets[i].task.Status != "done" && targets[i].task.Status != "dead") {
+				return apperror.Conflict("rejudge.task_not_ready", "submission judge task is not done or dead")
+			}
+		}
 		row, err := q.CreateRejudgeBatch(ctx, db.CreateRejudgeBatchParams{
 			ProblemID: int8Ptr(input.ProblemID), ContestID: int8Ptr(input.ContestID), RequestedBy: input.RequestedBy,
-			Status: RejudgeBatchStatusQueued, Reason: input.Reason, Filters: []byte(`{}`), TotalCount: int32(len(submissions)),
+			Status: RejudgeBatchStatusQueued, Reason: input.Reason, Filters: []byte(`{}`), TotalCount: int32(len(targets)),
 		})
 		if err != nil {
 			return err
 		}
 		batch = rejudgeBatchRecord(row)
-		for _, submission := range submissions {
-			task, err := q.GetJudgeTaskBySubmissionID(ctx, submission.ID)
+		for _, target := range targets {
+			if _, err := q.CreateRejudgeBatchItem(ctx, db.CreateRejudgeBatchItemParams{BatchID: batch.ID, SubmissionID: target.submission.ID, TaskID: target.task.ID}); err != nil {
+				return err
+			}
+			projectionLock, err := lockContestProblemProjection(ctx, q, submissionRecord(target.submission))
 			if err != nil {
 				return err
 			}
-			if _, err := q.CreateRejudgeBatchItem(ctx, db.CreateRejudgeBatchItemParams{BatchID: batch.ID, SubmissionID: submission.ID, TaskID: task.ID}); err != nil {
-				return err
-			}
-			if _, err := q.PrepareJudgeTaskForRejudge(ctx, db.PrepareJudgeTaskForRejudgeParams{NextRunAt: timestamptz(input.NextRunAt), ID: task.ID, SubmissionID: submission.ID}); err != nil {
+			if _, err := q.PrepareJudgeTaskForRejudge(ctx, db.PrepareJudgeTaskForRejudgeParams{NextRunAt: timestamptz(input.NextRunAt), ID: target.task.ID, SubmissionID: target.submission.ID}); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return apperror.Conflict("rejudge.task_not_ready", "submission judge task is not done or dead")
 				}
 				return err
 			}
-			if _, err := q.PrepareSubmissionForRejudge(ctx, submission.ID); err != nil {
+			if _, err := q.PrepareSubmissionForRejudge(ctx, target.submission.ID); err != nil {
+				return err
+			}
+			if err := rebuildContestProblemResult(ctx, q, submissionRecord(target.submission), projectionLock); err != nil {
 				return err
 			}
 		}
@@ -301,6 +346,41 @@ func (r *SQLRepository) CancelRejudgeBatch(ctx context.Context, id int64, reason
 		if err != nil {
 			return mapNotFound(err, "rejudge.not_found", "rejudge batch not found")
 		}
+		allItems, err := q.ListRejudgeBatchItems(ctx, id)
+		if err != nil {
+			return err
+		}
+		queuedItems := make([]db.RejudgeBatchItem, 0, len(allItems))
+		for _, item := range allItems {
+			if item.Status == RejudgeItemStatusQueued {
+				queuedItems = append(queuedItems, item)
+			}
+		}
+		sort.Slice(queuedItems, func(i, j int) bool {
+			if queuedItems[i].TaskID != queuedItems[j].TaskID {
+				return queuedItems[i].TaskID < queuedItems[j].TaskID
+			}
+			return queuedItems[i].ID < queuedItems[j].ID
+		})
+		for _, item := range queuedItems {
+			if _, err := q.LockJudgeTaskByID(ctx, item.TaskID); err != nil {
+				return err
+			}
+		}
+		sort.Slice(queuedItems, func(i, j int) bool {
+			if queuedItems[i].SubmissionID != queuedItems[j].SubmissionID {
+				return queuedItems[i].SubmissionID < queuedItems[j].SubmissionID
+			}
+			return queuedItems[i].ID < queuedItems[j].ID
+		})
+		lockedSubmissions := make(map[int64]db.Submission, len(queuedItems))
+		for _, item := range queuedItems {
+			submissionRow, err := q.LockSubmissionByID(ctx, item.SubmissionID)
+			if err != nil {
+				return err
+			}
+			lockedSubmissions[item.SubmissionID] = submissionRow
+		}
 		items, err := q.CancelQueuedRejudgeBatchItems(ctx, db.CancelQueuedRejudgeBatchItemsParams{ErrorMessage: text(reason), BatchID: id})
 		if err != nil {
 			return err
@@ -312,7 +392,16 @@ func (r *SQLRepository) CancelRejudgeBatch(ctx context.Context, id int64, reason
 				}
 				return err
 			}
-			if _, err := q.RestoreSubmissionAfterCanceledRejudge(ctx, item.SubmissionID); err != nil {
+			submissionRow := lockedSubmissions[item.SubmissionID]
+			projectionLock, err := lockContestProblemProjection(ctx, q, submissionRecord(submissionRow))
+			if err != nil {
+				return err
+			}
+			restored, err := q.RestoreSubmissionAfterCanceledRejudge(ctx, item.SubmissionID)
+			if err != nil {
+				return err
+			}
+			if err := rebuildContestProblemResult(ctx, q, submissionRecord(restored), projectionLock); err != nil {
 				return err
 			}
 		}
@@ -520,11 +609,43 @@ func (r *SQLRepository) MarkSubmissionQueued(ctx context.Context, id int64, reas
 }
 
 func (r *SQLRepository) MarkSubmissionSystemError(ctx context.Context, id int64, reason string) (SubmissionRecord, error) {
-	row, err := r.q.MarkSubmissionSystemError(ctx, db.MarkSubmissionSystemErrorParams{ID: id, ErrorMessage: text(reason)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return r.GetSubmission(ctx, id)
+	if r.txRunner == nil {
+		return SubmissionRecord{}, errors.New("transaction runner is required to mark submission system_error")
 	}
-	return submissionRecord(row), err
+	var record SubmissionRecord
+	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		var err error
+		record, err = markSubmissionSystemError(ctx, r.q.WithTx(tx), id, reason)
+		return err
+	})
+	return record, err
+}
+
+func markSubmissionSystemError(ctx context.Context, q *db.Queries, id int64, reason string) (SubmissionRecord, error) {
+	current, err := q.LockSubmissionByID(ctx, id)
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	record := submissionRecord(current)
+	if terminalStatus(record.Status) {
+		return record, nil
+	}
+	projectionLock, err := lockContestProblemProjection(ctx, q, record)
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	row, err := q.MarkSubmissionSystemError(ctx, db.MarkSubmissionSystemErrorParams{ID: id, ErrorMessage: text(reason)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return record, nil
+	}
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	record = submissionRecord(row)
+	if err := rebuildContestProblemResult(ctx, q, record, projectionLock); err != nil {
+		return SubmissionRecord{}, err
+	}
+	return record, nil
 }
 
 func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
@@ -537,13 +658,14 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 		MemoryKb:     int4(result.MemoryKB),
 		Score:        pgtype.Int4{Int32: score, Valid: true},
 		ErrorMessage: text(result.ErrorMessage),
+		JudgedAt:     judgedAtParam(result.JudgedAt),
 		ID:           id,
 	}
 
 	var record SubmissionRecord
 	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
 		q := r.q.WithTx(tx)
-		current, err := q.GetSubmissionByID(ctx, id)
+		current, err := q.LockSubmissionByID(ctx, id)
 		if err != nil {
 			return err
 		}
@@ -678,12 +800,21 @@ func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input Co
 	var persisted bool
 	err = postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
 		q := r.q.WithTx(tx)
-		attempt, err := q.GetJudgeAttemptByID(ctx, attemptID)
+		attemptRef, err := q.GetJudgeAttemptByID(ctx, attemptID)
+		if err != nil {
+			return err
+		}
+		if attemptRef.TaskID.Valid {
+			if _, err := q.LockJudgeTaskByID(ctx, attemptRef.TaskID.Int64); err != nil {
+				return err
+			}
+		}
+		attempt, err := q.LockJudgeAttemptByID(ctx, attemptID)
 		if err != nil {
 			return err
 		}
 		if attempt.SubmissionID.Valid {
-			submissionRow, err := q.GetSubmissionByID(ctx, attempt.SubmissionID.Int64)
+			submissionRow, err := q.LockSubmissionByID(ctx, attempt.SubmissionID.Int64)
 			if err != nil {
 				return err
 			}
@@ -694,6 +825,9 @@ func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input Co
 		}
 		if !attempt.SubmissionID.Valid {
 			return fmt.Errorf("judge attempt %d is not linked to a submission", attempt.ID)
+		}
+		if terminalStatus(record.Status) {
+			return nil
 		}
 		projectionLock, err := lockContestProblemProjection(ctx, q, record)
 		if err != nil {
@@ -706,11 +840,18 @@ func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input Co
 			MemoryKb:     int4(input.Result.MemoryKB),
 			Score:        pgtype.Int4{Int32: score, Valid: true},
 			ErrorMessage: text(input.Result.ErrorMessage),
+			JudgedAt:     judgedAtParam(input.Result.JudgedAt),
 			ID:           attempt.SubmissionID.Int64,
 		}
 		submissionRow, err := q.UpdateSubmissionStatus(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			submissionRow, err = q.GetSubmissionByID(ctx, attempt.SubmissionID.Int64)
+			if err == nil {
+				record = submissionRecord(submissionRow)
+				if terminalStatus(record.Status) {
+					return nil
+				}
+			}
 		}
 		if err != nil {
 			return err
@@ -906,7 +1047,7 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 	_, err = q.UpsertSubmissionResult(ctx, db.UpsertSubmissionResultParams{
 		SubmissionID:         submission.ID,
 		AttemptID:            attempt.ID,
-		Status:               submission.Status,
+		Status:               dbStatus(result.Verdict),
 		Score:                score,
 		TimeMs:               int4(result.TimeMS),
 		MemoryKb:             int4(result.MemoryKB),
@@ -1020,6 +1161,8 @@ func truncateSummary(value string) string {
 
 type contestProblemProjectionLock struct {
 	contestStart time.Time
+	contestID    int64
+	userID       int64
 	enabled      bool
 }
 
@@ -1057,6 +1200,16 @@ func lockContestProblemProjection(ctx context.Context, q *db.Queries, submission
 		if problem.ProblemID != submission.ProblemID {
 			continue
 		}
+		_, err := q.LockContestRegistration(ctx, db.LockContestRegistrationParams{
+			ContestID: *submission.ContestID,
+			UserID:    submission.UserID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return contestProblemProjectionLock{}, nil
+		}
+		if err != nil {
+			return contestProblemProjectionLock{}, err
+		}
 		params := db.EnsureContestProblemResultProjectionParams{
 			ContestID: *submission.ContestID,
 			UserID:    submission.UserID,
@@ -1068,7 +1221,12 @@ func lockContestProblemProjection(ctx context.Context, q *db.Queries, submission
 		if _, err := q.LockContestProblemResultProjection(ctx, db.LockContestProblemResultProjectionParams(params)); err != nil {
 			return contestProblemProjectionLock{}, err
 		}
-		return contestProblemProjectionLock{contestStart: contest.StartAt.Time, enabled: true}, nil
+		return contestProblemProjectionLock{
+			contestStart: contest.StartAt.Time,
+			contestID:    *submission.ContestID,
+			userID:       submission.UserID,
+			enabled:      true,
+		}, nil
 	}
 	return contestProblemProjectionLock{}, nil
 }
@@ -1112,6 +1270,35 @@ func rebuildContestProblemResult(ctx context.Context, q *db.Queries, submission 
 		BestAttemptID:    int8Ptr(projection.BestAttemptID),
 		LastAttemptID:    int8Ptr(projection.LastAttemptID),
 	})
+	if err != nil {
+		return err
+	}
+	results, err := q.ListContestProblemResultsForUsers(ctx, db.ListContestProblemResultsForUsersParams{
+		ContestID: lock.contestID,
+		UserIds:   []int64{lock.userID},
+	})
+	if err != nil {
+		return err
+	}
+	acceptedCount := int32(0)
+	penaltyMinutes := int32(0)
+	for _, result := range results {
+		if result.Status != StatusAccepted {
+			continue
+		}
+		acceptedCount++
+		penaltyMinutes += result.PenaltyMinutes
+	}
+	_, err = q.UpdateContestRegistrationScore(ctx, db.UpdateContestRegistrationScoreParams{
+		AcceptedCount:  acceptedCount,
+		PenaltyMinutes: penaltyMinutes,
+		ContestID:      lock.contestID,
+		UserID:         lock.userID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = q.IncrementContestScoreRevision(ctx, lock.contestID)
 	return err
 }
 
@@ -1228,8 +1415,7 @@ func (r *SQLRepository) RetryJudgeTask(ctx context.Context, id int64, nextRunAt 
 
 func (r *SQLRepository) MarkJudgeTaskDead(ctx context.Context, id int64, reason string) (JudgeTaskRecord, error) {
 	if r.txRunner == nil {
-		row, err := r.q.MarkJudgeTaskDead(ctx, db.MarkJudgeTaskDeadParams{ID: id, LastError: text(reason)})
-		return judgeTaskRecord(row), err
+		return JudgeTaskRecord{}, errors.New("transaction runner is required to mark judge task dead")
 	}
 	var task JudgeTaskRecord
 	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
@@ -1239,7 +1425,7 @@ func (r *SQLRepository) MarkJudgeTaskDead(ctx context.Context, id int64, reason 
 			return err
 		}
 		task = judgeTaskRecord(row)
-		if _, err := q.MarkSubmissionSystemError(ctx, db.MarkSubmissionSystemErrorParams{ID: task.SubmissionID, ErrorMessage: text(reason)}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := markSubmissionSystemError(ctx, q, task.SubmissionID, reason); err != nil {
 			return err
 		}
 		item, err := q.FailActiveRejudgeBatchItemByTaskID(ctx, db.FailActiveRejudgeBatchItemByTaskIDParams{ErrorMessage: text(reason), TaskID: id})
@@ -1256,8 +1442,39 @@ func (r *SQLRepository) MarkJudgeTaskDead(ctx context.Context, id int64, reason 
 }
 
 func (r *SQLRepository) RecoverDeadJudgeTask(ctx context.Context, id int64, nextRunAt time.Time, reason string) (JudgeTaskRecord, error) {
-	row, err := r.q.RecoverDeadJudgeTask(ctx, db.RecoverDeadJudgeTaskParams{NextRunAt: timestamptz(nextRunAt), LastError: text(reason), ID: id})
-	return recoverDeadJudgeTaskRecord(row), err
+	if r.txRunner == nil {
+		return JudgeTaskRecord{}, errors.New("transaction runner is required to recover dead judge task")
+	}
+	var task JudgeTaskRecord
+	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		currentTask, err := q.LockJudgeTaskByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		submissionRow, err := q.LockSubmissionByID(ctx, currentTask.SubmissionID)
+		if err != nil {
+			return err
+		}
+		projectionLock, err := lockContestProblemProjection(ctx, q, submissionRecord(submissionRow))
+		if err != nil {
+			return err
+		}
+		row, err := q.RecoverDeadJudgeTask(ctx, db.RecoverDeadJudgeTaskParams{NextRunAt: timestamptz(nextRunAt), LastError: text(reason), ID: id})
+		if err != nil {
+			return err
+		}
+		task = recoverDeadJudgeTaskRecord(row)
+		if !projectionLock.enabled {
+			return nil
+		}
+		updated, err := q.GetSubmissionByID(ctx, currentTask.SubmissionID)
+		if err != nil {
+			return err
+		}
+		return rebuildContestProblemResult(ctx, q, submissionRecord(updated), projectionLock)
+	})
+	return task, err
 }
 
 func (r *SQLRepository) CreateRun(ctx context.Context, arg RunRecord) (RunRecord, error) {
@@ -1367,7 +1584,7 @@ func artifactRecord(row db.Artifact) ArtifactRecord {
 }
 
 func submissionRecord(row db.Submission) SubmissionRecord {
-	return SubmissionRecord{ID: row.ID, UserID: row.UserID, ProblemID: row.ProblemID, ContestID: int8Value(row.ContestID), LanguageID: row.LanguageID, TestcaseSetID: row.TestcaseSetID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), Score: row.Score, ErrorMessage: textValue(row.ErrorMessage), SubmittedAt: row.SubmittedAt.Time, JudgedAt: timeValue(row.JudgedAt), UpdatedAt: row.UpdatedAt.Time}
+	return SubmissionRecord{ID: row.ID, UserID: row.UserID, ProblemID: row.ProblemID, ContestID: int8Value(row.ContestID), LanguageID: row.LanguageID, TestcaseSetID: row.TestcaseSetID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), Score: row.Score, ErrorMessage: textValue(row.ErrorMessage), SubmittedAt: row.SubmittedAt.Time, JudgedAt: timeValue(row.JudgedAt), FirstJudgedAt: timeValue(row.FirstJudgedAt), UpdatedAt: row.UpdatedAt.Time}
 }
 
 func runRecord(row db.Run) RunRecord {
@@ -1540,6 +1757,13 @@ func int8Ptr(value *int64) pgtype.Int8 {
 
 func timestamptz(value time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: value, Valid: true}
+}
+
+func judgedAtParam(value time.Time) pgtype.Timestamptz {
+	if value.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return timestamptz(value)
 }
 
 func int4Value(value pgtype.Int4) *int32 {
