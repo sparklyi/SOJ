@@ -91,6 +91,12 @@ COMPOSE_FILES=deploy/docker-compose.yaml:deploy/docker-compose.prod.yaml \
 SMOKE_REAL_JUDGE=1 ./deploy/smoke.sh
 ```
 
+For a host-managed Next.js frontend, install Node.js 22 and Nginx, copy
+`deploy/frontend/nginx.conf` to the active Nginx site, and install
+`deploy/frontend/soj-web.service` as a systemd unit. Set the frontend
+environment to `NEXT_PUBLIC_SOJ_API_MODE=http` and
+`SOJ_API_INTERNAL_BASE_URL=http://127.0.0.1:8080` before running `npm run build`.
+
 ## Judge Agent Credential Boundary
 
 `soj-judge-agent` consumes Redis request events, reads source/testcase artifacts from object storage, and publishes Redis result events. It must not receive business PostgreSQL credentials. The worker result consumer owns all business database writes for attempts, case results, submission projections, and contest projections.
