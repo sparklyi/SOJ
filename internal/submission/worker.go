@@ -200,7 +200,6 @@ type taskProcessStore interface {
 type taskFailureStore interface {
 	RetryJudgeTask(context.Context, int64, time.Time, string) (JudgeTaskRecord, error)
 	MarkJudgeTaskDead(context.Context, int64, string) (JudgeTaskRecord, error)
-	MarkSubmissionSystemError(context.Context, int64, string) (SubmissionRecord, error)
 	MarkSubmissionQueued(context.Context, int64, string) (SubmissionRecord, error)
 }
 
@@ -230,9 +229,6 @@ func (h *TaskFailureHandler) retryOrDead(ctx context.Context, message queue.Mess
 	reason := cause.Error()
 	if task.Attempts >= h.maxAttempts {
 		if _, err := h.store.MarkJudgeTaskDead(ctx, task.ID, reason); err != nil {
-			return "error", err
-		}
-		if _, err := h.store.MarkSubmissionSystemError(ctx, task.SubmissionID, reason); err != nil {
 			return "error", err
 		}
 		if err := h.queue.DeadLetter(ctx, message, reason); err != nil {

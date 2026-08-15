@@ -84,7 +84,6 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		contest.NewContestAuthoring(contestRepo, contestReader),
 		contest.NewContestPolicy(contestReader, contestRepo),
 		contest.NewScoreboardService(contestReader, contestRepo),
-		contest.NewScoreboardProjection(contestReader, contestRepo),
 	)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
 	judgeEngine := newJudgeEngine(cfg.Judge)
@@ -106,7 +105,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		Timeout:       cfg.Judge.Timeout,
 	})
 	languages := submission.NewLanguageService(submissionRepo, judgeEngine)
-	completer := submission.NewSubmissionCompleter(submissionRepo, contestService, nil)
+	completer := submission.NewSubmissionCompleter(submissionRepo)
 	submissionService := submission.NewService(creator, reader, runs, languages, completer)
 	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemReader, contests: contestService}, nil, metrics)
 

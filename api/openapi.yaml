@@ -964,6 +964,19 @@ paths:
           schema:
             type: string
             enum: [live, frozen, final]
+        - name: page_size
+          in: query
+          description: Maximum number of ranking rows to return. Defaults to 20.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          description: Opaque cursor returned by the previous page.
+          schema:
+            type: string
       responses:
         "200":
           description: Scoreboard.
@@ -975,6 +988,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/admin/users:
     get:
@@ -1868,6 +1882,9 @@ components:
         rows:
           type: array
           items: { $ref: "#/components/schemas/ScoreboardRow" }
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page. Omitted when no more rows remain.
     ScoreboardRow:
       type: object
       required: [rank, user_id, display_name, accepted_count, penalty_minutes, cells]

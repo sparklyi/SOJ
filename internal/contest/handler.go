@@ -160,7 +160,16 @@ func (h *Handler) scoreboard(c *gin.Context) {
 	if !ok {
 		return
 	}
-	board, err := h.service.Scoreboard(c.Request.Context(), actorFromContext(c), id, ScoreboardView(c.Query("view")))
+	pageSize, ok := int32Query(c, "page_size", defaultScoreboardPageSize)
+	if !ok {
+		httpapi.Error(c, apperror.BadRequest("invalid_argument", "scoreboard page_size is invalid"))
+		return
+	}
+	board, err := h.service.Scoreboard(c.Request.Context(), actorFromContext(c), id, ScoreboardQuery{
+		View:     ScoreboardView(c.Query("view")),
+		PageSize: pageSize,
+		Cursor:   c.Query("cursor"),
+	})
 	if err != nil {
 		httpapi.Error(c, err)
 		return

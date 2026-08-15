@@ -52,7 +52,7 @@ UPDATE contests
 SET status = 'archived',
     updated_at = now()
 WHERE id = $1
-RETURNING id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, created_at, updated_at
+RETURNING id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, score_revision, created_at, updated_at
 `
 
 func (q *Queries) ArchiveContest(ctx context.Context, id int64) (Contest, error) {
@@ -69,6 +69,7 @@ func (q *Queries) ArchiveContest(ctx context.Context, id int64) (Contest, error)
 		&i.EndAt,
 		&i.FreezeAt,
 		&i.InviteCodeHash,
+		&i.ScoreRevision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -139,7 +140,7 @@ INSERT INTO contests (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9
 )
-RETURNING id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, created_at, updated_at
+RETURNING id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, score_revision, created_at, updated_at
 `
 
 type CreateContestParams struct {
@@ -179,6 +180,7 @@ func (q *Queries) CreateContest(ctx context.Context, arg CreateContestParams) (C
 		&i.EndAt,
 		&i.FreezeAt,
 		&i.InviteCodeHash,
+		&i.ScoreRevision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -195,7 +197,7 @@ INSERT INTO contest_registrations (
 ) VALUES (
     $1, $2, $3, $4, 'active'
 )
-RETURNING id, contest_id, user_id, display_name, email, status, registered_at
+RETURNING id, contest_id, user_id, display_name, email, status, registered_at, accepted_count, penalty_minutes
 `
 
 type CreateContestRegistrationParams struct {
@@ -221,6 +223,8 @@ func (q *Queries) CreateContestRegistration(ctx context.Context, arg CreateConte
 		&i.Email,
 		&i.Status,
 		&i.RegisteredAt,
+		&i.AcceptedCount,
+		&i.PenaltyMinutes,
 	)
 	return i, err
 }
@@ -229,28 +233,89 @@ const createContestScoreSnapshot = `-- name: CreateContestScoreSnapshot :one
 INSERT INTO contest_score_snapshots (
     contest_id,
     kind,
-    payload
+    problems,
+    source_revision
 ) VALUES (
-    $1, $2, $3
+    $1, $2, $3, $4
 )
-RETURNING id, contest_id, kind, payload, generated_at
+ON CONFLICT (contest_id, kind, source_revision) DO NOTHING
+RETURNING id, contest_id, kind, problems, source_revision, generated_at
 `
 
 type CreateContestScoreSnapshotParams struct {
-	ContestID int64  `db:"contest_id" json:"contest_id"`
-	Kind      string `db:"kind" json:"kind"`
-	Payload   []byte `db:"payload" json:"payload"`
+	ContestID      int64  `db:"contest_id" json:"contest_id"`
+	Kind           string `db:"kind" json:"kind"`
+	Problems       []byte `db:"problems" json:"problems"`
+	SourceRevision int64  `db:"source_revision" json:"source_revision"`
 }
 
 func (q *Queries) CreateContestScoreSnapshot(ctx context.Context, arg CreateContestScoreSnapshotParams) (ContestScoreSnapshot, error) {
-	row := q.db.QueryRow(ctx, createContestScoreSnapshot, arg.ContestID, arg.Kind, arg.Payload)
+	row := q.db.QueryRow(ctx, createContestScoreSnapshot,
+		arg.ContestID,
+		arg.Kind,
+		arg.Problems,
+		arg.SourceRevision,
+	)
 	var i ContestScoreSnapshot
 	err := row.Scan(
 		&i.ID,
 		&i.ContestID,
 		&i.Kind,
-		&i.Payload,
+		&i.Problems,
+		&i.SourceRevision,
 		&i.GeneratedAt,
+	)
+	return i, err
+}
+
+const createContestScoreSnapshotRow = `-- name: CreateContestScoreSnapshotRow :one
+INSERT INTO contest_score_snapshot_rows (
+    snapshot_id,
+    ordinal,
+    rank,
+    user_id,
+    display_name,
+    accepted_count,
+    penalty_minutes,
+    cells
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
+)
+RETURNING snapshot_id, ordinal, rank, user_id, display_name, accepted_count, penalty_minutes, cells
+`
+
+type CreateContestScoreSnapshotRowParams struct {
+	SnapshotID     int64  `db:"snapshot_id" json:"snapshot_id"`
+	Ordinal        int32  `db:"ordinal" json:"ordinal"`
+	Rank           int32  `db:"rank" json:"rank"`
+	UserID         int64  `db:"user_id" json:"user_id"`
+	DisplayName    string `db:"display_name" json:"display_name"`
+	AcceptedCount  int32  `db:"accepted_count" json:"accepted_count"`
+	PenaltyMinutes int32  `db:"penalty_minutes" json:"penalty_minutes"`
+	Cells          []byte `db:"cells" json:"cells"`
+}
+
+func (q *Queries) CreateContestScoreSnapshotRow(ctx context.Context, arg CreateContestScoreSnapshotRowParams) (ContestScoreSnapshotRow, error) {
+	row := q.db.QueryRow(ctx, createContestScoreSnapshotRow,
+		arg.SnapshotID,
+		arg.Ordinal,
+		arg.Rank,
+		arg.UserID,
+		arg.DisplayName,
+		arg.AcceptedCount,
+		arg.PenaltyMinutes,
+		arg.Cells,
+	)
+	var i ContestScoreSnapshotRow
+	err := row.Scan(
+		&i.SnapshotID,
+		&i.Ordinal,
+		&i.Rank,
+		&i.UserID,
+		&i.DisplayName,
+		&i.AcceptedCount,
+		&i.PenaltyMinutes,
+		&i.Cells,
 	)
 	return i, err
 }
@@ -266,7 +331,7 @@ func (q *Queries) DeleteContestProblems(ctx context.Context, contestID int64) er
 }
 
 const getContestByID = `-- name: GetContestByID :one
-SELECT id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, created_at, updated_at
+SELECT id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, score_revision, created_at, updated_at
 FROM contests
 WHERE id = $1
 `
@@ -285,6 +350,7 @@ func (q *Queries) GetContestByID(ctx context.Context, id int64) (Contest, error)
 		&i.EndAt,
 		&i.FreezeAt,
 		&i.InviteCodeHash,
+		&i.ScoreRevision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -292,7 +358,7 @@ func (q *Queries) GetContestByID(ctx context.Context, id int64) (Contest, error)
 }
 
 const getContestRegistration = `-- name: GetContestRegistration :one
-SELECT id, contest_id, user_id, display_name, email, status, registered_at
+SELECT id, contest_id, user_id, display_name, email, status, registered_at, accepted_count, penalty_minutes
 FROM contest_registrations
 WHERE contest_id = $1
   AND user_id = $2
@@ -314,12 +380,42 @@ func (q *Queries) GetContestRegistration(ctx context.Context, arg GetContestRegi
 		&i.Email,
 		&i.Status,
 		&i.RegisteredAt,
+		&i.AcceptedCount,
+		&i.PenaltyMinutes,
+	)
+	return i, err
+}
+
+const getContestScoreSnapshotByKey = `-- name: GetContestScoreSnapshotByKey :one
+SELECT id, contest_id, kind, problems, source_revision, generated_at
+FROM contest_score_snapshots
+WHERE contest_id = $1
+  AND kind = $2
+  AND source_revision = $3
+`
+
+type GetContestScoreSnapshotByKeyParams struct {
+	ContestID      int64  `db:"contest_id" json:"contest_id"`
+	Kind           string `db:"kind" json:"kind"`
+	SourceRevision int64  `db:"source_revision" json:"source_revision"`
+}
+
+func (q *Queries) GetContestScoreSnapshotByKey(ctx context.Context, arg GetContestScoreSnapshotByKeyParams) (ContestScoreSnapshot, error) {
+	row := q.db.QueryRow(ctx, getContestScoreSnapshotByKey, arg.ContestID, arg.Kind, arg.SourceRevision)
+	var i ContestScoreSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.ContestID,
+		&i.Kind,
+		&i.Problems,
+		&i.SourceRevision,
+		&i.GeneratedAt,
 	)
 	return i, err
 }
 
 const getLatestContestScoreSnapshot = `-- name: GetLatestContestScoreSnapshot :one
-SELECT id, contest_id, kind, payload, generated_at
+SELECT id, contest_id, kind, problems, source_revision, generated_at
 FROM contest_score_snapshots
 WHERE contest_id = $1
   AND kind = $2
@@ -339,10 +435,26 @@ func (q *Queries) GetLatestContestScoreSnapshot(ctx context.Context, arg GetLate
 		&i.ID,
 		&i.ContestID,
 		&i.Kind,
-		&i.Payload,
+		&i.Problems,
+		&i.SourceRevision,
 		&i.GeneratedAt,
 	)
 	return i, err
+}
+
+const incrementContestScoreRevision = `-- name: IncrementContestScoreRevision :one
+UPDATE contests
+SET score_revision = score_revision + 1,
+    updated_at = now()
+WHERE id = $1
+RETURNING score_revision
+`
+
+func (q *Queries) IncrementContestScoreRevision(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, incrementContestScoreRevision, id)
+	var score_revision int64
+	err := row.Scan(&score_revision)
+	return score_revision, err
 }
 
 const listContestProblemResults = `-- name: ListContestProblemResults :many
@@ -354,6 +466,52 @@ ORDER BY user_id, problem_id
 
 func (q *Queries) ListContestProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error) {
 	rows, err := q.db.Query(ctx, listContestProblemResults, contestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ContestProblemResult
+	for rows.Next() {
+		var i ContestProblemResult
+		if err := rows.Scan(
+			&i.ContestID,
+			&i.UserID,
+			&i.ProblemID,
+			&i.Status,
+			&i.Attempts,
+			&i.AcceptedAt,
+			&i.PenaltyMinutes,
+			&i.LastSubmissionID,
+			&i.BestSubmissionID,
+			&i.BestAttemptID,
+			&i.LastAttemptID,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listContestProblemResultsForUsers = `-- name: ListContestProblemResultsForUsers :many
+SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
+FROM contest_problem_results
+WHERE contest_id = $1
+  AND user_id = ANY($2::bigint[])
+ORDER BY user_id, problem_id
+`
+
+type ListContestProblemResultsForUsersParams struct {
+	ContestID int64   `db:"contest_id" json:"contest_id"`
+	UserIds   []int64 `db:"user_ids" json:"user_ids"`
+}
+
+func (q *Queries) ListContestProblemResultsForUsers(ctx context.Context, arg ListContestProblemResultsForUsersParams) ([]ContestProblemResult, error) {
+	rows, err := q.db.Query(ctx, listContestProblemResultsForUsers, arg.ContestID, arg.UserIds)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +591,7 @@ func (q *Queries) ListContestProblems(ctx context.Context, contestID int64) ([]L
 }
 
 const listContestRegistrations = `-- name: ListContestRegistrations :many
-SELECT id, contest_id, user_id, display_name, email, status, registered_at
+SELECT id, contest_id, user_id, display_name, email, status, registered_at, accepted_count, penalty_minutes
 FROM contest_registrations
 WHERE contest_id = $1
 ORDER BY registered_at DESC, id DESC
@@ -463,6 +621,8 @@ func (q *Queries) ListContestRegistrations(ctx context.Context, arg ListContestR
 			&i.Email,
 			&i.Status,
 			&i.RegisteredAt,
+			&i.AcceptedCount,
+			&i.PenaltyMinutes,
 		); err != nil {
 			return nil, err
 		}
@@ -485,6 +645,7 @@ SELECT id,
        end_at,
        freeze_at,
        invite_code_hash,
+       score_revision,
        created_at,
        updated_at,
        snapshot_kind
@@ -499,6 +660,7 @@ FROM (
            c.end_at,
            c.freeze_at,
            c.invite_code_hash,
+           c.score_revision,
            c.created_at,
            c.updated_at,
            'frozen'::text AS snapshot_kind,
@@ -523,6 +685,7 @@ FROM (
            c.end_at,
            c.freeze_at,
            c.invite_code_hash,
+           c.score_revision,
            c.created_at,
            c.updated_at,
            'final'::text AS snapshot_kind,
@@ -530,6 +693,22 @@ FROM (
     FROM contests c
     WHERE c.status IN ('published', 'running', 'ended')
       AND c.end_at <= $1
+      AND NOT EXISTS (
+          SELECT 1
+          FROM submissions s
+          LEFT JOIN judge_tasks jt ON jt.submission_id = s.id
+          WHERE s.contest_id = c.id
+            AND (
+                s.status IN ('queued', 'running')
+                OR jt.status IN ('pending', 'dispatching', 'dispatched', 'running')
+            )
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM rejudge_batches rb
+          WHERE rb.contest_id = c.id
+            AND rb.status IN ('queued', 'running')
+      )
       AND (
           NOT EXISTS (
               SELECT 1
@@ -539,15 +718,14 @@ FROM (
           )
           OR EXISTS (
               SELECT 1
-              FROM rejudge_batches rb
-              LEFT JOIN contest_score_snapshots css
-                ON css.contest_id = rb.contest_id
-               AND css.kind = 'final'
-              WHERE rb.contest_id = c.id
-                AND rb.status = 'completed'
-                AND rb.finished_at IS NOT NULL
-              GROUP BY rb.id, rb.finished_at
-              HAVING rb.finished_at > coalesce(max(css.generated_at), '-infinity'::timestamptz)
+              FROM contest_registrations cr
+              WHERE cr.contest_id = c.id
+                AND c.score_revision > coalesce((
+                    SELECT max(css.source_revision)
+                    FROM contest_score_snapshots css
+                    WHERE css.contest_id = c.id
+                      AND css.kind = 'final'
+                ), -1)
           )
       )
 ) due
@@ -571,6 +749,7 @@ type ListContestScoreSnapshotCandidatesRow struct {
 	EndAt          pgtype.Timestamptz `db:"end_at" json:"end_at"`
 	FreezeAt       pgtype.Timestamptz `db:"freeze_at" json:"freeze_at"`
 	InviteCodeHash pgtype.Text        `db:"invite_code_hash" json:"invite_code_hash"`
+	ScoreRevision  int64              `db:"score_revision" json:"score_revision"`
 	CreatedAt      pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 	SnapshotKind   string             `db:"snapshot_kind" json:"snapshot_kind"`
@@ -596,6 +775,7 @@ func (q *Queries) ListContestScoreSnapshotCandidates(ctx context.Context, arg Li
 			&i.EndAt,
 			&i.FreezeAt,
 			&i.InviteCodeHash,
+			&i.ScoreRevision,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SnapshotKind,
@@ -610,8 +790,52 @@ func (q *Queries) ListContestScoreSnapshotCandidates(ctx context.Context, arg Li
 	return items, nil
 }
 
+const listContestScoreSnapshotRows = `-- name: ListContestScoreSnapshotRows :many
+SELECT snapshot_id, ordinal, rank, user_id, display_name, accepted_count, penalty_minutes, cells
+FROM contest_score_snapshot_rows
+WHERE snapshot_id = $1
+  AND ordinal > $2
+ORDER BY ordinal
+LIMIT $3
+`
+
+type ListContestScoreSnapshotRowsParams struct {
+	SnapshotID   int64 `db:"snapshot_id" json:"snapshot_id"`
+	AfterOrdinal int32 `db:"after_ordinal" json:"after_ordinal"`
+	Limit        int32 `db:"limit" json:"limit"`
+}
+
+func (q *Queries) ListContestScoreSnapshotRows(ctx context.Context, arg ListContestScoreSnapshotRowsParams) ([]ContestScoreSnapshotRow, error) {
+	rows, err := q.db.Query(ctx, listContestScoreSnapshotRows, arg.SnapshotID, arg.AfterOrdinal, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ContestScoreSnapshotRow
+	for rows.Next() {
+		var i ContestScoreSnapshotRow
+		if err := rows.Scan(
+			&i.SnapshotID,
+			&i.Ordinal,
+			&i.Rank,
+			&i.UserID,
+			&i.DisplayName,
+			&i.AcceptedCount,
+			&i.PenaltyMinutes,
+			&i.Cells,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listContestTerminalSubmissions = `-- name: ListContestTerminalSubmissions :many
-SELECT id, user_id, problem_id, contest_id, status, submitted_at, judged_at
+SELECT id, user_id, problem_id, contest_id, status, submitted_at, judged_at, first_judged_at
 FROM submissions
 WHERE contest_id = $1::bigint
   AND judged_at IS NOT NULL
@@ -620,13 +844,14 @@ ORDER BY submitted_at, id
 `
 
 type ListContestTerminalSubmissionsRow struct {
-	ID          int64              `db:"id" json:"id"`
-	UserID      int64              `db:"user_id" json:"user_id"`
-	ProblemID   int64              `db:"problem_id" json:"problem_id"`
-	ContestID   pgtype.Int8        `db:"contest_id" json:"contest_id"`
-	Status      string             `db:"status" json:"status"`
-	SubmittedAt pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
-	JudgedAt    pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
+	ID            int64              `db:"id" json:"id"`
+	UserID        int64              `db:"user_id" json:"user_id"`
+	ProblemID     int64              `db:"problem_id" json:"problem_id"`
+	ContestID     pgtype.Int8        `db:"contest_id" json:"contest_id"`
+	Status        string             `db:"status" json:"status"`
+	SubmittedAt   pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
+	JudgedAt      pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
+	FirstJudgedAt pgtype.Timestamptz `db:"first_judged_at" json:"first_judged_at"`
 }
 
 func (q *Queries) ListContestTerminalSubmissions(ctx context.Context, dollar_1 int64) ([]ListContestTerminalSubmissionsRow, error) {
@@ -646,6 +871,7 @@ func (q *Queries) ListContestTerminalSubmissions(ctx context.Context, dollar_1 i
 			&i.Status,
 			&i.SubmittedAt,
 			&i.JudgedAt,
+			&i.FirstJudgedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -658,7 +884,7 @@ func (q *Queries) ListContestTerminalSubmissions(ctx context.Context, dollar_1 i
 }
 
 const listContests = `-- name: ListContests :many
-SELECT c.id, c.owner_user_id, c.title, c.description, c.visibility, c.status, c.start_at, c.end_at, c.freeze_at, c.invite_code_hash, c.created_at, c.updated_at
+SELECT c.id, c.owner_user_id, c.title, c.description, c.visibility, c.status, c.start_at, c.end_at, c.freeze_at, c.invite_code_hash, c.score_revision, c.created_at, c.updated_at
 FROM contests c
 WHERE ($1::text IS NULL OR c.status = $1::text)
   AND ($2::text IS NULL OR c.visibility = $2::text)
@@ -725,6 +951,7 @@ func (q *Queries) ListContests(ctx context.Context, arg ListContestsParams) ([]C
 			&i.EndAt,
 			&i.FreezeAt,
 			&i.InviteCodeHash,
+			&i.ScoreRevision,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -736,6 +963,113 @@ func (q *Queries) ListContests(ctx context.Context, arg ListContestsParams) ([]C
 		return nil, err
 	}
 	return items, nil
+}
+
+const listScoreboardRegistrations = `-- name: ListScoreboardRegistrations :many
+SELECT id, contest_id, user_id, display_name, email, status, registered_at, accepted_count, penalty_minutes
+FROM contest_registrations
+WHERE contest_id = $1
+  AND status = 'active'
+  AND (
+      NOT $2::boolean
+      OR accepted_count < $3
+      OR (
+          accepted_count = $3
+          AND (
+              penalty_minutes > $4
+              OR (
+                  penalty_minutes = $4
+                  AND (
+                      display_name COLLATE "C" > $5
+                      OR (
+                          display_name COLLATE "C" = $5
+                          AND user_id > $6
+                      )
+                  )
+              )
+          )
+      )
+  )
+ORDER BY accepted_count DESC, penalty_minutes ASC, display_name COLLATE "C" ASC, user_id ASC
+LIMIT $7
+`
+
+type ListScoreboardRegistrationsParams struct {
+	ContestID           int64  `db:"contest_id" json:"contest_id"`
+	HasCursor           bool   `db:"has_cursor" json:"has_cursor"`
+	AfterAcceptedCount  int32  `db:"after_accepted_count" json:"after_accepted_count"`
+	AfterPenaltyMinutes int32  `db:"after_penalty_minutes" json:"after_penalty_minutes"`
+	AfterDisplayName    string `db:"after_display_name" json:"after_display_name"`
+	AfterUserID         int64  `db:"after_user_id" json:"after_user_id"`
+	Limit               int32  `db:"limit" json:"limit"`
+}
+
+func (q *Queries) ListScoreboardRegistrations(ctx context.Context, arg ListScoreboardRegistrationsParams) ([]ContestRegistration, error) {
+	rows, err := q.db.Query(ctx, listScoreboardRegistrations,
+		arg.ContestID,
+		arg.HasCursor,
+		arg.AfterAcceptedCount,
+		arg.AfterPenaltyMinutes,
+		arg.AfterDisplayName,
+		arg.AfterUserID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ContestRegistration
+	for rows.Next() {
+		var i ContestRegistration
+		if err := rows.Scan(
+			&i.ID,
+			&i.ContestID,
+			&i.UserID,
+			&i.DisplayName,
+			&i.Email,
+			&i.Status,
+			&i.RegisteredAt,
+			&i.AcceptedCount,
+			&i.PenaltyMinutes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockContestRegistration = `-- name: LockContestRegistration :one
+SELECT id, contest_id, user_id, display_name, email, status, registered_at, accepted_count, penalty_minutes
+FROM contest_registrations
+WHERE contest_id = $1
+  AND user_id = $2
+FOR UPDATE
+`
+
+type LockContestRegistrationParams struct {
+	ContestID int64 `db:"contest_id" json:"contest_id"`
+	UserID    int64 `db:"user_id" json:"user_id"`
+}
+
+func (q *Queries) LockContestRegistration(ctx context.Context, arg LockContestRegistrationParams) (ContestRegistration, error) {
+	row := q.db.QueryRow(ctx, lockContestRegistration, arg.ContestID, arg.UserID)
+	var i ContestRegistration
+	err := row.Scan(
+		&i.ID,
+		&i.ContestID,
+		&i.UserID,
+		&i.DisplayName,
+		&i.Email,
+		&i.Status,
+		&i.RegisteredAt,
+		&i.AcceptedCount,
+		&i.PenaltyMinutes,
+	)
+	return i, err
 }
 
 const updateContest = `-- name: UpdateContest :one
@@ -750,7 +1084,7 @@ SET title = coalesce($1, title),
     invite_code_hash = coalesce($8, invite_code_hash),
     updated_at = now()
 WHERE id = $9
-RETURNING id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, created_at, updated_at
+RETURNING id, owner_user_id, title, description, visibility, status, start_at, end_at, freeze_at, invite_code_hash, score_revision, created_at, updated_at
 `
 
 type UpdateContestParams struct {
@@ -789,8 +1123,47 @@ func (q *Queries) UpdateContest(ctx context.Context, arg UpdateContestParams) (C
 		&i.EndAt,
 		&i.FreezeAt,
 		&i.InviteCodeHash,
+		&i.ScoreRevision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateContestRegistrationScore = `-- name: UpdateContestRegistrationScore :one
+UPDATE contest_registrations
+SET accepted_count = $1,
+    penalty_minutes = $2
+WHERE contest_id = $3
+  AND user_id = $4
+RETURNING id, contest_id, user_id, display_name, email, status, registered_at, accepted_count, penalty_minutes
+`
+
+type UpdateContestRegistrationScoreParams struct {
+	AcceptedCount  int32 `db:"accepted_count" json:"accepted_count"`
+	PenaltyMinutes int32 `db:"penalty_minutes" json:"penalty_minutes"`
+	ContestID      int64 `db:"contest_id" json:"contest_id"`
+	UserID         int64 `db:"user_id" json:"user_id"`
+}
+
+func (q *Queries) UpdateContestRegistrationScore(ctx context.Context, arg UpdateContestRegistrationScoreParams) (ContestRegistration, error) {
+	row := q.db.QueryRow(ctx, updateContestRegistrationScore,
+		arg.AcceptedCount,
+		arg.PenaltyMinutes,
+		arg.ContestID,
+		arg.UserID,
+	)
+	var i ContestRegistration
+	err := row.Scan(
+		&i.ID,
+		&i.ContestID,
+		&i.UserID,
+		&i.DisplayName,
+		&i.Email,
+		&i.Status,
+		&i.RegisteredAt,
+		&i.AcceptedCount,
+		&i.PenaltyMinutes,
 	)
 	return i, err
 }
