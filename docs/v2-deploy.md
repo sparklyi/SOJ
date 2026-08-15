@@ -52,6 +52,45 @@ Set these through environment variables in real deployments:
 
 Do not commit production DSNs, JWT secrets, or object storage credentials.
 
+## Production Compose
+
+Use `deploy/docker-compose.prod.yaml` together with the base Compose file for
+a single-node production deployment. The production overlay keeps PostgreSQL,
+Redis, and MinIO private, disables the fake language seed, requires real
+credentials, and runs the judge-agent with Docker plus gVisor/runsc.
+
+Set these values in a mode `0600` `.env` file outside Git:
+
+```dotenv
+SOJ_ENV=prod
+SOJ_POSTGRES_PASSWORD=<random-password>
+SOJ_DATABASE_DSN=postgres://soj:<random-password>@postgres:5432/soj?sslmode=disable
+SOJ_STORAGE_ACCESS_KEY=<random-access-key>
+SOJ_STORAGE_SECRET_KEY=<random-secret-key>
+SOJ_JWT_SECRET=<random-jwt-secret>
+SOJ_DOCKER_RUNNER_IMAGE_GO=ghcr.io/sparklyi/soj-runner-go:<release-or-sha-tag>
+SOJ_DOCKER_RUNNER_IMAGE_CPP17=ghcr.io/sparklyi/soj-runner-cpp17:<release-or-sha-tag>
+```
+
+Validate and start the stack with:
+
+```bash
+docker compose --env-file .env \
+  -f deploy/docker-compose.yaml \
+  -f deploy/docker-compose.prod.yaml config
+docker compose --env-file .env \
+  -f deploy/docker-compose.yaml \
+  -f deploy/docker-compose.prod.yaml up --build -d
+```
+
+After gVisor is installed and registered with Docker, run the real-code smoke
+flow from the backend checkout:
+
+```bash
+COMPOSE_FILES=deploy/docker-compose.yaml:deploy/docker-compose.prod.yaml \
+SMOKE_REAL_JUDGE=1 ./deploy/smoke.sh
+```
+
 ## Judge Agent Credential Boundary
 
 `soj-judge-agent` consumes Redis request events, reads source/testcase artifacts from object storage, and publishes Redis result events. It must not receive business PostgreSQL credentials. The worker result consumer owns all business database writes for attempts, case results, submission projections, and contest projections.

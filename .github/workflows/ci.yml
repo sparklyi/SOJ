@@ -35,6 +35,18 @@ jobs:
       - name: Validate Docker runner Compose
         run: COMPOSE_FILE=deploy/docker-compose.yaml:deploy/docker-compose.docker-runner.yaml docker compose config
 
+      - name: Validate Production Compose
+        run: |
+          SOJ_ENV=prod \
+          SOJ_POSTGRES_PASSWORD=ci-postgres-password \
+          SOJ_DATABASE_DSN=postgres://soj:ci-postgres-password@postgres:5432/soj?sslmode=disable \
+          SOJ_STORAGE_ACCESS_KEY=ci-storage-user \
+          SOJ_STORAGE_SECRET_KEY=ci-storage-secret \
+          SOJ_JWT_SECRET=ci-jwt-secret \
+          SOJ_DOCKER_RUNNER_IMAGE_GO=ghcr.io/sparklyi/soj-runner-go:main \
+          SOJ_DOCKER_RUNNER_IMAGE_CPP17=ghcr.io/sparklyi/soj-runner-cpp17:main \
+          docker compose -f deploy/docker-compose.yaml -f deploy/docker-compose.prod.yaml config
+
       - name: Build API image
         run: docker build -f Dockerfile.v2 --build-arg COMMAND=soj-api -t soj-api:ci .
 
