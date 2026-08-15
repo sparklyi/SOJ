@@ -1,0 +1,21 @@
+[Unit]
+Description=SOJ web frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=soj
+Group=soj
+WorkingDirectory=/opt/soj/frontend
+Environment=NODE_ENV=production
+EnvironmentFile=-/opt/soj/frontend/.env.production
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1 --port 3000
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
