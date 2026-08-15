@@ -49,7 +49,7 @@ The worker exposes Prometheus metrics on its health server at `GET /metrics`.
 
 ## Scoreboard Snapshots
 
-Contest scoreboards read the latest frozen/final snapshot when one exists and fall back to synchronous aggregation when missing. The worker reconciliation loop generates missing frozen snapshots after `freeze_at` and missing final snapshots after `end_at`.
+Contest scoreboards read the latest frozen/final snapshot and return `503 scoreboard_not_ready` until the worker publishes one. The worker reconciliation loop generates missing frozen snapshots after `freeze_at` and missing final snapshots after `end_at`. Live scoreboards read the maintained registration projection with keyset pagination; pass `page_size` and the returned opaque `cursor` to walk the ranking.
 
 ## Rejudge Batches
 

@@ -223,7 +223,7 @@ func (s *submissionCompletionStoreStub) CompleteSubmissionWithResult(_ context.C
 
 func TestSubmissionCompleterUsesOnlyCompletionStore(t *testing.T) {
 	store := &submissionCompletionStoreStub{current: SubmissionRecord{ID: 1, Status: StatusRunning}}
-	completer := NewSubmissionCompleter(store, nil, nil)
+	completer := NewSubmissionCompleter(store)
 
 	completed, err := completer.CompleteSubmission(t.Context(), 1, judge.Result{Verdict: judge.VerdictAccepted})
 	if err != nil {

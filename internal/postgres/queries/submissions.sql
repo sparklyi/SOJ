@@ -38,6 +38,12 @@ SELECT *
 FROM submissions
 WHERE id = $1;
 
+-- name: LockSubmissionByID :one
+SELECT *
+FROM submissions
+WHERE id = $1
+FOR UPDATE;
+
 -- name: CreateJudgeAttempt :one
 INSERT INTO judge_attempts (
     submission_id,
@@ -116,6 +122,12 @@ RETURNING *;
 SELECT *
 FROM judge_attempts
 WHERE id = $1;
+
+-- name: LockJudgeAttemptByID :one
+SELECT *
+FROM judge_attempts
+WHERE id = $1
+FOR UPDATE;
 
 -- name: GetLatestJudgeAttemptBySubmissionID :one
 SELECT *
@@ -326,7 +338,8 @@ FOR UPDATE;
 SELECT s.id,
        s.status,
        s.submitted_at,
-       sr.attempt_id
+       sr.attempt_id,
+       s.first_judged_at
 FROM submissions s
 LEFT JOIN submission_results sr ON sr.submission_id = s.id
 WHERE s.contest_id = sqlc.arg('contest_id')
@@ -438,16 +451,14 @@ FROM submissions
 WHERE problem_id = $1
   AND contest_id IS NULL
   AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-ORDER BY id
-FOR UPDATE;
+ORDER BY id;
 
 -- name: ListEligibleContestSubmissionsForRejudge :many
 SELECT *
 FROM submissions
 WHERE contest_id = $1
   AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-ORDER BY id
-FOR UPDATE;
+ORDER BY id;
 
 -- name: CreateRejudgeBatchItem :one
 INSERT INTO rejudge_batch_items (
@@ -603,8 +614,13 @@ SET status = sqlc.arg('status'),
     error_message = sqlc.narg('error_message'),
     judged_at = CASE
         WHEN judged_at IS NULL
-          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN now()
+          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce(sqlc.narg('judged_at'), now())
         ELSE judged_at
+    END,
+    first_judged_at = CASE
+        WHEN first_judged_at IS NULL
+          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce(sqlc.narg('judged_at'), now())
+        ELSE first_judged_at
     END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
@@ -633,6 +649,7 @@ UPDATE submissions
 SET status = 'system_error',
     error_message = sqlc.arg('error_message'),
     judged_at = CASE WHEN judged_at IS NULL THEN now() ELSE judged_at END,
+    first_judged_at = CASE WHEN first_judged_at IS NULL THEN now() ELSE first_judged_at END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
   AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
@@ -652,6 +669,12 @@ RETURNING *;
 SELECT *
 FROM judge_tasks
 WHERE id = $1;
+
+-- name: LockJudgeTaskByID :one
+SELECT *
+FROM judge_tasks
+WHERE id = $1
+FOR UPDATE;
 
 -- name: GetJudgeTaskBySubmissionID :one
 SELECT *

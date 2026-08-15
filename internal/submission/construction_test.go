@@ -17,7 +17,6 @@ type serviceTestOptions struct {
 	Judge                   judge.JudgeEngine
 	ContestSubmissionPolicy ContestSubmissionPolicy
 	ContestVisibilityPolicy ContestResultVisibilityPolicy
-	TerminalHook            TerminalHook
 	Now                     func() time.Time
 	RunWait                 time.Duration
 	RunTimeout              time.Duration
@@ -58,7 +57,7 @@ func newServiceForTest(options serviceTestOptions) *Service {
 		Parallelism:   options.RunParallelism,
 	})
 	languages := NewLanguageService(options.Repository, judgeEngine)
-	completer := NewSubmissionCompleter(options.Repository, options.TerminalHook, options.Now)
+	completer := NewSubmissionCompleter(options.Repository)
 	return NewService(creator, reader, runs, languages, completer)
 }
 

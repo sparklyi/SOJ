@@ -150,6 +150,56 @@ WHERE contest_id = $1
 ORDER BY registered_at DESC, id DESC
 LIMIT $2 OFFSET $3;
 
+-- name: ListScoreboardRegistrations :many
+SELECT *
+FROM contest_registrations
+WHERE contest_id = sqlc.arg('contest_id')
+  AND status = 'active'
+  AND (
+      NOT sqlc.arg('has_cursor')::boolean
+      OR accepted_count < sqlc.arg('after_accepted_count')
+      OR (
+          accepted_count = sqlc.arg('after_accepted_count')
+          AND (
+              penalty_minutes > sqlc.arg('after_penalty_minutes')
+              OR (
+                  penalty_minutes = sqlc.arg('after_penalty_minutes')
+                  AND (
+                      display_name COLLATE "C" > sqlc.arg('after_display_name')
+                      OR (
+                          display_name COLLATE "C" = sqlc.arg('after_display_name')
+                          AND user_id > sqlc.arg('after_user_id')
+                      )
+                  )
+              )
+          )
+      )
+  )
+ORDER BY accepted_count DESC, penalty_minutes ASC, display_name COLLATE "C" ASC, user_id ASC
+LIMIT sqlc.arg('limit');
+
+-- name: LockContestRegistration :one
+SELECT *
+FROM contest_registrations
+WHERE contest_id = sqlc.arg('contest_id')
+  AND user_id = sqlc.arg('user_id')
+FOR UPDATE;
+
+-- name: UpdateContestRegistrationScore :one
+UPDATE contest_registrations
+SET accepted_count = sqlc.arg('accepted_count'),
+    penalty_minutes = sqlc.arg('penalty_minutes')
+WHERE contest_id = sqlc.arg('contest_id')
+  AND user_id = sqlc.arg('user_id')
+RETURNING *;
+
+-- name: IncrementContestScoreRevision :one
+UPDATE contests
+SET score_revision = score_revision + 1,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+RETURNING score_revision;
+
 -- name: UpsertContestProblemResult :one
 INSERT INTO contest_problem_results (
     contest_id,
@@ -184,8 +234,15 @@ FROM contest_problem_results
 WHERE contest_id = $1
 ORDER BY user_id, problem_id;
 
+-- name: ListContestProblemResultsForUsers :many
+SELECT *
+FROM contest_problem_results
+WHERE contest_id = sqlc.arg('contest_id')
+  AND user_id = ANY(sqlc.arg('user_ids')::bigint[])
+ORDER BY user_id, problem_id;
+
 -- name: ListContestTerminalSubmissions :many
-SELECT id, user_id, problem_id, contest_id, status, submitted_at, judged_at
+SELECT id, user_id, problem_id, contest_id, status, submitted_at, judged_at, first_judged_at
 FROM submissions
 WHERE contest_id = $1::bigint
   AND judged_at IS NOT NULL
@@ -203,6 +260,7 @@ SELECT id,
        end_at,
        freeze_at,
        invite_code_hash,
+       score_revision,
        created_at,
        updated_at,
        snapshot_kind
@@ -217,6 +275,7 @@ FROM (
            c.end_at,
            c.freeze_at,
            c.invite_code_hash,
+           c.score_revision,
            c.created_at,
            c.updated_at,
            'frozen'::text AS snapshot_kind,
@@ -241,6 +300,7 @@ FROM (
            c.end_at,
            c.freeze_at,
            c.invite_code_hash,
+           c.score_revision,
            c.created_at,
            c.updated_at,
            'final'::text AS snapshot_kind,
@@ -248,6 +308,22 @@ FROM (
     FROM contests c
     WHERE c.status IN ('published', 'running', 'ended')
       AND c.end_at <= $1
+      AND NOT EXISTS (
+          SELECT 1
+          FROM submissions s
+          LEFT JOIN judge_tasks jt ON jt.submission_id = s.id
+          WHERE s.contest_id = c.id
+            AND (
+                s.status IN ('queued', 'running')
+                OR jt.status IN ('pending', 'dispatching', 'dispatched', 'running')
+            )
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM rejudge_batches rb
+          WHERE rb.contest_id = c.id
+            AND rb.status IN ('queued', 'running')
+      )
       AND (
           NOT EXISTS (
               SELECT 1
@@ -257,15 +333,14 @@ FROM (
           )
           OR EXISTS (
               SELECT 1
-              FROM rejudge_batches rb
-              LEFT JOIN contest_score_snapshots css
-                ON css.contest_id = rb.contest_id
-               AND css.kind = 'final'
-              WHERE rb.contest_id = c.id
-                AND rb.status = 'completed'
-                AND rb.finished_at IS NOT NULL
-              GROUP BY rb.id, rb.finished_at
-              HAVING rb.finished_at > coalesce(max(css.generated_at), '-infinity'::timestamptz)
+              FROM contest_registrations cr
+              WHERE cr.contest_id = c.id
+                AND c.score_revision > coalesce((
+                    SELECT max(css.source_revision)
+                    FROM contest_score_snapshots css
+                    WHERE css.contest_id = c.id
+                      AND css.kind = 'final'
+                ), -1)
           )
       )
 ) due
@@ -276,9 +351,33 @@ LIMIT $2;
 INSERT INTO contest_score_snapshots (
     contest_id,
     kind,
-    payload
+    problems,
+    source_revision
 ) VALUES (
-    $1, $2, $3
+    $1, $2, $3, $4
+)
+ON CONFLICT (contest_id, kind, source_revision) DO NOTHING
+RETURNING *;
+
+-- name: GetContestScoreSnapshotByKey :one
+SELECT *
+FROM contest_score_snapshots
+WHERE contest_id = sqlc.arg('contest_id')
+  AND kind = sqlc.arg('kind')
+  AND source_revision = sqlc.arg('source_revision');
+
+-- name: CreateContestScoreSnapshotRow :one
+INSERT INTO contest_score_snapshot_rows (
+    snapshot_id,
+    ordinal,
+    rank,
+    user_id,
+    display_name,
+    accepted_count,
+    penalty_minutes,
+    cells
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 RETURNING *;
 
@@ -289,3 +388,11 @@ WHERE contest_id = $1
   AND kind = $2
 ORDER BY generated_at DESC, id DESC
 LIMIT 1;
+
+-- name: ListContestScoreSnapshotRows :many
+SELECT *
+FROM contest_score_snapshot_rows
+WHERE snapshot_id = sqlc.arg('snapshot_id')
+  AND ordinal > sqlc.arg('after_ordinal')
+ORDER BY ordinal
+LIMIT sqlc.arg('limit');

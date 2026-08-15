@@ -22,7 +22,6 @@ func newContestService(repo *memoryRepository, now ...func() time.Time) *Service
 		NewContestAuthoring(repo, reader),
 		NewContestPolicy(reader, repo),
 		NewScoreboardService(reader, repo),
-		NewScoreboardProjection(reader, repo),
 	)
 }
 
@@ -44,9 +43,9 @@ func TestScoreboardUsesACMPenaltyAndTieRank(t *testing.T) {
 		{ContestID: 1, ProblemID: 102, Alias: "B", SortOrder: 2},
 	}
 	repo.registrations[1] = []ContestRegistration{
-		{ID: 1, ContestID: 1, UserID: 20, DisplayName: "alice", Email: "alice@example.com", Status: RegistrationActive},
-		{ID: 2, ContestID: 1, UserID: 21, DisplayName: "bob", Email: "bob@example.com", Status: RegistrationActive},
-		{ID: 3, ContestID: 1, UserID: 22, DisplayName: "cara", Email: "cara@example.com", Status: RegistrationActive},
+		{ID: 1, ContestID: 1, UserID: 20, DisplayName: "alice", Email: "alice@example.com", Status: RegistrationActive, AcceptedCount: 1, PenaltyMinutes: 30},
+		{ID: 2, ContestID: 1, UserID: 21, DisplayName: "bob", Email: "bob@example.com", Status: RegistrationActive, AcceptedCount: 1, PenaltyMinutes: 30},
+		{ID: 3, ContestID: 1, UserID: 22, DisplayName: "cara", Email: "cara@example.com", Status: RegistrationActive, AcceptedCount: 1, PenaltyMinutes: 35},
 	}
 	repo.results[1] = []ContestProblemResult{
 		{ContestID: 1, UserID: 20, ProblemID: 101, Status: CellAccepted, Attempts: 2, AcceptedAt: testTimePtr(start.Add(10 * time.Minute)), PenaltyMinutes: 30},
@@ -56,7 +55,7 @@ func TestScoreboardUsesACMPenaltyAndTieRank(t *testing.T) {
 	}
 	service := newContestService(repo, func() time.Time { return start.Add(90 * time.Minute) })
 
-	board, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 30, Role: auth.RoleUser}, 1, ScoreboardViewLive)
+	board, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 30, Role: auth.RoleUser}, 1, ScoreboardQuery{View: ScoreboardViewLive, PageSize: 100})
 	if err != nil {
 		t.Fatalf("Scoreboard returned error: %v", err)
 	}
@@ -101,8 +100,11 @@ func TestFrozenScoreboardHidesAttemptsAfterFreeze(t *testing.T) {
 		{ID: 3, ContestID: 1, UserID: 20, ProblemID: 102, Status: CellAccepted, SubmittedAt: freeze.Add(7 * time.Minute), JudgedAt: freeze.Add(8 * time.Minute)},
 	}
 	service := newContestService(repo, func() time.Time { return freeze.Add(30 * time.Minute) })
+	if _, err := service.GenerateDueScoreSnapshots(context.Background(), 10); err != nil {
+		t.Fatalf("GenerateDueScoreSnapshots returned error: %v", err)
+	}
 
-	board, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1, ScoreboardViewFrozen)
+	board, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1, ScoreboardQuery{View: ScoreboardViewFrozen, PageSize: 100})
 	if err != nil {
 		t.Fatalf("Scoreboard returned error: %v", err)
 	}
@@ -260,25 +262,29 @@ func TestSubmissionResultVisibilitiesCachesContestAccessPerContest(t *testing.T)
 	}
 }
 
-func TestFinalScoreboardFallsBackToProblemResultsWhenSnapshotMissing(t *testing.T) {
+func TestFinalScoreboardUsesGeneratedSnapshot(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	repo := newMemoryRepository()
 	repo.contests[1] = ContestRecord{
-		ID:          1,
-		OwnerUserID: 10,
-		Title:       "Final",
-		Visibility:  VisibilityPublic,
-		Status:      StatusEnded,
-		StartAt:     start,
-		EndAt:       start.Add(time.Hour),
-		FreezeAt:    start.Add(30 * time.Minute),
+		ID:            1,
+		OwnerUserID:   10,
+		Title:         "Final",
+		Visibility:    VisibilityPublic,
+		Status:        StatusEnded,
+		StartAt:       start,
+		EndAt:         start.Add(time.Hour),
+		FreezeAt:      start.Add(30 * time.Minute),
+		ScoreRevision: 3,
 	}
 	repo.problems[1] = []ContestProblem{{ContestID: 1, ProblemID: 101, Alias: "A", SortOrder: 1}}
 	repo.registrations[1] = []ContestRegistration{{ID: 1, ContestID: 1, UserID: 20, DisplayName: "alice", Email: "alice@example.com", Status: RegistrationActive}}
 	repo.results[1] = []ContestProblemResult{{ContestID: 1, UserID: 20, ProblemID: 101, Status: CellAccepted, Attempts: 1, AcceptedAt: testTimePtr(start.Add(40 * time.Minute)), PenaltyMinutes: 40}}
 	service := newContestService(repo, func() time.Time { return start.Add(2 * time.Hour) })
+	if _, err := service.GenerateDueScoreSnapshots(context.Background(), 10); err != nil {
+		t.Fatalf("GenerateDueScoreSnapshots returned error: %v", err)
+	}
 
-	board, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1, ScoreboardViewFinal)
+	board, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1, ScoreboardQuery{View: ScoreboardViewFinal, PageSize: 100})
 	if err != nil {
 		t.Fatalf("Scoreboard returned error: %v", err)
 	}
@@ -297,14 +303,15 @@ func TestGenerateDueScoreSnapshotsCreatesFrozenAndFinalOnce(t *testing.T) {
 	now := end.Add(10 * time.Minute)
 	repo := newMemoryRepository()
 	repo.contests[1] = ContestRecord{
-		ID:          1,
-		OwnerUserID: 10,
-		Title:       "Snapshots",
-		Visibility:  VisibilityPublic,
-		Status:      StatusEnded,
-		StartAt:     start,
-		EndAt:       end,
-		FreezeAt:    freeze,
+		ID:            1,
+		OwnerUserID:   10,
+		Title:         "Snapshots",
+		Visibility:    VisibilityPublic,
+		Status:        StatusEnded,
+		StartAt:       start,
+		EndAt:         end,
+		FreezeAt:      freeze,
+		ScoreRevision: 3,
 	}
 	repo.problems[1] = []ContestProblem{{ContestID: 1, ProblemID: 101, Alias: "A", SortOrder: 1}}
 	repo.registrations[1] = []ContestRegistration{{ID: 1, ContestID: 1, UserID: 20, DisplayName: "alice", Email: "alice@example.com", Status: RegistrationActive}}
@@ -329,6 +336,9 @@ func TestGenerateDueScoreSnapshotsCreatesFrozenAndFinalOnce(t *testing.T) {
 	frozen, err := repo.LatestScoreSnapshot(context.Background(), 1, ScoreboardViewFrozen)
 	if err != nil {
 		t.Fatalf("missing frozen snapshot: %v", err)
+	}
+	if frozen.SourceRevision != 3 {
+		t.Fatalf("frozen source revision = %d, want 3", frozen.SourceRevision)
 	}
 	if frozen.Board.Rows[0].Cells[0].Status != CellFrozen || frozen.Board.Rows[0].Cells[0].FrozenAttempts != 1 {
 		t.Fatalf("frozen cell = %+v, want hidden attempt", frozen.Board.Rows[0].Cells[0])
@@ -366,14 +376,14 @@ func TestLiveScoreboardAfterFreezeRequiresOwnerOrAdmin(t *testing.T) {
 	repo.problems[1] = []ContestProblem{{ContestID: 1, ProblemID: 101, Alias: "A", SortOrder: 1}}
 	service := newContestService(repo, func() time.Time { return start.Add(90 * time.Minute) })
 
-	_, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1, ScoreboardViewLive)
+	_, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1, ScoreboardQuery{View: ScoreboardViewLive, PageSize: 100})
 	if codeOf(err) != "contest.scoreboard_hidden" {
 		t.Fatalf("user live error = %v, want contest.scoreboard_hidden", err)
 	}
-	if _, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, ScoreboardViewLive); err != nil {
+	if _, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, ScoreboardQuery{View: ScoreboardViewLive, PageSize: 100}); err != nil {
 		t.Fatalf("owner live returned error: %v", err)
 	}
-	if _, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1, ScoreboardViewLive); err != nil {
+	if _, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1, ScoreboardQuery{View: ScoreboardViewLive, PageSize: 100}); err != nil {
 		t.Fatalf("admin live returned error: %v", err)
 	}
 }

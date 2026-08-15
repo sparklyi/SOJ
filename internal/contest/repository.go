@@ -78,8 +78,16 @@ func (r *PostgresRepository) ListRegistrations(ctx context.Context, contestID in
 	return listRegistrations(ctx, r.queries, contestID)
 }
 
+func (r *PostgresRepository) ListScoreboardRegistrations(ctx context.Context, contestID int64, query scoreboardRowsQuery) ([]ContestRegistration, error) {
+	return listScoreboardRegistrations(ctx, r.queries, contestID, query)
+}
+
 func (r *PostgresRepository) ListProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error) {
 	return listProblemResults(ctx, r.queries, contestID)
+}
+
+func (r *PostgresRepository) ListProblemResultsForUsers(ctx context.Context, contestID int64, userIDs []int64) ([]ContestProblemResult, error) {
+	return listProblemResultsForUsers(ctx, r.queries, contestID, userIDs)
 }
 
 func (r *PostgresRepository) ListTerminalSubmissions(ctx context.Context, contestID int64) ([]ContestSubmissionResult, error) {
@@ -95,11 +103,21 @@ func (r *PostgresRepository) ListScoreSnapshotCandidates(ctx context.Context, no
 }
 
 func (r *PostgresRepository) CreateScoreSnapshot(ctx context.Context, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error) {
-	return createScoreSnapshot(ctx, r.queries, snapshot)
+	var created ScoreboardSnapshot
+	err := postgres.WithPoolTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var err error
+		created, err = createScoreSnapshot(ctx, r.queries.WithTx(tx), snapshot)
+		return err
+	})
+	return created, err
 }
 
 func (r *PostgresRepository) LatestScoreSnapshot(ctx context.Context, contestID int64, view ScoreboardView) (ScoreboardSnapshot, error) {
 	return latestScoreSnapshot(ctx, r.queries, contestID, view)
+}
+
+func (r *PostgresRepository) ScoreSnapshotPage(ctx context.Context, contestID int64, view ScoreboardView, afterOrdinal, limit int32) (scoreSnapshotPageResult, error) {
+	return loadScoreSnapshotPage(ctx, r.queries, contestID, view, afterOrdinal, limit)
 }
 
 type txRepository struct {
@@ -157,8 +175,16 @@ func (r *txRepository) ListRegistrations(ctx context.Context, contestID int64) (
 	return listRegistrations(ctx, r.queries, contestID)
 }
 
+func (r *txRepository) ListScoreboardRegistrations(ctx context.Context, contestID int64, query scoreboardRowsQuery) ([]ContestRegistration, error) {
+	return listScoreboardRegistrations(ctx, r.queries, contestID, query)
+}
+
 func (r *txRepository) ListProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error) {
 	return listProblemResults(ctx, r.queries, contestID)
+}
+
+func (r *txRepository) ListProblemResultsForUsers(ctx context.Context, contestID int64, userIDs []int64) ([]ContestProblemResult, error) {
+	return listProblemResultsForUsers(ctx, r.queries, contestID, userIDs)
 }
 
 func (r *txRepository) ListTerminalSubmissions(ctx context.Context, contestID int64) ([]ContestSubmissionResult, error) {
@@ -179,6 +205,10 @@ func (r *txRepository) CreateScoreSnapshot(ctx context.Context, snapshot Scorebo
 
 func (r *txRepository) LatestScoreSnapshot(ctx context.Context, contestID int64, view ScoreboardView) (ScoreboardSnapshot, error) {
 	return latestScoreSnapshot(ctx, r.queries, contestID, view)
+}
+
+func (r *txRepository) ScoreSnapshotPage(ctx context.Context, contestID int64, view ScoreboardView, afterOrdinal, limit int32) (scoreSnapshotPageResult, error) {
+	return loadScoreSnapshotPage(ctx, r.queries, contestID, view, afterOrdinal, limit)
 }
 
 func createContest(ctx context.Context, q *db.Queries, input ContestRecord) (ContestRecord, error) {
@@ -311,7 +341,37 @@ func createRegistration(ctx context.Context, q *db.Queries, input ContestRegistr
 }
 
 func listRegistrations(ctx context.Context, q *db.Queries, contestID int64) ([]ContestRegistration, error) {
-	rows, err := q.ListContestRegistrations(ctx, db.ListContestRegistrationsParams{ContestID: contestID, Limit: 100000, Offset: 0})
+	const pageSize int32 = 1000
+	out := make([]ContestRegistration, 0, pageSize)
+	for offset := int32(0); ; offset += pageSize {
+		rows, err := q.ListContestRegistrations(ctx, db.ListContestRegistrationsParams{
+			ContestID: contestID,
+			Limit:     pageSize,
+			Offset:    offset,
+		})
+		if err != nil {
+			return nil, mapDBErr(err)
+		}
+		for _, row := range rows {
+			out = append(out, registrationFromDB(row))
+		}
+		if len(rows) < int(pageSize) {
+			break
+		}
+	}
+	return out, nil
+}
+
+func listScoreboardRegistrations(ctx context.Context, q *db.Queries, contestID int64, query scoreboardRowsQuery) ([]ContestRegistration, error) {
+	rows, err := q.ListScoreboardRegistrations(ctx, db.ListScoreboardRegistrationsParams{
+		ContestID:           contestID,
+		HasCursor:           query.HasCursor,
+		AfterAcceptedCount:  query.AfterAcceptedCount,
+		AfterPenaltyMinutes: query.AfterPenalty,
+		AfterDisplayName:    query.AfterDisplayName,
+		AfterUserID:         query.AfterUserID,
+		Limit:               query.PageSize,
+	})
 	if err != nil {
 		return nil, mapDBErr(err)
 	}
@@ -334,6 +394,21 @@ func listProblemResults(ctx context.Context, q *db.Queries, contestID int64) ([]
 	return out, nil
 }
 
+func listProblemResultsForUsers(ctx context.Context, q *db.Queries, contestID int64, userIDs []int64) ([]ContestProblemResult, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := q.ListContestProblemResultsForUsers(ctx, db.ListContestProblemResultsForUsersParams{ContestID: contestID, UserIds: userIDs})
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	out := make([]ContestProblemResult, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, resultFromDB(row))
+	}
+	return out, nil
+}
+
 func listTerminalSubmissions(ctx context.Context, q *db.Queries, contestID int64) ([]ContestSubmissionResult, error) {
 	rows, err := q.ListContestTerminalSubmissions(ctx, contestID)
 	if err != nil {
@@ -342,13 +417,14 @@ func listTerminalSubmissions(ctx context.Context, q *db.Queries, contestID int64
 	out := make([]ContestSubmissionResult, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, ContestSubmissionResult{
-			ID:          row.ID,
-			ContestID:   row.ContestID.Int64,
-			UserID:      row.UserID,
-			ProblemID:   row.ProblemID,
-			Status:      row.Status,
-			SubmittedAt: row.SubmittedAt.Time,
-			JudgedAt:    row.JudgedAt.Time,
+			ID:            row.ID,
+			ContestID:     row.ContestID.Int64,
+			UserID:        row.UserID,
+			ProblemID:     row.ProblemID,
+			Status:        row.Status,
+			SubmittedAt:   row.SubmittedAt.Time,
+			JudgedAt:      row.JudgedAt.Time,
+			FirstJudgedAt: timeFromDB(row.FirstJudgedAt),
 		})
 	}
 	return out, nil
@@ -390,22 +466,61 @@ func listScoreSnapshotCandidates(ctx context.Context, q *db.Queries, now time.Ti
 }
 
 func createScoreSnapshot(ctx context.Context, q *db.Queries, snapshot ScoreboardSnapshot) (ScoreboardSnapshot, error) {
-	payload, err := json.Marshal(snapshot.Board)
+	problems := snapshot.Problems
+	rows := snapshot.Rows
+	problemPayload, err := json.Marshal(problems)
 	if err != nil {
 		return ScoreboardSnapshot{}, err
 	}
 	row, err := q.CreateContestScoreSnapshot(ctx, db.CreateContestScoreSnapshotParams{
-		ContestID: snapshot.ContestID,
-		Kind:      string(snapshot.View),
-		Payload:   payload,
+		ContestID:      snapshot.ContestID,
+		Kind:           string(snapshot.View),
+		Problems:       problemPayload,
+		SourceRevision: snapshot.SourceRevision,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing, lookupErr := q.GetContestScoreSnapshotByKey(ctx, db.GetContestScoreSnapshotByKeyParams{
+			ContestID: snapshot.ContestID, Kind: string(snapshot.View), SourceRevision: snapshot.SourceRevision,
+		})
+		if lookupErr != nil {
+			return ScoreboardSnapshot{}, mapDBErr(lookupErr)
+		}
+		result, loadErr := loadScoreSnapshot(ctx, q, existing)
+		if loadErr != nil {
+			return ScoreboardSnapshot{}, loadErr
+		}
+		result.Created = false
+		return result, nil
+	}
 	if err != nil {
 		return ScoreboardSnapshot{}, mapDBErr(err)
 	}
 	snapshot.ID = row.ID
 	snapshot.ContestID = row.ContestID
 	snapshot.View = ScoreboardView(row.Kind)
+	snapshot.Problems = problems
+	snapshot.Rows = rows
+	snapshot.SourceRevision = row.SourceRevision
 	snapshot.GeneratedAt = row.GeneratedAt.Time
+	snapshot.Created = true
+	for i, boardRow := range rows {
+		cells, err := json.Marshal(boardRow.Cells)
+		if err != nil {
+			return ScoreboardSnapshot{}, err
+		}
+		if _, err := q.CreateContestScoreSnapshotRow(ctx, db.CreateContestScoreSnapshotRowParams{
+			SnapshotID:     row.ID,
+			Ordinal:        int32(i + 1),
+			Rank:           boardRow.Rank,
+			UserID:         boardRow.UserID,
+			DisplayName:    boardRow.DisplayName,
+			AcceptedCount:  boardRow.AcceptedCount,
+			PenaltyMinutes: boardRow.PenaltyMinutes,
+			Cells:          cells,
+		}); err != nil {
+			return ScoreboardSnapshot{}, err
+		}
+	}
 	return snapshot, nil
 }
 
@@ -414,11 +529,60 @@ func latestScoreSnapshot(ctx context.Context, q *db.Queries, contestID int64, vi
 	if err != nil {
 		return ScoreboardSnapshot{}, mapDBErr(err)
 	}
-	var board ScoreboardResponse
-	if err := json.Unmarshal(row.Payload, &board); err != nil {
+	return loadScoreSnapshot(ctx, q, row)
+}
+
+func loadScoreSnapshot(ctx context.Context, q *db.Queries, row db.ContestScoreSnapshot) (ScoreboardSnapshot, error) {
+	var problems []ContestProblem
+	if err := json.Unmarshal(row.Problems, &problems); err != nil {
 		return ScoreboardSnapshot{}, err
 	}
-	return ScoreboardSnapshot{ID: row.ID, ContestID: row.ContestID, View: ScoreboardView(row.Kind), Board: board, GeneratedAt: row.GeneratedAt.Time}, nil
+	rows, err := q.ListContestScoreSnapshotRows(ctx, db.ListContestScoreSnapshotRowsParams{SnapshotID: row.ID, Limit: 1 << 30})
+	if err != nil {
+		return ScoreboardSnapshot{}, err
+	}
+	boardRows, err := snapshotRowsFromDB(rows)
+	if err != nil {
+		return ScoreboardSnapshot{}, err
+	}
+	board := ScoreboardResponse{ContestID: row.ContestID, View: ScoreboardView(row.Kind), GeneratedAt: row.GeneratedAt.Time, Problems: problems, Rows: boardRows}
+	return ScoreboardSnapshot{ID: row.ID, ContestID: row.ContestID, View: ScoreboardView(row.Kind), Board: board, Problems: problems, Rows: boardRows, SourceRevision: row.SourceRevision, GeneratedAt: row.GeneratedAt.Time}, nil
+}
+
+func loadScoreSnapshotPage(ctx context.Context, q *db.Queries, contestID int64, view ScoreboardView, afterOrdinal, limit int32) (scoreSnapshotPageResult, error) {
+	header, err := q.GetLatestContestScoreSnapshot(ctx, db.GetLatestContestScoreSnapshotParams{ContestID: contestID, Kind: string(view)})
+	if err != nil {
+		return scoreSnapshotPageResult{}, mapDBErr(err)
+	}
+	var problems []ContestProblem
+	if err := json.Unmarshal(header.Problems, &problems); err != nil {
+		return scoreSnapshotPageResult{}, err
+	}
+	rows, err := q.ListContestScoreSnapshotRows(ctx, db.ListContestScoreSnapshotRowsParams{SnapshotID: header.ID, AfterOrdinal: afterOrdinal, Limit: limit})
+	if err != nil {
+		return scoreSnapshotPageResult{}, mapDBErr(err)
+	}
+	boardRows, err := snapshotRowsFromDB(rows)
+	if err != nil {
+		return scoreSnapshotPageResult{}, err
+	}
+	return scoreSnapshotPageResult{
+		Snapshot: ScoreboardSnapshot{ID: header.ID, ContestID: header.ContestID, View: ScoreboardView(header.Kind), Problems: problems, Rows: boardRows, SourceRevision: header.SourceRevision, GeneratedAt: header.GeneratedAt.Time},
+		Rows:     boardRows,
+		HasMore:  len(boardRows) == int(limit),
+	}, nil
+}
+
+func snapshotRowsFromDB(rows []db.ContestScoreSnapshotRow) ([]ScoreboardRow, error) {
+	out := make([]ScoreboardRow, 0, len(rows))
+	for _, row := range rows {
+		var cells []ScoreboardCell
+		if err := json.Unmarshal(row.Cells, &cells); err != nil {
+			return nil, err
+		}
+		out = append(out, ScoreboardRow{Rank: row.Rank, UserID: row.UserID, DisplayName: row.DisplayName, AcceptedCount: row.AcceptedCount, PenaltyMinutes: row.PenaltyMinutes, Cells: cells})
+	}
+	return out, nil
 }
 
 func contestFromSnapshotCandidateDB(row db.ListContestScoreSnapshotCandidatesRow) ContestRecord {
@@ -433,6 +597,7 @@ func contestFromSnapshotCandidateDB(row db.ListContestScoreSnapshotCandidatesRow
 		EndAt:          row.EndAt.Time,
 		FreezeAt:       row.FreezeAt.Time,
 		InviteCodeHash: row.InviteCodeHash.String,
+		ScoreRevision:  row.ScoreRevision,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
 	}
@@ -450,6 +615,7 @@ func contestFromDB(row db.Contest) ContestRecord {
 		EndAt:          row.EndAt.Time,
 		FreezeAt:       row.FreezeAt.Time,
 		InviteCodeHash: row.InviteCodeHash.String,
+		ScoreRevision:  row.ScoreRevision,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
 	}
@@ -457,13 +623,15 @@ func contestFromDB(row db.Contest) ContestRecord {
 
 func registrationFromDB(row db.ContestRegistration) ContestRegistration {
 	return ContestRegistration{
-		ID:           row.ID,
-		ContestID:    row.ContestID,
-		UserID:       row.UserID,
-		DisplayName:  row.DisplayName,
-		Email:        row.Email,
-		Status:       row.Status,
-		RegisteredAt: row.RegisteredAt.Time,
+		ID:             row.ID,
+		ContestID:      row.ContestID,
+		UserID:         row.UserID,
+		DisplayName:    row.DisplayName,
+		Email:          row.Email,
+		Status:         row.Status,
+		RegisteredAt:   row.RegisteredAt.Time,
+		AcceptedCount:  row.AcceptedCount,
+		PenaltyMinutes: row.PenaltyMinutes,
 	}
 }
 

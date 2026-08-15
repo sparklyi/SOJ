@@ -17,6 +17,11 @@ func TestTerminalStatusUpdatesAreGuardedInSQL(t *testing.T) {
 			t.Fatalf("%s missing terminal guard:\n%s", name, query)
 		}
 	}
+	for _, want := range []string{"first_judged_at", "coalesce($", "judged_at"} {
+		if !strings.Contains(updateSubmissionStatus, want) {
+			t.Fatalf("UpdateSubmissionStatus missing %q:\n%s", want, updateSubmissionStatus)
+		}
+	}
 }
 
 func TestResetStaleJudgeTasksSQLResetsTasksAndSubmissions(t *testing.T) {
@@ -49,6 +54,12 @@ func TestRecoverDeadJudgeTaskSQLQueuesOnlyDeadSystemErrorTasks(t *testing.T) {
 		if !strings.Contains(recoverDeadJudgeTask, want) {
 			t.Fatalf("RecoverDeadJudgeTask missing %q:\n%s", want, recoverDeadJudgeTask)
 		}
+	}
+}
+
+func TestLockJudgeTaskByIDSerializesTaskTransitions(t *testing.T) {
+	if !strings.Contains(lockJudgeTaskByID, "FROM judge_tasks") || !strings.Contains(lockJudgeTaskByID, "FOR UPDATE") {
+		t.Fatalf("LockJudgeTaskByID must lock the task row:\n%s", lockJudgeTaskByID)
 	}
 }
 
@@ -165,6 +176,9 @@ func TestContestProjectionQueriesSerializeAndRebuildFromCurrentResults(t *testin
 	if !strings.Contains(lockContestProblemResultProjection, "FOR UPDATE") {
 		t.Fatalf("LockContestProblemResultProjection must serialize projection rebuilds:\n%s", lockContestProblemResultProjection)
 	}
+	if !strings.Contains(lockContestRegistration, "FOR UPDATE") || !strings.Contains(updateContestRegistrationScore, "accepted_count") || !strings.Contains(incrementContestScoreRevision, "score_revision = score_revision + 1") {
+		t.Fatalf("contest projection queries must serialize and advance contest revision")
+	}
 	for _, want := range []string{
 		"LEFT JOIN submission_results sr ON sr.submission_id = s.id",
 		"s.status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')",
@@ -173,6 +187,15 @@ func TestContestProjectionQueriesSerializeAndRebuildFromCurrentResults(t *testin
 		if !strings.Contains(listContestProblemSubmissionsForProjection, want) {
 			t.Fatalf("ListContestProblemSubmissionsForProjection missing %q:\n%s", want, listContestProblemSubmissionsForProjection)
 		}
+	}
+}
+
+func TestTerminalTransitionsLockSubmissionBeforeProjection(t *testing.T) {
+	if !strings.Contains(lockSubmissionByID, "FOR UPDATE") {
+		t.Fatalf("LockSubmissionByID must serialize terminal transitions:\n%s", lockSubmissionByID)
+	}
+	if !strings.Contains(lockJudgeAttemptByID, "FOR UPDATE") {
+		t.Fatalf("LockJudgeAttemptByID must make duplicate result events idempotent:\n%s", lockJudgeAttemptByID)
 	}
 }
 
@@ -353,7 +376,7 @@ func TestRejudgeItemQueriesGuardSelectionAndTransitions(t *testing.T) {
 	}
 }
 
-func TestFinalScoreSnapshotCandidatesRefreshAfterCompletedRejudge(t *testing.T) {
+func TestFinalScoreSnapshotCandidatesRefreshAfterProjectionRevision(t *testing.T) {
 	queries, err := os.ReadFile(filepath.Join("..", "queries", "contests.sql"))
 	if err != nil {
 		t.Fatalf("read contest queries: %v", err)
@@ -361,11 +384,25 @@ func TestFinalScoreSnapshotCandidatesRefreshAfterCompletedRejudge(t *testing.T) 
 	source := string(queries)
 	for _, want := range []string{
 		"FROM rejudge_batches rb",
-		"rb.status = 'completed'",
-		"rb.finished_at > coalesce(max(css.generated_at)",
+		"c.score_revision > coalesce((",
+		"max(css.source_revision)",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("score snapshot candidate query missing %q", want)
+		}
+	}
+}
+
+func TestScoreSnapshotSchemaUsesVersionedUniqueGenerationKey(t *testing.T) {
+	schema := readInitialSchema(t)
+	for _, want := range []string{
+		"score_revision bigint NOT NULL DEFAULT 0",
+		"source_revision bigint NOT NULL DEFAULT 0",
+		"CREATE UNIQUE INDEX contest_score_snapshots_contest_kind_revision_uidx",
+		"ON contest_score_snapshots (contest_id, kind, source_revision)",
+	} {
+		if !strings.Contains(schema, want) {
+			t.Fatalf("score snapshot schema missing %q", want)
 		}
 	}
 }

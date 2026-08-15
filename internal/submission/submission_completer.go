@@ -2,7 +2,6 @@ package submission
 
 import (
 	"context"
-	"time"
 
 	"SOJ/internal/judge"
 )
@@ -14,40 +13,17 @@ type submissionCompletionStore interface {
 
 // SubmissionCompleter applies a terminal judge result exactly once.
 type SubmissionCompleter struct {
-	store        submissionCompletionStore
-	terminalHook TerminalHook
-	now          func() time.Time
+	store submissionCompletionStore
 }
 
-func NewSubmissionCompleter(store submissionCompletionStore, terminalHook TerminalHook, now func() time.Time) *SubmissionCompleter {
-	if now == nil {
-		now = func() time.Time { return time.Now().UTC() }
-	}
-	return &SubmissionCompleter{store: store, terminalHook: terminalHook, now: now}
+func NewSubmissionCompleter(store submissionCompletionStore) *SubmissionCompleter {
+	return &SubmissionCompleter{store: store}
 }
 
 func (s *SubmissionCompleter) CompleteSubmission(ctx context.Context, submissionID int64, result judge.Result) (SubmissionRecord, error) {
-	updated, completed, err := completeSubmission(ctx, s.store, submissionID, result)
+	updated, _, err := completeSubmission(ctx, s.store, submissionID, result)
 	if err != nil {
 		return SubmissionRecord{}, err
-	}
-	if !completed || s.terminalHook == nil {
-		return updated, nil
-	}
-	judgedAt := result.JudgedAt
-	if judgedAt.IsZero() {
-		judgedAt = s.now()
-	}
-	if err := s.terminalHook.AfterSubmissionTerminal(ctx, TerminalSubmission{
-		SubmissionID: updated.ID,
-		UserID:       updated.UserID,
-		ProblemID:    updated.ProblemID,
-		ContestID:    updated.ContestID,
-		Status:       updated.Status,
-		SubmittedAt:  updated.SubmittedAt,
-		JudgedAt:     judgedAt,
-	}); err != nil {
-		return updated, err
 	}
 	return updated, nil
 }

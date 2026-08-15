@@ -17,6 +17,7 @@ type ScoreboardResponse struct {
 	GeneratedAt time.Time        `json:"generated_at"`
 	Problems    []ContestProblem `json:"problems"`
 	Rows        []ScoreboardRow  `json:"rows"`
+	NextCursor  *string          `json:"next_cursor,omitempty"`
 }
 
 type ScoreboardRow struct {
@@ -41,10 +42,13 @@ type ScoreboardCell struct {
 
 type scoreboardStore interface {
 	ListProblemResults(context.Context, int64) ([]ContestProblemResult, error)
+	ListScoreboardRegistrations(context.Context, int64, scoreboardRowsQuery) ([]ContestRegistration, error)
+	ListProblemResultsForUsers(context.Context, int64, []int64) ([]ContestProblemResult, error)
 	ListTerminalSubmissions(context.Context, int64) ([]ContestSubmissionResult, error)
 	ListScoreSnapshotCandidates(context.Context, time.Time, int32) ([]ScoreSnapshotCandidate, error)
 	CreateScoreSnapshot(context.Context, ScoreboardSnapshot) (ScoreboardSnapshot, error)
 	LatestScoreSnapshot(context.Context, int64, ScoreboardView) (ScoreboardSnapshot, error)
+	ScoreSnapshotPage(context.Context, int64, ScoreboardView, int32, int32) (scoreSnapshotPageResult, error)
 }
 
 // ScoreboardService owns scoreboard reads and snapshot generation.
@@ -65,7 +69,7 @@ func NewScoreboardService(reader *ContestReader, store scoreboardStore) *Scorebo
 }
 
 // Scoreboard returns the requested contest scoreboard view.
-func (s *ScoreboardService) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, requested ScoreboardView) (ScoreboardResponse, error) {
+func (s *ScoreboardService) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, query ScoreboardQuery) (ScoreboardResponse, error) {
 	contest, err := s.reader.getContest(ctx, contestID)
 	if err != nil {
 		return ScoreboardResponse{}, err
@@ -73,21 +77,178 @@ func (s *ScoreboardService) Scoreboard(ctx context.Context, actor auth.Actor, co
 	if err := s.reader.canReadContest(ctx, actor, contest); err != nil {
 		return ScoreboardResponse{}, err
 	}
-	view := s.defaultScoreboardView(contest, requested)
+	view := s.defaultScoreboardView(contest, query.View)
 	if err := s.canViewScoreboard(actor, contest, view); err != nil {
 		return ScoreboardResponse{}, err
 	}
+	pageSize, err := normalizeScoreboardPageSize(query.PageSize)
+	if err != nil {
+		return ScoreboardResponse{}, err
+	}
+	cursor, err := decodeScoreboardCursor(query.Cursor)
+	if err != nil {
+		return ScoreboardResponse{}, err
+	}
+	if err := validateScoreboardCursor(cursor, contestID, view); err != nil {
+		return ScoreboardResponse{}, err
+	}
 	if view == ScoreboardViewFinal || view == ScoreboardViewFrozen {
-		snapshot, err := s.store.LatestScoreSnapshot(ctx, contestID, view)
-		if err == nil {
-			return snapshot.Board, nil
-		}
-		var appErr *apperror.Error
-		if !errors.As(err, &appErr) || appErr.HTTPStatus != 404 {
+		return s.scoreSnapshotPage(ctx, contest, view, pageSize, cursor)
+	}
+	return s.liveScoreboardPage(ctx, contest, view, pageSize, cursor)
+}
+
+func (s *ScoreboardService) liveScoreboardPage(ctx context.Context, contest ContestRecord, view ScoreboardView, pageSize int32, cursor scoreboardCursor) (ScoreboardResponse, error) {
+	problems, err := s.reader.listContestProblems(ctx, contest.ID)
+	if err != nil {
+		return ScoreboardResponse{}, err
+	}
+	registrations, err := s.store.ListScoreboardRegistrations(ctx, contest.ID, scoreboardRowsQuery{
+		PageSize:           pageSize + 1,
+		HasCursor:          cursor.ContestID != 0,
+		AfterAcceptedCount: cursor.AfterAcceptedCount,
+		AfterPenalty:       cursor.AfterPenalty,
+		AfterDisplayName:   cursor.AfterDisplayName,
+		AfterUserID:        cursor.AfterUserID,
+	})
+	if err != nil {
+		return ScoreboardResponse{}, err
+	}
+	hasMore := len(registrations) > int(pageSize)
+	if hasMore {
+		registrations = registrations[:pageSize]
+	}
+	rows := rowsForScoreboardRegistrations(problems, registrations)
+	if err := s.populateRowsWithResults(ctx, contest.ID, rows); err != nil {
+		return ScoreboardResponse{}, err
+	}
+	applyPageRanks(rows, cursor)
+	response := ScoreboardResponse{ContestID: contest.ID, View: view, GeneratedAt: s.reader.now().UTC(), Problems: problems, Rows: rows}
+	if hasMore && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		lastRegistration := registrations[len(registrations)-1]
+		next, err := encodeScoreboardCursor(scoreboardCursor{
+			ContestID:          contest.ID,
+			View:               view,
+			AfterAcceptedCount: last.AcceptedCount,
+			AfterPenalty:       last.PenaltyMinutes,
+			AfterDisplayName:   last.DisplayName,
+			AfterUserID:        lastRegistration.UserID,
+			RowsSeen:           cursor.RowsSeen + int32(len(rows)),
+			LastRank:           last.Rank,
+		})
+		if err != nil {
 			return ScoreboardResponse{}, err
 		}
+		response.NextCursor = &next
 	}
-	return s.buildScoreboard(ctx, contest, view, s.reader.now())
+	return response, nil
+}
+
+func (s *ScoreboardService) scoreSnapshotPage(ctx context.Context, contest ContestRecord, view ScoreboardView, pageSize int32, cursor scoreboardCursor) (ScoreboardResponse, error) {
+	afterOrdinal := int32(0)
+	if cursor.SnapshotID != 0 {
+		afterOrdinal = cursor.AfterOrdinal
+	}
+	page, err := s.store.ScoreSnapshotPage(ctx, contest.ID, view, afterOrdinal, pageSize+1)
+	if err != nil {
+		var appErr *apperror.Error
+		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
+			return ScoreboardResponse{}, apperror.New("contest.scoreboard_not_ready", "scoreboard snapshot is not ready", 503)
+		}
+		return ScoreboardResponse{}, err
+	}
+	if cursor.SnapshotID != 0 && cursor.SnapshotID != page.Snapshot.ID {
+		return ScoreboardResponse{}, apperror.BadRequest("invalid_cursor", "scoreboard snapshot cursor is stale")
+	}
+	rows := page.Rows
+	hasMore := len(rows) > int(pageSize)
+	if hasMore {
+		rows = rows[:pageSize]
+	}
+	response := ScoreboardResponse{ContestID: contest.ID, View: view, GeneratedAt: page.Snapshot.GeneratedAt.UTC(), Problems: page.Snapshot.Problems, Rows: rows}
+	if hasMore && len(rows) > 0 {
+		next, err := encodeScoreboardCursor(scoreboardCursor{ContestID: contest.ID, View: view, SnapshotID: page.Snapshot.ID, AfterOrdinal: int32(len(rows)) + afterOrdinal})
+		if err != nil {
+			return ScoreboardResponse{}, err
+		}
+		response.NextCursor = &next
+	}
+	return response, nil
+}
+
+func (s *ScoreboardService) populateRowsWithResults(ctx context.Context, contestID int64, rows []ScoreboardRow) error {
+	userIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		userIDs = append(userIDs, row.UserID)
+	}
+	if len(userIDs) == 0 {
+		return nil
+	}
+	results, err := s.store.ListProblemResultsForUsers(ctx, contestID, userIDs)
+	if err != nil {
+		return err
+	}
+	byUserProblem := make(map[int64]map[int64]ContestProblemResult, len(userIDs))
+	for _, result := range results {
+		if byUserProblem[result.UserID] == nil {
+			byUserProblem[result.UserID] = make(map[int64]ContestProblemResult)
+		}
+		byUserProblem[result.UserID][result.ProblemID] = result
+	}
+	for i := range rows {
+		for j := range rows[i].Cells {
+			result, ok := byUserProblem[rows[i].UserID][rows[i].Cells[j].ProblemID]
+			if !ok {
+				continue
+			}
+			applyResultToCell(&rows[i].Cells[j], result)
+		}
+	}
+	return nil
+}
+
+func applyResultToCell(cell *ScoreboardCell, result ContestProblemResult) {
+	cell.Status = result.Status
+	cell.Attempts = result.Attempts
+	if result.Status == CellAccepted && cell.Attempts > 0 {
+		cell.Attempts--
+	}
+	cell.AcceptedAt = result.AcceptedAt
+	cell.PenaltyMinutes = result.PenaltyMinutes
+	cell.LastSubmissionID = result.LastSubmissionID
+}
+
+func rowsForScoreboardRegistrations(problems []ContestProblem, registrations []ContestRegistration) []ScoreboardRow {
+	rows := make([]ScoreboardRow, 0, len(registrations))
+	for _, registration := range registrations {
+		cells := make([]ScoreboardCell, 0, len(problems))
+		for _, problem := range problems {
+			cells = append(cells, ScoreboardCell{ProblemID: problem.ProblemID, Alias: problem.Alias, Status: CellNone})
+		}
+		rows = append(rows, ScoreboardRow{
+			UserID:         registration.UserID,
+			DisplayName:    registration.DisplayName,
+			AcceptedCount:  registration.AcceptedCount,
+			PenaltyMinutes: registration.PenaltyMinutes,
+			Cells:          cells,
+		})
+	}
+	return rows
+}
+
+func applyPageRanks(rows []ScoreboardRow, cursor scoreboardCursor) {
+	for i := range rows {
+		if i == 0 && cursor.ContestID != 0 && rows[i].AcceptedCount == cursor.AfterAcceptedCount && rows[i].PenaltyMinutes == cursor.AfterPenalty {
+			rows[i].Rank = cursor.LastRank
+			continue
+		}
+		if i > 0 && rows[i].AcceptedCount == rows[i-1].AcceptedCount && rows[i].PenaltyMinutes == rows[i-1].PenaltyMinutes {
+			rows[i].Rank = rows[i-1].Rank
+			continue
+		}
+		rows[i].Rank = cursor.RowsSeen + int32(i) + 1
+	}
 }
 
 // GenerateDueScoreSnapshots builds missing frozen and final snapshots.
@@ -105,17 +266,24 @@ func (s *ScoreboardService) GenerateDueScoreSnapshots(ctx context.Context, limit
 			continue
 		}
 		generatedAt := s.reader.now()
-		board, err := s.buildScoreboard(ctx, candidate.Contest, candidate.View, generatedAt)
+		board, sourceRevision, err := s.buildScoreboard(ctx, candidate.Contest, candidate.View, generatedAt)
 		if err != nil {
 			return result, err
 		}
-		if _, err := s.store.CreateScoreSnapshot(ctx, ScoreboardSnapshot{
-			ContestID:   candidate.Contest.ID,
-			View:        candidate.View,
-			Board:       board,
-			GeneratedAt: generatedAt,
-		}); err != nil {
+		created, err := s.store.CreateScoreSnapshot(ctx, ScoreboardSnapshot{
+			ContestID:      candidate.Contest.ID,
+			View:           candidate.View,
+			Board:          board,
+			Problems:       board.Problems,
+			Rows:           board.Rows,
+			SourceRevision: sourceRevision,
+			GeneratedAt:    generatedAt,
+		})
+		if err != nil {
 			return result, err
+		}
+		if !created.Created {
+			continue
 		}
 		switch candidate.View {
 		case ScoreboardViewFrozen:
@@ -127,29 +295,30 @@ func (s *ScoreboardService) GenerateDueScoreSnapshots(ctx context.Context, limit
 	return result, nil
 }
 
-func (s *ScoreboardService) buildScoreboard(ctx context.Context, contest ContestRecord, view ScoreboardView, generatedAt time.Time) (ScoreboardResponse, error) {
+func (s *ScoreboardService) buildScoreboard(ctx context.Context, contest ContestRecord, view ScoreboardView, generatedAt time.Time) (ScoreboardResponse, int64, error) {
 	problems, err := s.reader.listContestProblems(ctx, contest.ID)
 	if err != nil {
-		return ScoreboardResponse{}, err
+		return ScoreboardResponse{}, 0, err
 	}
 	registrations, err := s.reader.listRegistrations(ctx, contest.ID)
 	if err != nil {
-		return ScoreboardResponse{}, err
+		return ScoreboardResponse{}, 0, err
 	}
+	sourceRevision := contest.ScoreRevision
 	if view == ScoreboardViewFrozen {
 		submissions, err := s.store.ListTerminalSubmissions(ctx, contest.ID)
 		if err != nil {
-			return ScoreboardResponse{}, err
+			return ScoreboardResponse{}, 0, err
 		}
 		if len(submissions) > 0 {
-			return buildBoardFromSubmissions(contest, view, problems, registrations, submissions, generatedAt), nil
+			return buildBoardFromSubmissions(contest, view, problems, registrations, submissions, generatedAt), sourceRevision, nil
 		}
 	}
 	results, err := s.store.ListProblemResults(ctx, contest.ID)
 	if err != nil {
-		return ScoreboardResponse{}, err
+		return ScoreboardResponse{}, 0, err
 	}
-	return buildBoardFromResults(contest, view, problems, registrations, results, generatedAt), nil
+	return buildBoardFromResults(contest, view, problems, registrations, results, generatedAt), sourceRevision, nil
 }
 
 func (s *ScoreboardService) defaultScoreboardView(contest ContestRecord, requested ScoreboardView) ScoreboardView {
@@ -263,7 +432,11 @@ func buildBoardFromSubmissions(
 			state = &submissionCellState{}
 			states[sub.UserID][sub.ProblemID] = state
 		}
-		visible := sub.SubmittedAt.Before(contest.FreezeAt) && !sub.JudgedAt.After(contest.FreezeAt)
+		judgedAt := sub.JudgedAt
+		if sub.FirstJudgedAt != nil {
+			judgedAt = *sub.FirstJudgedAt
+		}
+		visible := sub.SubmittedAt.Before(contest.FreezeAt) && !judgedAt.After(contest.FreezeAt)
 		if view != ScoreboardViewFrozen || visible {
 			applyVisibleSubmission(contest, state, sub)
 			continue
