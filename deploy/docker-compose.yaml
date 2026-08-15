@@ -63,6 +63,7 @@ services:
     image: postgres:16-alpine
     environment:
       PGPASSWORD: soj
+      SOJ_SEED_FAKE_LANGUAGE: ${SOJ_SEED_FAKE_LANGUAGE:-true}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -70,28 +71,31 @@ services:
       - /bin/sh
       - -c
       - |
-        psql -h postgres -U soj -d soj -v ON_ERROR_STOP=1 <<'SQL'
-        INSERT INTO languages (
-          engine,
-          engine_language_id,
-          name,
-          default_time_limit_ms,
-          default_memory_limit_kb,
-          enabled
-        ) VALUES (
-          'fake',
-          'accepted',
-          'Fake Accepted',
-          1000,
-          65536,
-          true
-        )
-        ON CONFLICT (engine, engine_language_id) DO UPDATE
-        SET enabled = true,
-            default_time_limit_ms = EXCLUDED.default_time_limit_ms,
-            default_memory_limit_kb = EXCLUDED.default_memory_limit_kb,
-            updated_at = now();
+        if [ "${SOJ_SEED_FAKE_LANGUAGE:-true}" = "true" ]; then
+          psql -h postgres -U soj -d soj -v ON_ERROR_STOP=1 -c "
+            INSERT INTO languages (
+              engine,
+              engine_language_id,
+              name,
+              default_time_limit_ms,
+              default_memory_limit_kb,
+              enabled
+            ) VALUES (
+              'fake',
+              'accepted',
+              'Fake Accepted',
+              1000,
+              65536,
+              true
+            )
+            ON CONFLICT (engine, engine_language_id) DO UPDATE
+            SET enabled = true,
+                default_time_limit_ms = EXCLUDED.default_time_limit_ms,
+                default_memory_limit_kb = EXCLUDED.default_memory_limit_kb,
+                updated_at = now();"
+        fi
 
+        psql -h postgres -U soj -d soj -v ON_ERROR_STOP=1 <<'SQL'
         INSERT INTO languages (
           id,
           engine,
