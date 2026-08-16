@@ -177,6 +177,46 @@ func (h *Handler) scoreboard(c *gin.Context) {
 	httpapi.OK(c, board)
 }
 
+func (h *Handler) grantRole(c *gin.Context) {
+	id, ok := contestIDParam(c)
+	if !ok {
+		return
+	}
+	var req ContestRoleGrantInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "invalid request body"))
+		return
+	}
+	assignment, err := h.service.GrantContestRole(c.Request.Context(), actorFromContext(c), id, req)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, assignment)
+}
+
+func (h *Handler) revokeRole(c *gin.Context) {
+	id, ok := contestIDParam(c)
+	if !ok {
+		return
+	}
+	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
+	if err != nil || userID <= 0 {
+		httpapi.Error(c, apperror.BadRequest("contest.role_target_invalid", "contest role target is invalid"))
+		return
+	}
+	var req ContestRoleRevokeInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "invalid request body"))
+		return
+	}
+	if err := h.service.RevokeContestRole(c.Request.Context(), actorFromContext(c), id, userID, c.Param("role"), req); err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.NoContent(c)
+}
+
 func contestIDParam(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {

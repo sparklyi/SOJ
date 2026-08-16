@@ -86,12 +86,14 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		problemReview,
 	)
 	contestRepo := contest.NewPostgresRepository(pool)
-	contestReader := contest.NewContestReader(contestRepo, time.Now)
+	contestRoleStore := contest.NewPostgresContestRoleStore(pool)
+	contestReader := contest.NewContestReader(contestRepo, time.Now, contestRoleStore)
 	contestService := contest.NewService(
 		contestReader,
 		contest.NewContestAuthoring(contestRepo, contestReader),
 		contest.NewContestPolicy(contestReader, contestRepo),
 		contest.NewScoreboardService(contestReader, contestRepo),
+		contestRoleStore,
 	)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
 	judgeEngine := newJudgeEngine(cfg.Judge)

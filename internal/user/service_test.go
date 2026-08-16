@@ -247,6 +247,17 @@ func TestServiceGrantRoleRequiresRootAndWritesAssignment(t *testing.T) {
 	if assignment.UserID != 42 || assignment.Role != auth.RoleAuthor {
 		t.Fatalf("assignment = %+v, want user 42 author", assignment)
 	}
+	if _, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}}, 42, GrantRoleInput{Role: "contest_manager", Reason: "contest scope only"}); codeOfUserError(err) != "role.invalid_role" {
+		t.Fatalf("contest role grant error = %v, want role.invalid_role", err)
+	}
+}
+
+func codeOfUserError(err error) string {
+	appErr, ok := apperror.From(err)
+	if !ok {
+		return ""
+	}
+	return appErr.Code
 }
 
 func TestServiceRevokeRoleProtectsBaseUserRole(t *testing.T) {

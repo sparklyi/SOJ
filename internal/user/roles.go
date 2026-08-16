@@ -87,6 +87,9 @@ func (r *PostgresRoleRepository) ListUserRoles(ctx context.Context, userID int64
 		if err != nil {
 			return nil, fmt.Errorf("invalid role assignment: %w", err)
 		}
+		if !auth.IsGlobalRole(role) {
+			return nil, fmt.Errorf("invalid global role assignment %q", value)
+		}
 		roles = append(roles, role)
 	}
 	if err := rows.Err(); err != nil {
@@ -250,6 +253,5 @@ func nullableID(value *int64) any {
 }
 
 func knownRole(role auth.Role) bool {
-	_, err := auth.ParseRole(string(role))
-	return err == nil
+	return auth.IsGlobalRole(role)
 }

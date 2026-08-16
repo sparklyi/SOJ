@@ -31,6 +31,20 @@ func TestRootHasEveryPermission(t *testing.T) {
 	}
 }
 
+func TestContestRolesExposeOnlyScopedPermissions(t *testing.T) {
+	manager := PermissionsForRoles([]Role{RoleContestManager})
+	if !equalPermissions(manager, []Permission{PermissionContestManage, PermissionContestRead}) {
+		t.Fatalf("contest manager permissions = %v", manager)
+	}
+	judge := NewSubject(auth.Actor{UserID: 9, Roles: []auth.Role{auth.RoleContestJudge}})
+	if err := Authorize(judge, PermissionContestJudge); err != nil {
+		t.Fatalf("contest judge permission error = %v", err)
+	}
+	if err := Authorize(judge, PermissionContestManage); err != ErrForbidden {
+		t.Fatalf("contest judge manage error = %v, want %v", err, ErrForbidden)
+	}
+}
+
 func TestAuthorizeRequiresAuthenticatedSubjectAndPermission(t *testing.T) {
 	author := NewSubject(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAuthor}})
 	if err := Authorize(author, PermissionProblemCreate); err != nil {
