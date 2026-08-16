@@ -4,9 +4,12 @@ import "testing"
 
 func TestParseRole(t *testing.T) {
 	tests := map[string]Role{
-		"user":  RoleUser,
-		"admin": RoleAdmin,
-		"root":  RoleRoot,
+		"user":     RoleUser,
+		"author":   RoleAuthor,
+		"reviewer": RoleReviewer,
+		"operator": RoleOperator,
+		"admin":    RoleAdmin,
+		"root":     RoleRoot,
 	}
 
 	for input, want := range tests {
@@ -21,7 +24,7 @@ func TestParseRole(t *testing.T) {
 }
 
 func TestActorRoleChecks(t *testing.T) {
-	admin := Actor{UserID: 42, Role: RoleAdmin}
+	admin := Actor{UserID: 42, Roles: []Role{RoleAdmin}}
 
 	if !admin.Authenticated() {
 		t.Fatal("admin should be authenticated")
@@ -31,5 +34,12 @@ func TestActorRoleChecks(t *testing.T) {
 	}
 	if admin.Root() {
 		t.Fatal("admin should not satisfy Root")
+	}
+}
+
+func TestActorRoleChecksUseAssignedRoles(t *testing.T) {
+	root := Actor{UserID: 42, Roles: []Role{RoleRoot}}
+	if !root.Admin() || !root.Root() {
+		t.Fatalf("root role checks failed: %+v", root)
 	}
 }
