@@ -149,6 +149,31 @@ func (r *PostgresRoleRepository) RevokeRole(ctx context.Context, userID int64, r
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if role == auth.RoleRoot {
+		rows, err := tx.Query(ctx, `
+			SELECT id
+			FROM user_role_assignments
+			WHERE role_code = 'root' AND revoked_at IS NULL
+			ORDER BY id
+			FOR UPDATE
+		`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+
 	tag, err := tx.Exec(ctx, `
 		UPDATE user_role_assignments
 		SET revoked_at = now()
@@ -161,6 +186,7 @@ func (r *PostgresRoleRepository) RevokeRole(ctx context.Context, userID int64, r
 		return ErrNotFound
 	}
 	if role == auth.RoleRoot {
+
 		var roots int64
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*)
