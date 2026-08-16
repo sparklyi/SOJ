@@ -69,7 +69,13 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	jwtManager := auth.NewJWTManager(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL)
 	queries := db.New(pool)
 	userRepo := user.NewPostgresRepository(queries)
-	userService := user.NewService(userRepo, jwtManager, user.WithTokenTTLs(cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL))
+	roleRepo := user.NewPostgresRoleRepository(pool)
+	userService := user.NewService(
+		userRepo,
+		jwtManager,
+		user.WithRoleStore(roleRepo),
+		user.WithTokenTTLs(cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL),
+	)
 	problemRepo := problem.NewPostgresRepository(pool)
 	problemReader := problem.NewProblemReader(problemRepo, objectStorage)
 	problemService := problem.NewService(
@@ -110,7 +116,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemReader, contests: contestService}, nil, metrics)
 
 	middleware := httpapi.DefaultMiddlewareSet()
-	middleware.Auth = actorMiddleware(jwtManager)
+	middleware.Auth = actorMiddleware(jwtManager, roleRepo)
 	router := httpapi.NewRouter(httpapi.RouterOptions{
 		Middleware:     middleware,
 		ReadyCheck:     pool.Ping,
@@ -161,15 +167,18 @@ func (p rejudgeAuthorizationPolicy) ValidateContestRejudgeTarget(ctx context.Con
 	return p.contests.ValidateContestRejudgeTarget(ctx, contestID)
 }
 
-func actorMiddleware(jwtManager *auth.JWTManager) gin.HandlerFunc {
+func actorMiddleware(jwtManager *auth.JWTManager, roles user.RoleStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetString(httpapi.ContextRequestID)
 		actor := auth.Anonymous(requestID)
 		header := c.GetHeader("Authorization")
 		if token, ok := bearerToken(header); ok {
 			if parsed, err := jwtManager.ParseAccessToken(token); err == nil {
-				parsed.RequestID = requestID
-				actor = parsed
+				if assigned, roleErr := roles.ListUserRoles(c.Request.Context(), parsed.UserID); roleErr == nil {
+					parsed.Roles = assigned
+					parsed.RequestID = requestID
+					actor = parsed
+				}
 			}
 		}
 		c.Set(user.ActorContextKey, actor)

@@ -44,14 +44,14 @@ func TestAuthorizeRequiresAuthenticatedSubjectAndPermission(t *testing.T) {
 	}
 }
 
-func TestNewSubjectIncludesAssignedRoles(t *testing.T) {
+func TestNewSubjectUsesOnlyAssignedRoles(t *testing.T) {
 	subject := NewSubject(auth.Actor{
 		UserID: 7,
 		Role:   auth.RoleUser,
 		Roles:  []auth.Role{auth.RoleAuthor},
 	})
-	if !subject.HasRole(RoleUser) || !subject.HasRole(RoleAuthor) {
-		t.Fatalf("subject roles = %v, want user and author", subject.Roles)
+	if subject.HasRole(RoleUser) || !subject.HasRole(RoleAuthor) {
+		t.Fatalf("subject roles = %v, want only assigned author role", subject.Roles)
 	}
 }
 

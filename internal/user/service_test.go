@@ -181,7 +181,7 @@ func TestListUsersByCursorUsesSeekPagination(t *testing.T) {
 		1: {User: User{ID: 1, Username: "first", Roles: []auth.Role{auth.RoleUser}, Status: StatusActive, CreatedAt: createdAt.Add(-time.Minute)}},
 	}}
 	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
-	actor := auth.Actor{UserID: 99, Role: auth.RoleRoot}
+	actor := auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleRoot}}
 
 	first, err := service.ListUsersByCursor(t.Context(), actor, ListUsersInput{PageSize: 2})
 	if err != nil {
