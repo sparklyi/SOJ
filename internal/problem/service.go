@@ -824,15 +824,6 @@ func validVisibility(value string) bool {
 	}
 }
 
-func validStatus(value string) bool {
-	switch value {
-	case StatusDraft, StatusPublished, StatusArchived:
-		return true
-	default:
-		return false
-	}
-}
-
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
