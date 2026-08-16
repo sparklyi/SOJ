@@ -9,6 +9,7 @@ import (
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 	"SOJ/internal/submission"
 )
 
@@ -161,16 +162,17 @@ type RegistrationInput struct {
 }
 
 type ListContestFilter struct {
-	Status          string
-	Visibility      string
-	Keyword         string
-	VisibleToUserID int64
-	IncludePrivate  bool
-	Page            int32
-	PageSize        int32
-	Limit           int32
-	Offset          int32
-	Cursor          *ContestCursor
+	Status              string
+	Visibility          string
+	Keyword             string
+	VisibleToUserID     int64
+	VisibleToContestIDs []int64
+	IncludePrivate      bool
+	Page                int32
+	PageSize            int32
+	Limit               int32
+	Offset              int32
+	Cursor              *ContestCursor
 }
 
 type ContestCursor struct {
@@ -201,10 +203,11 @@ type Service struct {
 	reader     *ContestReader
 	policy     *ContestPolicy
 	scoreboard *ScoreboardService
+	roles      ContestRoleStore
 }
 
 // NewService composes the public contest API from focused workflows.
-func NewService(reader *ContestReader, authoring *ContestAuthoring, policy *ContestPolicy, scoreboard *ScoreboardService) *Service {
+func NewService(reader *ContestReader, authoring *ContestAuthoring, policy *ContestPolicy, scoreboard *ScoreboardService, roleStore ...ContestRoleStore) *Service {
 	if reader == nil {
 		panic("contest reader is required")
 	}
@@ -217,7 +220,11 @@ func NewService(reader *ContestReader, authoring *ContestAuthoring, policy *Cont
 	if scoreboard == nil {
 		panic("contest scoreboard is required")
 	}
-	return &Service{authoring: authoring, reader: reader, policy: policy, scoreboard: scoreboard}
+	var roles ContestRoleStore
+	if len(roleStore) > 0 {
+		roles = roleStore[0]
+	}
+	return &Service{authoring: authoring, reader: reader, policy: policy, scoreboard: scoreboard, roles: roles}
 }
 
 func (s *Service) CreateContest(ctx context.Context, actor auth.Actor, input ContestInput) (ContestRecord, error) {
@@ -237,10 +244,20 @@ func (s *Service) ListContestsByCursor(ctx context.Context, actor auth.Actor, fi
 }
 
 func (s *Service) UpdateContest(ctx context.Context, actor auth.Actor, id int64, input ContestUpdateInput) (ContestRecord, error) {
+	var err error
+	actor, err = s.reader.actorWithContestRoles(ctx, actor, id)
+	if err != nil {
+		return ContestRecord{}, err
+	}
 	return s.authoring.UpdateContest(ctx, actor, id, input)
 }
 
 func (s *Service) DeleteContest(ctx context.Context, actor auth.Actor, id int64) (ContestRecord, error) {
+	var err error
+	actor, err = s.reader.actorWithContestRoles(ctx, actor, id)
+	if err != nil {
+		return ContestRecord{}, err
+	}
 	return s.authoring.DeleteContest(ctx, actor, id)
 }
 
@@ -272,18 +289,100 @@ func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID in
 	return s.scoreboard.Scoreboard(ctx, actor, contestID, query)
 }
 
+func (s *Service) GrantContestRole(ctx context.Context, actor auth.Actor, contestID int64, input ContestRoleGrantInput) (ContestRoleAssignment, error) {
+	if s.roles == nil {
+		return ContestRoleAssignment{}, apperror.ServiceUnavailable("contest role store unavailable")
+	}
+	contest, err := s.reader.getContest(ctx, contestID)
+	if err != nil {
+		return ContestRoleAssignment{}, err
+	}
+	actor, err = s.reader.actorWithContestRoles(ctx, actor, contestID)
+	if err != nil {
+		return ContestRoleAssignment{}, err
+	}
+	if err := requireContestManager(actor, contest); err != nil {
+		return ContestRoleAssignment{}, err
+	}
+	if input.UserID <= 0 {
+		return ContestRoleAssignment{}, apperror.BadRequest("contest.role_target_invalid", "contest role target is invalid")
+	}
+	role, err := auth.ParseRole(input.Role)
+	if err != nil || !auth.IsContestRole(role) {
+		return ContestRoleAssignment{}, apperror.BadRequest("contest.role_invalid", "invalid contest role")
+	}
+	return s.roles.GrantContestRole(ctx, contestID, input.UserID, role, actor.UserID, input.Reason)
+}
+
+func (s *Service) RevokeContestRole(ctx context.Context, actor auth.Actor, contestID, userID int64, roleValue string, input ContestRoleRevokeInput) error {
+	if s.roles == nil {
+		return apperror.ServiceUnavailable("contest role store unavailable")
+	}
+	contest, err := s.reader.getContest(ctx, contestID)
+	if err != nil {
+		return err
+	}
+	actor, err = s.reader.actorWithContestRoles(ctx, actor, contestID)
+	if err != nil {
+		return err
+	}
+	if err := requireContestManager(actor, contest); err != nil {
+		return err
+	}
+	role, err := auth.ParseRole(roleValue)
+	if err != nil || !auth.IsContestRole(role) {
+		return apperror.BadRequest("contest.role_invalid", "invalid contest role")
+	}
+	if userID <= 0 {
+		return apperror.BadRequest("contest.role_target_invalid", "contest role target is invalid")
+	}
+	return s.roles.RevokeContestRole(ctx, contestID, userID, role, actor.UserID, input.Reason)
+}
+
 func (s *Service) GenerateDueScoreSnapshots(ctx context.Context, limit int32) (ScoreSnapshotGenerationResult, error) {
 	return s.scoreboard.GenerateDueScoreSnapshots(ctx, limit)
 }
 
 func requireContestWriter(actor auth.Actor, contest ContestRecord) error {
+	return requireContestManager(actor, contest)
+}
+
+func requireContestCreator(actor auth.Actor) error {
 	if !actor.Authenticated() {
 		return apperror.Unauthorized("auth_required", "authentication required")
 	}
-	if actor.Admin() || actor.UserID == contest.OwnerUserID {
+	if actor.Admin() || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManageAll) == nil {
+		return nil
+	}
+	return apperror.Forbidden("contest.not_allowed", "contest management permission required")
+}
+
+func requireContestManager(actor auth.Actor, contest ContestRecord) error {
+	if !actor.Authenticated() {
+		return apperror.Unauthorized("auth_required", "authentication required")
+	}
+	if canManageContest(actor, contest) {
 		return nil
 	}
 	return apperror.Forbidden("contest.not_allowed", "contest access denied")
+}
+
+func requireContestJudge(actor auth.Actor, contest ContestRecord) error {
+	if !actor.Authenticated() {
+		return apperror.Unauthorized("auth_required", "authentication required")
+	}
+	if canManageContest(actor, contest) || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestJudge) == nil {
+		return nil
+	}
+	return apperror.Forbidden("contest.not_allowed", "contest judge permission required")
+}
+
+func canManageContest(actor auth.Actor, contest ContestRecord) bool {
+	return actor.Admin() || actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManage) == nil
+}
+
+func canViewContestResults(actor auth.Actor, contest ContestRecord) bool {
+	return canManageContest(actor, contest) || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestJudge) == nil
 }
 
 func validateContestInput(input ContestInput) error {

@@ -7,6 +7,7 @@ import (
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 	"SOJ/internal/submission"
 )
 
@@ -37,7 +38,11 @@ func (p *ContestPolicy) AuthorizeContestRejudge(ctx context.Context, actor auth.
 	if err != nil {
 		return err
 	}
-	return requireContestWriter(actor, contest)
+	actor, err = p.reader.actorWithContestRoles(ctx, actor, contest.ID)
+	if err != nil {
+		return err
+	}
+	return requireContestJudge(actor, contest)
 }
 
 // ValidateContestRejudgeTarget checks whether a contest is ended and rejudgeable.
@@ -58,6 +63,10 @@ func (p *ContestPolicy) Register(ctx context.Context, actor auth.Actor, contestI
 		return ContestRegistration{}, apperror.Unauthorized("auth_required", "authentication required")
 	}
 	contest, err := p.reader.getContest(ctx, contestID)
+	if err != nil {
+		return ContestRegistration{}, err
+	}
+	actor, err = p.reader.actorWithContestRoles(ctx, actor, contest.ID)
 	if err != nil {
 		return ContestRegistration{}, err
 	}
@@ -90,6 +99,10 @@ func (p *ContestPolicy) ValidateSubmission(ctx context.Context, actor auth.Actor
 	if err != nil {
 		return err
 	}
+	actor, err = p.reader.actorWithContestRoles(ctx, actor, contest.ID)
+	if err != nil {
+		return err
+	}
 	if contest.Status != StatusPublished && contest.Status != StatusRunning {
 		return apperror.Forbidden("contest.not_started", "contest is not accepting submissions")
 	}
@@ -107,7 +120,7 @@ func (p *ContestPolicy) ValidateSubmission(ctx context.Context, actor auth.Actor
 	if !containsProblem(problems, problemID) {
 		return apperror.NotFound("contest.problem_not_found", "problem is not in contest")
 	}
-	if actor.Admin() || actor.UserID == contest.OwnerUserID {
+	if actor.Admin() || actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManage) == nil {
 		return nil
 	}
 	registration, err := p.reader.getRegistration(ctx, contestID, actor.UserID)
@@ -123,7 +136,11 @@ func (p *ContestPolicy) SubmissionResultVisibility(ctx context.Context, actor au
 	if err != nil {
 		return submission.SubmissionResultVisibility{}, err
 	}
-	if err := p.reader.canReadContest(ctx, actor, contest); err != nil {
+	actor, err = p.reader.actorWithContestRoles(ctx, actor, sub.ContestID)
+	if err != nil {
+		return submission.SubmissionResultVisibility{}, err
+	}
+	if err := p.reader.canReadContestAs(ctx, actor, contest); err != nil {
 		return submission.SubmissionResultVisibility{}, err
 	}
 	return submissionResultVisibility(contest, actor, sub, p.reader.now()), nil
@@ -133,27 +150,32 @@ func (p *ContestPolicy) SubmissionResultVisibility(ctx context.Context, actor au
 func (p *ContestPolicy) SubmissionResultVisibilities(ctx context.Context, actor auth.Actor, submissions []submission.ContestSubmissionVisibility) (map[int64]submission.SubmissionResultVisibility, error) {
 	visibilities := make(map[int64]submission.SubmissionResultVisibility, len(submissions))
 	contests := make(map[int64]ContestRecord)
+	actors := make(map[int64]auth.Actor)
 	now := p.reader.now()
 	for _, sub := range submissions {
 		contest, ok := contests[sub.ContestID]
 		if !ok {
-			var err error
+			scopedActor, err := p.reader.actorWithContestRoles(ctx, actor, sub.ContestID)
+			if err != nil {
+				return nil, err
+			}
 			contest, err = p.reader.getContest(ctx, sub.ContestID)
 			if err != nil {
 				return nil, err
 			}
-			if err := p.reader.canReadContest(ctx, actor, contest); err != nil {
+			if err := p.reader.canReadContestAs(ctx, scopedActor, contest); err != nil {
 				return nil, err
 			}
 			contests[sub.ContestID] = contest
+			actors[sub.ContestID] = scopedActor
 		}
-		visibilities[sub.ID] = submissionResultVisibility(contest, actor, sub, now)
+		visibilities[sub.ID] = submissionResultVisibility(contest, actors[sub.ContestID], sub, now)
 	}
 	return visibilities, nil
 }
 
 func submissionResultVisibility(contest ContestRecord, actor auth.Actor, sub submission.ContestSubmissionVisibility, now time.Time) submission.SubmissionResultVisibility {
-	if actor.Admin() || actor.UserID == contest.OwnerUserID {
+	if canViewContestResults(actor, contest) {
 		return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: true, Visibility: "visible"}
 	}
 	visible := submissionVisibleInFrozenWindow(contest, sub, now)

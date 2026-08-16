@@ -9,12 +9,15 @@ import (
 type Role = auth.Role
 
 const (
-	RoleUser     = auth.RoleUser
-	RoleAuthor   = auth.RoleAuthor
-	RoleReviewer = auth.RoleReviewer
-	RoleOperator = auth.RoleOperator
-	RoleAdmin    = auth.RoleAdmin
-	RoleRoot     = auth.RoleRoot
+	RoleUser           = auth.RoleUser
+	RoleAuthor         = auth.RoleAuthor
+	RoleReviewer       = auth.RoleReviewer
+	RoleOperator       = auth.RoleOperator
+	RoleAdmin          = auth.RoleAdmin
+	RoleRoot           = auth.RoleRoot
+	RoleContestStaff   = auth.RoleContestStaff
+	RoleContestManager = auth.RoleContestManager
+	RoleContestJudge   = auth.RoleContestJudge
 )
 
 type Permission string
@@ -33,6 +36,9 @@ const (
 	PermissionSubmissionReadOwn   Permission = "submission.read_own"
 	PermissionSubmissionRejudge   Permission = "submission.rejudge"
 	PermissionContestJoin         Permission = "contest.join"
+	PermissionContestRead         Permission = "contest.read"
+	PermissionContestManage       Permission = "contest.manage"
+	PermissionContestJudge        Permission = "contest.judge"
 	PermissionContestManageAll    Permission = "contest.manage_all"
 	PermissionJudgeInspect        Permission = "judge.inspect"
 	PermissionUserManage          Permission = "user.manage"
@@ -59,6 +65,17 @@ var rolePermissions = map[Role][]Permission{
 		PermissionProblemReview,
 		PermissionProblemPublish,
 	},
+	RoleContestStaff: {
+		PermissionContestRead,
+	},
+	RoleContestManager: {
+		PermissionContestRead,
+		PermissionContestManage,
+	},
+	RoleContestJudge: {
+		PermissionContestRead,
+		PermissionContestJudge,
+	},
 	RoleOperator: {
 		PermissionSubmissionRejudge,
 		PermissionJudgeInspect,
@@ -74,7 +91,10 @@ var rolePermissions = map[Role][]Permission{
 
 var allPermissions = []Permission{
 	PermissionContestJoin,
+	PermissionContestJudge,
+	PermissionContestManage,
 	PermissionContestManageAll,
+	PermissionContestRead,
 	PermissionJudgeInspect,
 	PermissionProblemCheckOwn,
 	PermissionProblemCreate,
@@ -94,7 +114,17 @@ var allPermissions = []Permission{
 	PermissionUserManage,
 }
 
-var allRoles = []Role{RoleUser, RoleAuthor, RoleReviewer, RoleOperator, RoleAdmin, RoleRoot}
+var allRoles = []Role{
+	RoleUser,
+	RoleAuthor,
+	RoleReviewer,
+	RoleOperator,
+	RoleAdmin,
+	RoleRoot,
+	RoleContestStaff,
+	RoleContestManager,
+	RoleContestJudge,
+}
 
 func AllRoles() []Role {
 	return append([]Role(nil), allRoles...)
@@ -111,6 +141,14 @@ func IsKnownRole(role Role) bool {
 		}
 	}
 	return false
+}
+
+func IsGlobalRole(role Role) bool {
+	return auth.IsGlobalRole(role)
+}
+
+func IsContestRole(role Role) bool {
+	return auth.IsContestRole(role)
 }
 
 func RolePermissions(role Role) []Permission {

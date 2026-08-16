@@ -228,23 +228,25 @@ func createContest(ctx context.Context, q *db.Queries, input ContestRecord) (Con
 
 func listContests(ctx context.Context, q *db.Queries, filter ListContestFilter) ([]ContestRecord, int64, error) {
 	rows, err := q.ListContests(ctx, db.ListContestsParams{
-		Status:          textValuePtr(filter.Status),
-		Visibility:      textValuePtr(filter.Visibility),
-		Keyword:         textValuePtr(filter.Keyword),
-		IncludePrivate:  filter.IncludePrivate,
-		VisibleToUserID: int8ValuePtr(filter.VisibleToUserID),
-		Offset:          filter.Offset,
-		Limit:           filter.Limit,
+		Status:              textValuePtr(filter.Status),
+		Visibility:          textValuePtr(filter.Visibility),
+		Keyword:             textValuePtr(filter.Keyword),
+		IncludePrivate:      filter.IncludePrivate,
+		VisibleToUserID:     int8ValuePtr(filter.VisibleToUserID),
+		VisibleToContestIds: filter.VisibleToContestIDs,
+		Offset:              filter.Offset,
+		Limit:               filter.Limit,
 	})
 	if err != nil {
 		return nil, 0, mapDBErr(err)
 	}
 	total, err := q.CountContests(ctx, db.CountContestsParams{
-		Status:          textValuePtr(filter.Status),
-		Visibility:      textValuePtr(filter.Visibility),
-		Keyword:         textValuePtr(filter.Keyword),
-		IncludePrivate:  filter.IncludePrivate,
-		VisibleToUserID: int8ValuePtr(filter.VisibleToUserID),
+		Status:              textValuePtr(filter.Status),
+		Visibility:          textValuePtr(filter.Visibility),
+		Keyword:             textValuePtr(filter.Keyword),
+		IncludePrivate:      filter.IncludePrivate,
+		VisibleToUserID:     int8ValuePtr(filter.VisibleToUserID),
+		VisibleToContestIds: filter.VisibleToContestIDs,
 	})
 	if err != nil {
 		return nil, 0, mapDBErr(err)
@@ -262,14 +264,15 @@ func listContestsByCursor(ctx context.Context, q *db.Queries, filter ListContest
 		cursor = &ContestCursor{StartAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
 	}
 	rows, err := q.ListContestsByCursor(ctx, db.ListContestsByCursorParams{
-		Status:          textValuePtr(filter.Status),
-		Visibility:      textValuePtr(filter.Visibility),
-		Keyword:         textValuePtr(filter.Keyword),
-		IncludePrivate:  filter.IncludePrivate,
-		VisibleToUserID: int8ValuePtr(filter.VisibleToUserID),
-		BeforeStartAt:   timestamptz(cursor.StartAt.UTC()),
-		BeforeID:        cursor.ID,
-		Limit:           filter.Limit,
+		Status:              textValuePtr(filter.Status),
+		Visibility:          textValuePtr(filter.Visibility),
+		Keyword:             textValuePtr(filter.Keyword),
+		IncludePrivate:      filter.IncludePrivate,
+		VisibleToUserID:     int8ValuePtr(filter.VisibleToUserID),
+		VisibleToContestIDs: filter.VisibleToContestIDs,
+		BeforeStartAt:       timestamptz(cursor.StartAt.UTC()),
+		BeforeID:            cursor.ID,
+		Limit:               filter.Limit,
 	})
 	if err != nil {
 		return nil, mapDBErr(err)

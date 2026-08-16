@@ -416,7 +416,7 @@ func (s *Service) GrantRole(ctx context.Context, actor auth.Actor, userID int64,
 		return RoleAssignment{}, apperror.BadRequest("role.invalid_target", "role target is invalid")
 	}
 	role, err := auth.ParseRole(input.Role)
-	if err != nil {
+	if err != nil || !auth.IsGlobalRole(role) {
 		return RoleAssignment{}, apperror.BadRequest("role.invalid_role", "invalid role")
 	}
 	reason := strings.TrimSpace(input.Reason)
@@ -441,7 +441,7 @@ func (s *Service) RevokeRole(ctx context.Context, actor auth.Actor, userID int64
 		return apperror.BadRequest("role.invalid_target", "role target is invalid")
 	}
 	role, err := auth.ParseRole(roleValue)
-	if err != nil {
+	if err != nil || !auth.IsGlobalRole(role) {
 		return apperror.BadRequest("role.invalid_role", "invalid role")
 	}
 	reason := strings.TrimSpace(input.Reason)

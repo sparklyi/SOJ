@@ -71,7 +71,7 @@ func (r *memoryRepository) ListContests(ctx context.Context, filter ListContestF
 			if filter.VisibleToUserID <= 0 {
 				continue
 			}
-			if row.OwnerUserID != filter.VisibleToUserID && !r.activeRegistration(row.ID, filter.VisibleToUserID) {
+			if row.OwnerUserID != filter.VisibleToUserID && !r.activeRegistration(row.ID, filter.VisibleToUserID) && !containsContestID(filter.VisibleToContestIDs, row.ID) {
 				continue
 			}
 		}
@@ -79,6 +79,15 @@ func (r *memoryRepository) ListContests(ctx context.Context, filter ListContestF
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID > rows[j].ID })
 	return rows, int64(len(rows)), nil
+}
+
+func containsContestID(ids []int64, target int64) bool {
+	for _, id := range ids {
+		if id == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *memoryRepository) ListContestsByCursor(ctx context.Context, filter ListContestFilter) ([]ContestRecord, error) {
