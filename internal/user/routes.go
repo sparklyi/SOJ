@@ -19,4 +19,6 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	group.GET("/admin/users", m.handler.ListUsers)
 	group.GET("/admin/users/cursor", m.handler.ListUsersByCursor)
 	group.PATCH("/admin/users/:id", m.handler.UpdateUser)
+	group.POST("/admin/users/:id/roles", m.handler.GrantRole)
+	group.DELETE("/admin/users/:id/roles/:role", m.handler.RevokeRole)
 }
