@@ -17,12 +17,13 @@ WHERE status = 'in_review'
 
 func (q *Queries) CountProblemsForReview(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countProblemsForReview)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const createProblemReviewEvent = `-- name: CreateProblemReviewEvent :one
+
 INSERT INTO problem_review_events (
     problem_id,
     actor_user_id,
@@ -43,6 +44,7 @@ type CreateProblemReviewEventParams struct {
 	Comment     string `db:"comment" json:"comment"`
 }
 
+// Problem review workflow.
 func (q *Queries) CreateProblemReviewEvent(ctx context.Context, arg CreateProblemReviewEventParams) (ProblemReviewEvent, error) {
 	row := q.db.QueryRow(ctx, createProblemReviewEvent,
 		arg.ProblemID,
@@ -52,18 +54,18 @@ func (q *Queries) CreateProblemReviewEvent(ctx context.Context, arg CreateProble
 		arg.Decision,
 		arg.Comment,
 	)
-	var event ProblemReviewEvent
+	var i ProblemReviewEvent
 	err := row.Scan(
-		&event.ID,
-		&event.ProblemID,
-		&event.ActorUserID,
-		&event.FromStatus,
-		&event.ToStatus,
-		&event.Decision,
-		&event.Comment,
-		&event.CreatedAt,
+		&i.ID,
+		&i.ProblemID,
+		&i.ActorUserID,
+		&i.FromStatus,
+		&i.ToStatus,
+		&i.Decision,
+		&i.Comment,
+		&i.CreatedAt,
 	)
-	return event, err
+	return i, err
 }
 
 const listProblemReviewEvents = `-- name: ListProblemReviewEvents :many
@@ -79,31 +81,34 @@ func (q *Queries) ListProblemReviewEvents(ctx context.Context, problemID int64) 
 		return nil, err
 	}
 	defer rows.Close()
-	items := make([]ProblemReviewEvent, 0)
+	var items []ProblemReviewEvent
 	for rows.Next() {
-		var event ProblemReviewEvent
+		var i ProblemReviewEvent
 		if err := rows.Scan(
-			&event.ID,
-			&event.ProblemID,
-			&event.ActorUserID,
-			&event.FromStatus,
-			&event.ToStatus,
-			&event.Decision,
-			&event.Comment,
-			&event.CreatedAt,
+			&i.ID,
+			&i.ProblemID,
+			&i.ActorUserID,
+			&i.FromStatus,
+			&i.ToStatus,
+			&i.Decision,
+			&i.Comment,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
-		items = append(items, event)
+		items = append(items, i)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProblemsForReview = `-- name: ListProblemsForReview :many
-SELECT id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at
-FROM problems
-WHERE status = 'in_review'
-ORDER BY updated_at ASC, id ASC
+SELECT p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at
+FROM problems p
+WHERE p.status = 'in_review'
+ORDER BY p.updated_at ASC, p.id ASC
 LIMIT $1 OFFSET $2
 `
 
@@ -118,26 +123,29 @@ func (q *Queries) ListProblemsForReview(ctx context.Context, arg ListProblemsFor
 		return nil, err
 	}
 	defer rows.Close()
-	items := make([]Problem, 0)
+	var items []Problem
 	for rows.Next() {
-		var problem Problem
+		var i Problem
 		if err := rows.Scan(
-			&problem.ID,
-			&problem.OwnerUserID,
-			&problem.Title,
-			&problem.Slug,
-			&problem.Difficulty,
-			&problem.Visibility,
-			&problem.Status,
-			&problem.TimeLimitMs,
-			&problem.MemoryLimitKb,
-			&problem.CreatedAt,
-			&problem.UpdatedAt,
-			&problem.PublishedAt,
+			&i.ID,
+			&i.OwnerUserID,
+			&i.Title,
+			&i.Slug,
+			&i.Difficulty,
+			&i.Visibility,
+			&i.Status,
+			&i.TimeLimitMs,
+			&i.MemoryLimitKb,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PublishedAt,
 		); err != nil {
 			return nil, err
 		}
-		items = append(items, problem)
+		items = append(items, i)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
