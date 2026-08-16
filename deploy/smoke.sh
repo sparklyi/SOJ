@@ -119,6 +119,25 @@ if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
   echo "failed to get access token" >&2
   exit 1
 fi
+USER_ID="$(jq -r '.data.user.id' <<<"$REGISTER_RESPONSE")"
+if [[ ! "$USER_ID" =~ ^[1-9][0-9]*$ ]]; then
+  echo "failed to get registered user id" >&2
+  exit 1
+fi
+
+# The smoke database has no bootstrap account, so grant the test actor root
+# directly before exercising the authoring and review workflow.
+compose exec -T postgres psql -U soj -d soj -v ON_ERROR_STOP=1 -v smoke_user_id="$USER_ID" <<'SQL'
+WITH granted AS (
+  INSERT INTO user_role_assignments (user_id, role_code)
+  VALUES (:smoke_user_id, 'root')
+  ON CONFLICT (user_id, role_code) WHERE revoked_at IS NULL DO NOTHING
+  RETURNING user_id, role_code
+)
+INSERT INTO role_audit_events (user_id, role_code, actor_user_id, action, reason)
+SELECT user_id, role_code, NULL, 'granted', 'smoke bootstrap root'
+FROM granted;
+SQL
 
 PROBLEM_RESPONSE="$(api_json POST /api/v1/problems "{\"title\":\"Smoke A+B $RUN_ID\",\"slug\":\"smoke-ab-$RUN_ID\",\"difficulty\":\"easy\",\"visibility\":\"public\",\"time_limit_ms\":1000,\"memory_limit_kb\":65536}")"
 PROBLEM_ID="$(jq -r '.data.id' <<<"$PROBLEM_RESPONSE")"
@@ -145,7 +164,8 @@ if [[ "$CHECK_VALID" != "true" ]]; then
   exit 1
 fi
 
-api_json PATCH "/api/v1/problems/$PROBLEM_ID" '{"status":"published"}' >/dev/null
+api_json POST "/api/v1/problems/$PROBLEM_ID/review" >/dev/null
+api_json POST "/api/v1/problems/$PROBLEM_ID/review/decision" '{"decision":"approve","comment":"smoke approval"}' >/dev/null
 
 SUBMISSION_PAYLOAD="$(jq -cn --argjson problem_id "$PROBLEM_ID" --argjson language_id "$LANG_ID" --arg source "$SOURCE_CODE" '{problem_id:$problem_id,language_id:$language_id,source_code:$source}')"
 SUBMISSION_RESPONSE="$(api_json POST /api/v1/submissions "$SUBMISSION_PAYLOAD")"

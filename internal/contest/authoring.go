@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
 )
 
@@ -33,8 +32,8 @@ func NewContestAuthoring(store contestAuthoringStore, reader *ContestReader) *Co
 
 // CreateContest creates a contest and its problem configuration atomically.
 func (a *ContestAuthoring) CreateContest(ctx context.Context, actor auth.Actor, input ContestInput) (ContestRecord, error) {
-	if !actor.Authenticated() {
-		return ContestRecord{}, apperror.Unauthorized("auth_required", "authentication required")
+	if err := requireContestCreator(actor); err != nil {
+		return ContestRecord{}, err
 	}
 	if input.Status == "" {
 		input.Status = StatusDraft

@@ -7,10 +7,9 @@ INSERT INTO users (
     username,
     avatar_url,
     bio,
-    role,
     status
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6
 )
 RETURNING *;
 
@@ -27,8 +26,7 @@ WHERE lower(email) = lower($1);
 -- name: ListUsers :many
 SELECT *
 FROM users
-WHERE (sqlc.narg('role')::text IS NULL OR role = sqlc.narg('role')::text)
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
   AND (
       sqlc.narg('keyword')::text IS NULL
       OR email ILIKE '%' || sqlc.narg('keyword')::text || '%'
@@ -40,8 +38,7 @@ LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 -- name: CountUsers :one
 SELECT count(*)::bigint
 FROM users
-WHERE (sqlc.narg('role')::text IS NULL OR role = sqlc.narg('role')::text)
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
   AND (
       sqlc.narg('keyword')::text IS NULL
       OR email ILIKE '%' || sqlc.narg('keyword')::text || '%'
@@ -52,7 +49,6 @@ WHERE (sqlc.narg('role')::text IS NULL OR role = sqlc.narg('role')::text)
 UPDATE users
 SET username = coalesce(sqlc.narg('username'), username),
     bio = coalesce(sqlc.narg('bio'), bio),
-    role = coalesce(sqlc.narg('role'), role),
     status = coalesce(sqlc.narg('status'), status),
     updated_at = now()
 WHERE id = sqlc.arg('id')

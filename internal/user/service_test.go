@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
 )
 
@@ -16,6 +17,38 @@ type memoryRepo struct {
 	createdHash string
 	revokedHash string
 	cursorCalls int
+}
+
+type memoryRoleStore struct {
+	roles map[int64][]auth.Role
+}
+
+func (r *memoryRoleStore) ListUserRoles(_ context.Context, userID int64) ([]auth.Role, error) {
+	return append([]auth.Role(nil), r.roles[userID]...), nil
+}
+
+func (r *memoryRoleStore) GrantRole(_ context.Context, userID int64, role auth.Role, grantedBy *int64, _ string) (RoleAssignment, error) {
+	for _, current := range r.roles[userID] {
+		if current == role {
+			return RoleAssignment{}, ErrConflict
+		}
+	}
+	r.roles[userID] = append(r.roles[userID], role)
+	return RoleAssignment{ID: int64(len(r.roles[userID])), UserID: userID, Role: role, GrantedBy: grantedBy}, nil
+}
+
+func (r *memoryRoleStore) RevokeRole(_ context.Context, userID int64, role auth.Role, _ int64, _ string) error {
+	if role == auth.RoleUser {
+		return ErrProtectedRole
+	}
+	roles := r.roles[userID]
+	for i, current := range roles {
+		if current == role {
+			r.roles[userID] = append(roles[:i], roles[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 func (r *memoryRepo) CreateUser(context.Context, string, string, string) (User, error) {
@@ -48,9 +81,6 @@ func (r *memoryRepo) ListUsersByCursor(_ context.Context, input ListUsersInput) 
 	users := make([]User, 0, len(r.users))
 	for _, user := range r.users {
 		row := user.User
-		if input.Role != "" && string(row.Role) != input.Role {
-			continue
-		}
 		if input.Status != "" && row.Status != input.Status {
 			continue
 		}
@@ -118,13 +148,13 @@ func TestServiceRefreshRotatesRefreshTokenByHash(t *testing.T) {
 	}
 	repo := &memoryRepo{
 		users: map[int64]UserWithPassword{
-			42: {User: User{ID: 42, Email: "user@example.com", Username: "user", Role: auth.RoleUser, Status: StatusActive}},
+			42: {User: User{ID: 42, Email: "user@example.com", Username: "user", Roles: []auth.Role{auth.RoleUser}, Status: StatusActive}},
 		},
 		refresh: map[string]RefreshToken{
 			hash: {UserID: 42, TokenHash: hash, DeviceID: "device-1", ExpiresAt: now.Add(time.Hour)},
 		},
 	}
-	service := NewService(repo, auth.NewJWTManager("secret", time.Minute), WithTokenTTLs(time.Minute, time.Hour), WithClock(func() time.Time {
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute), WithRoleStore(&memoryRoleStore{roles: map[int64][]auth.Role{42: {auth.RoleUser}}}), WithTokenTTLs(time.Minute, time.Hour), WithClock(func() time.Time {
 		return now
 	}))
 
@@ -146,12 +176,12 @@ func TestServiceRefreshRotatesRefreshTokenByHash(t *testing.T) {
 func TestListUsersByCursorUsesSeekPagination(t *testing.T) {
 	createdAt := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 	repo := &memoryRepo{users: map[int64]UserWithPassword{
-		3: {User: User{ID: 3, Username: "third", Role: auth.RoleUser, Status: StatusActive, CreatedAt: createdAt}},
-		2: {User: User{ID: 2, Username: "second", Role: auth.RoleUser, Status: StatusActive, CreatedAt: createdAt}},
-		1: {User: User{ID: 1, Username: "first", Role: auth.RoleUser, Status: StatusActive, CreatedAt: createdAt.Add(-time.Minute)}},
+		3: {User: User{ID: 3, Username: "third", Roles: []auth.Role{auth.RoleUser}, Status: StatusActive, CreatedAt: createdAt}},
+		2: {User: User{ID: 2, Username: "second", Roles: []auth.Role{auth.RoleUser}, Status: StatusActive, CreatedAt: createdAt}},
+		1: {User: User{ID: 1, Username: "first", Roles: []auth.Role{auth.RoleUser}, Status: StatusActive, CreatedAt: createdAt.Add(-time.Minute)}},
 	}}
 	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
-	actor := auth.Actor{UserID: 99, Role: auth.RoleRoot}
+	actor := auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleRoot}}
 
 	first, err := service.ListUsersByCursor(t.Context(), actor, ListUsersInput{PageSize: 2})
 	if err != nil {
@@ -176,6 +206,68 @@ func TestListUsersByCursorUsesSeekPagination(t *testing.T) {
 	}
 	if repo.cursorCalls != 2 {
 		t.Fatalf("cursor calls = %d, want 2", repo.cursorCalls)
+	}
+}
+
+func TestServiceMeLoadsRolesAndPermissions(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{
+		42: {User: User{ID: 42, Email: "user@example.com", Username: "user", Status: StatusActive}},
+	}}
+	roles := &memoryRoleStore{roles: map[int64][]auth.Role{
+		42: {auth.RoleUser, auth.RoleAuthor},
+	}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
+
+	got, err := service.Me(context.Background(), auth.Actor{UserID: 42})
+	if err != nil {
+		t.Fatalf("Me() error = %v", err)
+	}
+	if len(got.Roles) != 2 || got.Roles[0] != auth.RoleUser || got.Roles[1] != auth.RoleAuthor {
+		t.Fatalf("roles = %v, want [user author]", got.Roles)
+	}
+	if len(got.Permissions) == 0 {
+		t.Fatal("permissions are empty")
+	}
+	if got.Permissions[0] != "contest.join" {
+		t.Fatalf("permissions are not deterministic: %v", got.Permissions)
+	}
+}
+
+func TestServiceGrantRoleRequiresRootAndWritesAssignment(t *testing.T) {
+	roles := &memoryRoleStore{roles: map[int64][]auth.Role{42: {auth.RoleUser}}}
+	service := NewService(&memoryRepo{}, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
+
+	if _, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleUser}}, 42, GrantRoleInput{Role: "author", Reason: "approved author"}); err == nil {
+		t.Fatal("user GrantRole() error = nil, want forbidden")
+	}
+	assignment, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}}, 42, GrantRoleInput{Role: "author", Reason: "approved author"})
+	if err != nil {
+		t.Fatalf("root GrantRole() error = %v", err)
+	}
+	if assignment.UserID != 42 || assignment.Role != auth.RoleAuthor {
+		t.Fatalf("assignment = %+v, want user 42 author", assignment)
+	}
+	if _, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}}, 42, GrantRoleInput{Role: "contest_manager", Reason: "contest scope only"}); codeOfUserError(err) != "role.invalid_role" {
+		t.Fatalf("contest role grant error = %v, want role.invalid_role", err)
+	}
+}
+
+func codeOfUserError(err error) string {
+	appErr, ok := apperror.From(err)
+	if !ok {
+		return ""
+	}
+	return appErr.Code
+}
+
+func TestServiceRevokeRoleProtectsBaseUserRole(t *testing.T) {
+	roles := &memoryRoleStore{roles: map[int64][]auth.Role{42: {auth.RoleUser, auth.RoleAuthor}}}
+	service := NewService(&memoryRepo{}, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
+
+	err := service.RevokeRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}}, 42, "user", RevokeRoleInput{Reason: "remove access"})
+	appErr, ok := apperror.From(err)
+	if !ok || appErr.Code != "role.protected" {
+		t.Fatalf("RevokeRole() error = %v, want role.protected", err)
 	}
 }
 

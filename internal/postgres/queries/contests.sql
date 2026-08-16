@@ -46,6 +46,10 @@ WHERE (sqlc.narg('status')::text IS NULL OR c.status = sqlc.narg('status')::text
               )
           )
       )
+      OR (
+          sqlc.narg('visible_to_contest_ids')::bigint[] IS NOT NULL
+          AND c.id = ANY(sqlc.narg('visible_to_contest_ids')::bigint[])
+      )
   )
 ORDER BY c.start_at DESC, c.id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
@@ -74,6 +78,10 @@ WHERE (sqlc.narg('status')::text IS NULL OR c.status = sqlc.narg('status')::text
                     AND cr.status = 'active'
               )
           )
+      )
+      OR (
+          sqlc.narg('visible_to_contest_ids')::bigint[] IS NOT NULL
+          AND c.id = ANY(sqlc.narg('visible_to_contest_ids')::bigint[])
       )
   );
 

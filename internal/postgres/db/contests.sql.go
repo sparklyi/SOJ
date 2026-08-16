@@ -101,15 +101,20 @@ WHERE ($1::text IS NULL OR c.status = $1::text)
               )
           )
       )
+      OR (
+          $6::bigint[] IS NOT NULL
+          AND c.id = ANY($6::bigint[])
+      )
   )
 `
 
 type CountContestsParams struct {
-	Status          pgtype.Text `db:"status" json:"status"`
-	Visibility      pgtype.Text `db:"visibility" json:"visibility"`
-	Keyword         pgtype.Text `db:"keyword" json:"keyword"`
-	IncludePrivate  bool        `db:"include_private" json:"include_private"`
-	VisibleToUserID pgtype.Int8 `db:"visible_to_user_id" json:"visible_to_user_id"`
+	Status              pgtype.Text `db:"status" json:"status"`
+	Visibility          pgtype.Text `db:"visibility" json:"visibility"`
+	Keyword             pgtype.Text `db:"keyword" json:"keyword"`
+	IncludePrivate      bool        `db:"include_private" json:"include_private"`
+	VisibleToUserID     pgtype.Int8 `db:"visible_to_user_id" json:"visible_to_user_id"`
+	VisibleToContestIds []int64     `db:"visible_to_contest_ids" json:"visible_to_contest_ids"`
 }
 
 func (q *Queries) CountContests(ctx context.Context, arg CountContestsParams) (int64, error) {
@@ -119,6 +124,7 @@ func (q *Queries) CountContests(ctx context.Context, arg CountContestsParams) (i
 		arg.Keyword,
 		arg.IncludePrivate,
 		arg.VisibleToUserID,
+		arg.VisibleToContestIds,
 	)
 	var column_1 int64
 	err := row.Scan(&column_1)
@@ -908,19 +914,24 @@ WHERE ($1::text IS NULL OR c.status = $1::text)
               )
           )
       )
+      OR (
+          $6::bigint[] IS NOT NULL
+          AND c.id = ANY($6::bigint[])
+      )
   )
 ORDER BY c.start_at DESC, c.id DESC
-LIMIT $7 OFFSET $6
+LIMIT $8 OFFSET $7
 `
 
 type ListContestsParams struct {
-	Status          pgtype.Text `db:"status" json:"status"`
-	Visibility      pgtype.Text `db:"visibility" json:"visibility"`
-	Keyword         pgtype.Text `db:"keyword" json:"keyword"`
-	IncludePrivate  bool        `db:"include_private" json:"include_private"`
-	VisibleToUserID pgtype.Int8 `db:"visible_to_user_id" json:"visible_to_user_id"`
-	Offset          int32       `db:"offset" json:"offset"`
-	Limit           int32       `db:"limit" json:"limit"`
+	Status              pgtype.Text `db:"status" json:"status"`
+	Visibility          pgtype.Text `db:"visibility" json:"visibility"`
+	Keyword             pgtype.Text `db:"keyword" json:"keyword"`
+	IncludePrivate      bool        `db:"include_private" json:"include_private"`
+	VisibleToUserID     pgtype.Int8 `db:"visible_to_user_id" json:"visible_to_user_id"`
+	VisibleToContestIds []int64     `db:"visible_to_contest_ids" json:"visible_to_contest_ids"`
+	Offset              int32       `db:"offset" json:"offset"`
+	Limit               int32       `db:"limit" json:"limit"`
 }
 
 func (q *Queries) ListContests(ctx context.Context, arg ListContestsParams) ([]Contest, error) {
@@ -930,6 +941,7 @@ func (q *Queries) ListContests(ctx context.Context, arg ListContestsParams) ([]C
 		arg.Keyword,
 		arg.IncludePrivate,
 		arg.VisibleToUserID,
+		arg.VisibleToContestIds,
 		arg.Offset,
 		arg.Limit,
 	)

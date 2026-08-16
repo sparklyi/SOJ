@@ -18,6 +18,7 @@ type problemAuthoringStore interface {
 type problemAuthoringTx interface {
 	CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error)
 	UpdateProblem(ctx context.Context, id int64, input UpdateProblemInput) (ProblemRecord, error)
+	SetProblemStatus(ctx context.Context, id int64, status string) (ProblemRecord, error)
 	ArchiveProblem(ctx context.Context, id int64) (ProblemRecord, error)
 	LockProblemForUpdate(ctx context.Context, id int64) (ProblemRecord, error)
 	NextProblemStatementVersion(ctx context.Context, problemID int64) (int32, error)
@@ -47,7 +48,7 @@ func NewProblemAuthoring(store problemAuthoringStore, archives testcaseArchiveWr
 }
 
 func (a *ProblemAuthoring) CreateProblem(ctx context.Context, actor auth.Actor, input CreateProblemInput) (ProblemRecord, error) {
-	if err := requireAuthenticated(actor); err != nil {
+	if err := (RBACProblemPolicy{}).CanCreate(actor); err != nil {
 		return ProblemRecord{}, err
 	}
 	if err := validateCreateProblem(input); err != nil {
@@ -73,6 +74,9 @@ func (a *ProblemAuthoring) CreateProblem(ctx context.Context, actor auth.Actor, 
 }
 
 func (a *ProblemAuthoring) UpdateProblem(ctx context.Context, actor auth.Actor, id int64, input UpdateProblemInput) (ProblemRecord, error) {
+	if input.Status != nil {
+		return ProblemRecord{}, apperror.Conflict("problem.status_managed_by_review", "problem status changes must use the review workflow")
+	}
 	var updated ProblemRecord
 	err := a.store.WithProblemAuthoringTx(ctx, func(ctx context.Context, tx problemAuthoringTx) error {
 		current, err := tx.LockProblemForUpdate(ctx, id)
@@ -81,11 +85,6 @@ func (a *ProblemAuthoring) UpdateProblem(ctx context.Context, actor auth.Actor, 
 		}
 		if err := canWriteProblem(actor, current); err != nil {
 			return err
-		}
-		if input.Status != nil && *input.Status == StatusPublished {
-			if err := ensurePublishable(ctx, tx, id); err != nil {
-				return err
-			}
 		}
 		if err := validateUpdateProblem(input); err != nil {
 			return err
