@@ -8,6 +8,7 @@ import (
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 )
 
 const (
@@ -20,15 +21,16 @@ const (
 )
 
 type User struct {
-	ID        int64     `json:"id"`
-	Email     string    `json:"email"`
-	Username  string    `json:"username"`
-	AvatarURL string    `json:"avatar_url,omitempty"`
-	Bio       string    `json:"bio,omitempty"`
-	Role      auth.Role `json:"role"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	ID          int64              `json:"id"`
+	Email       string             `json:"email"`
+	Username    string             `json:"username"`
+	AvatarURL   string             `json:"avatar_url,omitempty"`
+	Bio         string             `json:"bio,omitempty"`
+	Roles       []auth.Role        `json:"roles"`
+	Permissions []authz.Permission `json:"permissions"`
+	Status      string             `json:"status"`
+	CreatedAt   time.Time          `json:"created_at,omitempty"`
+	UpdatedAt   time.Time          `json:"updated_at,omitempty"`
 }
 
 type RegisterInput struct {
@@ -54,7 +56,6 @@ type LogoutInput struct {
 }
 
 type ListUsersInput struct {
-	Role     string
 	Status   string
 	Keyword  string
 	Page     int32
@@ -70,7 +71,6 @@ type UserCursor struct {
 type UpdateUserInput struct {
 	Username *string `json:"username"`
 	Bio      *string `json:"bio"`
-	Role     *string `json:"role"`
 	Status   *string `json:"status"`
 }
 
@@ -121,6 +121,15 @@ type Repository interface {
 	RevokeUserDeviceRefreshTokens(ctx context.Context, userID int64, deviceID string) error
 }
 
+type GrantRoleInput struct {
+	Role   string `json:"role" binding:"required"`
+	Reason string `json:"reason" binding:"required"`
+}
+
+type RevokeRoleInput struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
 type UserWithPassword struct {
 	User
 	PasswordHash string
@@ -128,6 +137,7 @@ type UserWithPassword struct {
 
 type Service struct {
 	repo       Repository
+	roles      RoleStore
 	jwt        *auth.JWTManager
 	accessTTL  time.Duration
 	refreshTTL time.Duration
@@ -169,7 +179,16 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+func WithRoleStore(roles RoleStore) Option {
+	return func(s *Service) {
+		s.roles = roles
+	}
+}
+
 func (s *Service) Register(ctx context.Context, actor auth.Actor, input RegisterInput) (AuthSession, error) {
+	if err := s.requireRoleStore(); err != nil {
+		return AuthSession{}, err
+	}
 	input.Email = normalizeEmail(input.Email)
 	input.Username = strings.TrimSpace(input.Username)
 	if input.Email == "" || input.Username == "" || input.Password == "" {
@@ -185,6 +204,9 @@ func (s *Service) Register(ctx context.Context, actor auth.Actor, input Register
 			return AuthSession{}, apperror.Conflict("user.email_conflict", "email already exists")
 		}
 		return AuthSession{}, err
+	}
+	if _, err := s.roles.GrantRole(ctx, created.ID, auth.RoleUser, nil, "system registration"); err != nil {
+		return AuthSession{}, mapRoleError(err)
 	}
 	return s.issueSession(ctx, created, deviceID(input.DeviceID), "", "")
 }
@@ -262,12 +284,12 @@ func (s *Service) Me(ctx context.Context, actor auth.Actor) (User, error) {
 		}
 		return User{}, err
 	}
-	return user, nil
+	return s.withRoles(ctx, user)
 }
 
 func (s *Service) ListUsers(ctx context.Context, actor auth.Actor, input ListUsersInput) (UserList, error) {
-	if !actor.Root() {
-		return UserList{}, apperror.Forbidden("forbidden", "root role required")
+	if err := authorize(actor, authz.PermissionUserManage); err != nil {
+		return UserList{}, err
 	}
 	if input.Page <= 0 {
 		input.Page = 1
@@ -283,8 +305,8 @@ func (s *Service) ListUsers(ctx context.Context, actor auth.Actor, input ListUse
 }
 
 func (s *Service) ListUsersByCursor(ctx context.Context, actor auth.Actor, input ListUsersInput) (UserCursorPage, error) {
-	if !actor.Root() {
-		return UserCursorPage{}, apperror.Forbidden("forbidden", "root role required")
+	if err := authorize(actor, authz.PermissionUserManage); err != nil {
+		return UserCursorPage{}, err
 	}
 	if input.PageSize <= 0 || input.PageSize > 100 {
 		input.PageSize = 20
@@ -319,23 +341,15 @@ func (s *Service) ListUsersByCursor(ctx context.Context, actor auth.Actor, input
 }
 
 func (s *Service) UpdateUser(ctx context.Context, actor auth.Actor, id int64, input UpdateUserInput) (User, error) {
-	if !actor.Root() {
-		return User{}, apperror.Forbidden("forbidden", "root role required")
+	if err := authorize(actor, authz.PermissionUserManage); err != nil {
+		return User{}, err
 	}
-	current, err := s.repo.GetUserByID(ctx, id)
+	_, err := s.repo.GetUserByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return User{}, apperror.NotFound("user.not_found", "user not found")
 		}
 		return User{}, err
-	}
-	if current.Role == auth.RoleRoot && actor.UserID != current.ID {
-		return User{}, apperror.Forbidden("user.root_protected", "root user cannot be modified by another user")
-	}
-	if input.Role != nil {
-		if _, err := auth.ParseRole(*input.Role); err != nil {
-			return User{}, apperror.BadRequest("user.invalid_role", "invalid role")
-		}
 	}
 	if input.Status != nil && !validStatus(*input.Status) {
 		return User{}, apperror.BadRequest("user.invalid_status", "invalid status")
@@ -351,11 +365,16 @@ func (s *Service) UpdateUser(ctx context.Context, actor auth.Actor, id int64, in
 }
 
 func (s *Service) issueSession(ctx context.Context, user User, deviceID, userAgent, ip string) (AuthSession, error) {
+	var err error
+	user, err = s.withRoles(ctx, user)
+	if err != nil {
+		return AuthSession{}, err
+	}
 	token, refreshHash, err := auth.NewRefreshToken()
 	if err != nil {
 		return AuthSession{}, err
 	}
-	actor := auth.Actor{UserID: user.ID, Role: user.Role, DeviceID: deviceID}
+	actor := auth.Actor{UserID: user.ID, Roles: user.Roles, DeviceID: deviceID}
 	access, err := s.jwt.IssueAccessToken(actor)
 	if err != nil {
 		return AuthSession{}, err
@@ -374,6 +393,97 @@ func (s *Service) issueSession(ctx context.Context, user User, deviceID, userAge
 		RefreshToken: token,
 		ExpiresIn:    int64(s.accessTTL.Seconds()),
 	}, nil
+}
+
+func (s *Service) withRoles(ctx context.Context, user User) (User, error) {
+	if err := s.requireRoleStore(); err != nil {
+		return User{}, err
+	}
+	roles, err := s.roles.ListUserRoles(ctx, user.ID)
+	if err != nil {
+		return User{}, mapRoleError(err)
+	}
+	user.Roles = append([]auth.Role(nil), roles...)
+	user.Permissions = authz.PermissionsForRoles(roles)
+	return user, nil
+}
+
+func (s *Service) GrantRole(ctx context.Context, actor auth.Actor, userID int64, input GrantRoleInput) (RoleAssignment, error) {
+	if err := authorize(actor, authz.PermissionRoleGrant); err != nil {
+		return RoleAssignment{}, err
+	}
+	if userID <= 0 || actor.UserID == userID {
+		return RoleAssignment{}, apperror.BadRequest("role.invalid_target", "role target is invalid")
+	}
+	role, err := auth.ParseRole(input.Role)
+	if err != nil {
+		return RoleAssignment{}, apperror.BadRequest("role.invalid_role", "invalid role")
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		return RoleAssignment{}, apperror.BadRequest("role.reason_required", "role change reason is required")
+	}
+	if err := s.requireRoleStore(); err != nil {
+		return RoleAssignment{}, err
+	}
+	assignment, err := s.roles.GrantRole(ctx, userID, role, &actor.UserID, reason)
+	if err != nil {
+		return RoleAssignment{}, mapRoleError(err)
+	}
+	return assignment, nil
+}
+
+func (s *Service) RevokeRole(ctx context.Context, actor auth.Actor, userID int64, roleValue string, input RevokeRoleInput) error {
+	if err := authorize(actor, authz.PermissionRoleRevoke); err != nil {
+		return err
+	}
+	if userID <= 0 || actor.UserID == userID {
+		return apperror.BadRequest("role.invalid_target", "role target is invalid")
+	}
+	role, err := auth.ParseRole(roleValue)
+	if err != nil {
+		return apperror.BadRequest("role.invalid_role", "invalid role")
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		return apperror.BadRequest("role.reason_required", "role change reason is required")
+	}
+	if err := s.requireRoleStore(); err != nil {
+		return err
+	}
+	if err := s.roles.RevokeRole(ctx, userID, role, actor.UserID, reason); err != nil {
+		return mapRoleError(err)
+	}
+	return nil
+}
+
+func (s *Service) requireRoleStore() error {
+	if s.roles == nil {
+		return apperror.Internal()
+	}
+	return nil
+}
+
+func authorize(actor auth.Actor, permission authz.Permission) error {
+	if err := authz.Authorize(authz.NewSubject(actor), permission); err != nil {
+		return apperror.Forbidden("forbidden", "required permission is missing")
+	}
+	return nil
+}
+
+func mapRoleError(err error) error {
+	switch {
+	case errors.Is(err, ErrLastRoot):
+		return apperror.Conflict("role.last_root", "at least one root role must remain")
+	case errors.Is(err, ErrProtectedRole):
+		return apperror.Conflict("role.protected", "the user role cannot be revoked")
+	case errors.Is(err, ErrConflict):
+		return apperror.Conflict("role.already_assigned", "role is already assigned")
+	case errors.Is(err, ErrNotFound):
+		return apperror.NotFound("role.not_found", "role assignment not found")
+	default:
+		return err
+	}
 }
 
 func invalidCredentials() error {

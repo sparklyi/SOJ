@@ -23,6 +23,8 @@ type HandlerService interface {
 	ListUsers(context.Context, auth.Actor, ListUsersInput) (UserList, error)
 	ListUsersByCursor(context.Context, auth.Actor, ListUsersInput) (UserCursorPage, error)
 	UpdateUser(context.Context, auth.Actor, int64, UpdateUserInput) (User, error)
+	GrantRole(context.Context, auth.Actor, int64, GrantRoleInput) (RoleAssignment, error)
+	RevokeRole(context.Context, auth.Actor, int64, string, RevokeRoleInput) error
 }
 
 type Handler struct {
@@ -99,7 +101,6 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	page, _ := strconv.ParseInt(c.DefaultQuery("page", "1"), 10, 32)
 	pageSize, _ := strconv.ParseInt(c.DefaultQuery("page_size", "20"), 10, 32)
 	users, err := h.service.ListUsers(c.Request.Context(), actorFromGin(c), ListUsersInput{
-		Role:     c.Query("role"),
 		Status:   c.Query("status"),
 		Keyword:  c.Query("keyword"),
 		Page:     int32(page),
@@ -119,7 +120,6 @@ func (h *Handler) ListUsersByCursor(c *gin.Context) {
 		return
 	}
 	input := ListUsersInput{
-		Role:     c.Query("role"),
 		Status:   c.Query("status"),
 		Keyword:  c.Query("keyword"),
 		PageSize: int32(pageSize),
@@ -165,6 +165,51 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		return
 	}
 	httpapi.OK(c, user)
+}
+
+func (h *Handler) GrantRole(c *gin.Context) {
+	id, err := parseUserID(c)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	var input GrantRoleInput
+	if !bindJSON(c, &input) {
+		return
+	}
+	assignment, err := h.service.GrantRole(c.Request.Context(), actorFromGin(c), id, input)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, assignment)
+}
+
+func (h *Handler) RevokeRole(c *gin.Context) {
+	id, err := parseUserID(c)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	var input RevokeRoleInput
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if !bindJSON(c, &input) {
+			return
+		}
+	}
+	if err := h.service.RevokeRole(c.Request.Context(), actorFromGin(c), id, c.Param("role"), input); err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.NoContent(c)
+}
+
+func parseUserID(c *gin.Context) (int64, error) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, apperror.BadRequest("user.invalid_id", "invalid user id")
+	}
+	return id, nil
 }
 
 func bindJSON(c *gin.Context, dst any) bool {

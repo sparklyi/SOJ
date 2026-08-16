@@ -27,6 +27,8 @@ type fakeService struct {
 	listUsers         func(context.Context, auth.Actor, ListUsersInput) (UserList, error)
 	listUsersByCursor func(context.Context, auth.Actor, ListUsersInput) (UserCursorPage, error)
 	updateUser        func(context.Context, auth.Actor, int64, UpdateUserInput) (User, error)
+	grantRole         func(context.Context, auth.Actor, int64, GrantRoleInput) (RoleAssignment, error)
+	revokeRole        func(context.Context, auth.Actor, int64, string, RevokeRoleInput) error
 }
 
 func (f fakeService) Register(ctx context.Context, actor auth.Actor, input RegisterInput) (AuthSession, error) {
@@ -74,6 +76,20 @@ func (f fakeService) UpdateUser(ctx context.Context, actor auth.Actor, id int64,
 		return User{}, errors.New("not implemented")
 	}
 	return f.updateUser(ctx, actor, id, input)
+}
+
+func (f fakeService) GrantRole(ctx context.Context, actor auth.Actor, id int64, input GrantRoleInput) (RoleAssignment, error) {
+	if f.grantRole == nil {
+		return RoleAssignment{}, errors.New("not implemented")
+	}
+	return f.grantRole(ctx, actor, id, input)
+}
+
+func (f fakeService) RevokeRole(ctx context.Context, actor auth.Actor, id int64, role string, input RevokeRoleInput) error {
+	if f.revokeRole == nil {
+		return errors.New("not implemented")
+	}
+	return f.revokeRole(ctx, actor, id, role, input)
 }
 
 func TestHandlerRegisterRejectsBadJSON(t *testing.T) {
@@ -136,7 +152,7 @@ func TestHandlerMeSuccess(t *testing.T) {
 			if actor.UserID != 42 {
 				t.Fatalf("actor.UserID = %d, want 42", actor.UserID)
 			}
-			return User{ID: 42, Email: "user@example.com", Username: "user", Role: auth.RoleUser, Status: StatusActive}, nil
+			return User{ID: 42, Email: "user@example.com", Username: "user", Roles: []auth.Role{auth.RoleUser}, Status: StatusActive}, nil
 		},
 	})
 
@@ -246,7 +262,7 @@ func TestHandlerUpdateUserSuccess(t *testing.T) {
 			if input.Username == nil || *input.Username != "new-name" {
 				t.Fatalf("username = %#v, want new-name", input.Username)
 			}
-			return User{ID: id, Email: "user@example.com", Username: *input.Username, Role: auth.RoleUser, Status: StatusActive}, nil
+			return User{ID: id, Email: "user@example.com", Username: *input.Username, Roles: []auth.Role{auth.RoleUser}, Status: StatusActive}, nil
 		},
 	})
 
@@ -257,6 +273,55 @@ func TestHandlerUpdateUserSuccess(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestHandlerGrantRoleSuccess(t *testing.T) {
+	var gotID int64
+	var gotInput GrantRoleInput
+	router := testRouter(fakeService{
+		grantRole: func(_ context.Context, _ auth.Actor, id int64, input GrantRoleInput) (RoleAssignment, error) {
+			gotID = id
+			gotInput = input
+			return RoleAssignment{ID: 9, UserID: id, Role: auth.RoleAuthor}, nil
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/7/roles", jsonBody(GrantRoleInput{Role: "author", Reason: "approved author"}))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotID != 7 || gotInput.Role != "author" || gotInput.Reason != "approved author" {
+		t.Fatalf("grant call = id %d input %+v", gotID, gotInput)
+	}
+}
+
+func TestHandlerRevokeRoleSuccess(t *testing.T) {
+	var gotRole string
+	router := testRouter(fakeService{
+		revokeRole: func(_ context.Context, _ auth.Actor, id int64, role string, input RevokeRoleInput) error {
+			if id != 7 || input.Reason != "removed author access" {
+				t.Fatalf("revoke call = id %d input %+v", id, input)
+			}
+			gotRole = role
+			return nil
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/admin/users/7/roles/author", jsonBody(RevokeRoleInput{Reason: "removed author access"}))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if gotRole != "author" {
+		t.Fatalf("role = %q, want author", gotRole)
 	}
 }
 
