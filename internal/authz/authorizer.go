@@ -14,11 +14,7 @@ type Subject struct {
 }
 
 func NewSubject(actor auth.Actor) Subject {
-	roles := append([]Role(nil), actor.Roles...)
-	if actor.Role != "" && !containsRole(roles, actor.Role) {
-		roles = append(roles, actor.Role)
-	}
-	return Subject{UserID: actor.UserID, Roles: roles}
+	return Subject{UserID: actor.UserID, Roles: append([]Role(nil), actor.Roles...)}
 }
 
 func (s Subject) Authenticated() bool {
