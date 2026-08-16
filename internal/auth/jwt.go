@@ -14,7 +14,6 @@ type JWTManager struct {
 
 type accessClaims struct {
 	UserID   int64  `json:"user_id"`
-	Role     string `json:"role"`
 	DeviceID string `json:"device_id"`
 	jwt.RegisteredClaims
 }
@@ -33,7 +32,6 @@ func (m *JWTManager) IssueAccessToken(actor Actor) (string, error) {
 	now := time.Now().UTC()
 	claims := accessClaims{
 		UserID:   actor.UserID,
-		Role:     string(actor.Role),
 		DeviceID: actor.DeviceID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
@@ -60,12 +58,8 @@ func (m *JWTManager) ParseAccessToken(tokenString string) (Actor, error) {
 	if !token.Valid {
 		return Actor{}, errors.New("invalid access token")
 	}
-	role, err := ParseRole(claims.Role)
-	if err != nil {
-		return Actor{}, err
-	}
 	if claims.UserID <= 0 {
 		return Actor{}, errors.New("invalid user_id claim")
 	}
-	return Actor{UserID: claims.UserID, Role: role, DeviceID: claims.DeviceID}, nil
+	return Actor{UserID: claims.UserID, DeviceID: claims.DeviceID}, nil
 }
