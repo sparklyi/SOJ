@@ -46,7 +46,6 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, email, passwordHash
 		Email:        email,
 		PasswordHash: passwordHash,
 		Username:     username,
-		Role:         "",
 		Status:       StatusActive,
 	})
 	if err != nil {
