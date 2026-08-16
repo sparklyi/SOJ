@@ -60,7 +60,6 @@ func TestCursorQueryBuildersAppendOnlyActiveFilters(t *testing.T) {
 
 	t.Run("users", func(t *testing.T) {
 		query, args := buildListUsersByCursorQuery(ListUsersByCursorParams{
-			Role:            pgtype.Text{String: "admin", Valid: true},
 			Status:          pgtype.Text{String: "active", Valid: true},
 			Keyword:         pgtype.Text{String: "alice", Valid: true},
 			BeforeCreatedAt: pgtype.Timestamptz{Time: before, Valid: true},
@@ -68,15 +67,14 @@ func TestCursorQueryBuildersAppendOnlyActiveFilters(t *testing.T) {
 			Limit:           21,
 		})
 		assertIndexableCursorQuery(t, query, []string{
-			"role = $1::text",
-			"status = $2::text",
-			"email ILIKE '%' || $3::text || '%'",
-			"username ILIKE '%' || $3::text || '%'",
-			"(created_at, id) < ($4::timestamptz, $5::bigint)",
+			"status = $1::text",
+			"email ILIKE '%' || $2::text || '%'",
+			"username ILIKE '%' || $2::text || '%'",
+			"(created_at, id) < ($3::timestamptz, $4::bigint)",
 			"ORDER BY created_at DESC, id DESC",
-			"LIMIT $6",
+			"LIMIT $5",
 		})
-		assertQueryArgs(t, args, []any{"admin", "active", "alice", before, int64(42), int32(21)})
+		assertQueryArgs(t, args, []any{"active", "alice", before, int64(42), int32(21)})
 	})
 
 	t.Run("problems", func(t *testing.T) {

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"SOJ/internal/auth"
 	"SOJ/internal/postgres/db"
 
 	"github.com/jackc/pgx/v5"
@@ -47,7 +46,6 @@ func (r *PostgresRepository) CreateUser(ctx context.Context, email, passwordHash
 		Email:        email,
 		PasswordHash: passwordHash,
 		Username:     username,
-		Role:         string(auth.RoleUser),
 		Status:       StatusActive,
 	})
 	if err != nil {
@@ -76,7 +74,6 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersInput
 	limit := input.PageSize
 	offset := (input.Page - 1) * input.PageSize
 	params := db.ListUsersParams{
-		Role:    nullableText(input.Role),
 		Status:  nullableText(input.Status),
 		Keyword: nullableText(input.Keyword),
 		Limit:   limit,
@@ -87,7 +84,6 @@ func (r *PostgresRepository) ListUsers(ctx context.Context, input ListUsersInput
 		return nil, 0, err
 	}
 	total, err := r.q.CountUsers(ctx, db.CountUsersParams{
-		Role:    params.Role,
 		Status:  params.Status,
 		Keyword: params.Keyword,
 	})
@@ -107,7 +103,6 @@ func (r *PostgresRepository) ListUsersByCursor(ctx context.Context, input ListUs
 		cursor = &UserCursor{CreatedAt: time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC), ID: 1<<63 - 1}
 	}
 	rows, err := r.q.ListUsersByCursor(ctx, db.ListUsersByCursorParams{
-		Role:            nullableText(input.Role),
 		Status:          nullableText(input.Status),
 		Keyword:         nullableText(input.Keyword),
 		BeforeCreatedAt: pgtype.Timestamptz{Time: cursor.CreatedAt.UTC(), Valid: true},
@@ -129,7 +124,6 @@ func (r *PostgresRepository) UpdateUser(ctx context.Context, id int64, input Upd
 		ID:       id,
 		Username: nullableTextPtr(input.Username),
 		Bio:      nullableTextPtr(input.Bio),
-		Role:     nullableTextPtr(input.Role),
 		Status:   nullableTextPtr(input.Status),
 	})
 	if err != nil {
@@ -183,14 +177,12 @@ func (r *PostgresRepository) RevokeUserDeviceRefreshTokens(ctx context.Context, 
 }
 
 func mapUser(row db.User) User {
-	role, _ := auth.ParseRole(row.Role)
 	return User{
 		ID:        row.ID,
 		Email:     row.Email,
 		Username:  row.Username,
 		AvatarURL: textValue(row.AvatarUrl),
 		Bio:       textValue(row.Bio),
-		Role:      role,
 		Status:    row.Status,
 		CreatedAt: row.CreatedAt.Time,
 		UpdatedAt: row.UpdatedAt.Time,

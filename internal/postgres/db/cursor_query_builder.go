@@ -9,7 +9,6 @@ import (
 )
 
 type ListUsersByCursorParams struct {
-	Role            pgtype.Text        `db:"role" json:"role"`
 	Status          pgtype.Text        `db:"status" json:"status"`
 	Keyword         pgtype.Text        `db:"keyword" json:"keyword"`
 	BeforeCreatedAt pgtype.Timestamptz `db:"before_created_at" json:"before_created_at"`
@@ -50,14 +49,15 @@ type ListProblemsByCursorRow struct {
 }
 
 type ListContestsByCursorParams struct {
-	Status          pgtype.Text        `db:"status" json:"status"`
-	Visibility      pgtype.Text        `db:"visibility" json:"visibility"`
-	Keyword         pgtype.Text        `db:"keyword" json:"keyword"`
-	IncludePrivate  bool               `db:"include_private" json:"include_private"`
-	VisibleToUserID pgtype.Int8        `db:"visible_to_user_id" json:"visible_to_user_id"`
-	BeforeStartAt   pgtype.Timestamptz `db:"before_start_at" json:"before_start_at"`
-	BeforeID        int64              `db:"before_id" json:"before_id"`
-	Limit           int32              `db:"limit" json:"limit"`
+	Status              pgtype.Text        `db:"status" json:"status"`
+	Visibility          pgtype.Text        `db:"visibility" json:"visibility"`
+	Keyword             pgtype.Text        `db:"keyword" json:"keyword"`
+	IncludePrivate      bool               `db:"include_private" json:"include_private"`
+	VisibleToUserID     pgtype.Int8        `db:"visible_to_user_id" json:"visible_to_user_id"`
+	VisibleToContestIDs []int64            `db:"visible_to_contest_ids" json:"visible_to_contest_ids"`
+	BeforeStartAt       pgtype.Timestamptz `db:"before_start_at" json:"before_start_at"`
+	BeforeID            int64              `db:"before_id" json:"before_id"`
+	Limit               int32              `db:"limit" json:"limit"`
 }
 
 type ListSubmissionsByCursorParams struct {
@@ -95,9 +95,6 @@ func (b *cursorQueryBuilder) finish(selectSQL, orderBy string, limit int32) (str
 
 func buildListUsersByCursorQuery(arg ListUsersByCursorParams) (string, []any) {
 	builder := cursorQueryBuilder{}
-	if arg.Role.Valid {
-		builder.add("role = " + builder.bind(arg.Role.String, "::text"))
-	}
 	if arg.Status.Valid {
 		builder.add("status = " + builder.bind(arg.Status.String, "::text"))
 	}
@@ -110,7 +107,7 @@ func buildListUsersByCursorQuery(arg ListUsersByCursorParams) (string, []any) {
 	builder.add("(created_at, id) < (" + beforeArg + ", " + beforeIDArg + ")")
 
 	return builder.finish(
-		"SELECT id, email, password_hash, username, avatar_url, bio, role, status, created_at, updated_at\nFROM users",
+		"SELECT id, email, password_hash, username, avatar_url, bio, status, created_at, updated_at\nFROM users",
 		"created_at DESC, id DESC",
 		arg.Limit,
 	)
@@ -174,12 +171,19 @@ func buildListContestsByCursorQuery(arg ListContestsByCursorParams) (string, []a
 		builder.add("c.title ILIKE '%' || " + keywordArg + " || '%'")
 	}
 	if !arg.IncludePrivate {
+		visibilityClauses := []string{"c.visibility = 'public'"}
 		if arg.VisibleToUserID.Valid {
 			viewerArg := builder.bind(arg.VisibleToUserID.Int64, "::bigint")
-			builder.add("(c.visibility = 'public' OR c.owner_user_id = " + viewerArg + " OR EXISTS (SELECT 1 FROM contest_registrations cr WHERE cr.contest_id = c.id AND cr.user_id = " + viewerArg + " AND cr.status = 'active'))")
-		} else {
-			builder.add("c.visibility = 'public'")
+			visibilityClauses = append(visibilityClauses,
+				"c.owner_user_id = "+viewerArg,
+				"EXISTS (SELECT 1 FROM contest_registrations cr WHERE cr.contest_id = c.id AND cr.user_id = "+viewerArg+" AND cr.status = 'active')",
+			)
 		}
+		if len(arg.VisibleToContestIDs) > 0 {
+			roleContestsArg := builder.bind(arg.VisibleToContestIDs, "::bigint[]")
+			visibilityClauses = append(visibilityClauses, "c.id = ANY("+roleContestsArg+")")
+		}
+		builder.add("(" + strings.Join(visibilityClauses, " OR ") + ")")
 	}
 	beforeArg := builder.bind(arg.BeforeStartAt.Time, "::timestamptz")
 	beforeIDArg := builder.bind(arg.BeforeID, "::bigint")
@@ -235,7 +239,6 @@ func (q *Queries) ListUsersByCursor(ctx context.Context, arg ListUsersByCursorPa
 			&item.Username,
 			&item.AvatarUrl,
 			&item.Bio,
-			&item.Role,
 			&item.Status,
 			&item.CreatedAt,
 			&item.UpdatedAt,

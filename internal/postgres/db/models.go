@@ -221,6 +221,17 @@ type ProblemCheckRun struct {
 	StatementID   pgtype.Int8        `db:"statement_id" json:"statement_id"`
 }
 
+type ProblemReviewEvent struct {
+	ID          int64              `db:"id" json:"id"`
+	ProblemID   int64              `db:"problem_id" json:"problem_id"`
+	ActorUserID int64              `db:"actor_user_id" json:"actor_user_id"`
+	FromStatus  string             `db:"from_status" json:"from_status"`
+	ToStatus    string             `db:"to_status" json:"to_status"`
+	Decision    string             `db:"decision" json:"decision"`
+	Comment     string             `db:"comment" json:"comment"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
 type ProblemStatement struct {
 	ID                int64              `db:"id" json:"id"`
 	ProblemID         int64              `db:"problem_id" json:"problem_id"`
@@ -290,6 +301,23 @@ type RejudgeBatchItem struct {
 	FinishedAt   pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
 	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+}
+
+type Role struct {
+	Code        string `db:"code" json:"code"`
+	DisplayName string `db:"display_name" json:"display_name"`
+	Scope       string `db:"scope" json:"scope"`
+	SystemRole  bool   `db:"system_role" json:"system_role"`
+}
+
+type RoleAuditEvent struct {
+	ID          int64              `db:"id" json:"id"`
+	UserID      int64              `db:"user_id" json:"user_id"`
+	RoleCode    string             `db:"role_code" json:"role_code"`
+	ActorUserID pgtype.Int8        `db:"actor_user_id" json:"actor_user_id"`
+	Action      string             `db:"action" json:"action"`
+	Reason      string             `db:"reason" json:"reason"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
 }
 
 type Run struct {
@@ -366,8 +394,16 @@ type User struct {
 	Username     string             `db:"username" json:"username"`
 	AvatarUrl    pgtype.Text        `db:"avatar_url" json:"avatar_url"`
 	Bio          pgtype.Text        `db:"bio" json:"bio"`
-	Role         string             `db:"role" json:"role"`
 	Status       string             `db:"status" json:"status"`
 	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+}
+
+type UserRoleAssignment struct {
+	ID        int64              `db:"id" json:"id"`
+	UserID    int64              `db:"user_id" json:"user_id"`
+	RoleCode  string             `db:"role_code" json:"role_code"`
+	GrantedBy pgtype.Int8        `db:"granted_by" json:"granted_by"`
+	GrantedAt pgtype.Timestamptz `db:"granted_at" json:"granted_at"`
+	RevokedAt pgtype.Timestamptz `db:"revoked_at" json:"revoked_at"`
 }

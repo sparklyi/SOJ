@@ -33,7 +33,7 @@ tags:
     description: ACM contests, registrations, and scoreboards.
     x-owner: WP5 Contest
   - name: Admin Users
-    description: Root-level user administration.
+    description: Role-aware user administration.
     x-owner: WP2 Auth/User
   - name: Admin Languages
     description: Judge language synchronization and administration.
@@ -203,6 +203,26 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/review-queue:
+    get:
+      tags: [Problems]
+      operationId: listProblemReviewQueue
+      summary: List problems awaiting review
+      x-owner: WP3 Problem
+      x-auth: reviewer-admin-root
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Problem review queue.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemReviewQueueEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/problems/{id}:
     parameters:
       - $ref: "#/components/parameters/ID"
@@ -263,6 +283,75 @@ paths:
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}/review:
+    post:
+      tags: [Problems]
+      operationId: submitProblemReview
+      summary: Submit a problem for review
+      x-owner: WP3 Problem
+      x-auth: problem-owner-reviewer-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Problem submitted for review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}/review/decision:
+    post:
+      tags: [Problems]
+      operationId: decideProblemReview
+      summary: Approve a problem or request changes
+      x-owner: WP3 Problem
+      x-auth: reviewer-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProblemReviewDecisionRequest"
+      responses:
+        "200":
+          description: Review decision applied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/problems/{id}/review/events:
+    get:
+      tags: [Problems]
+      operationId: listProblemReviewEvents
+      summary: List problem review events
+      x-owner: WP3 Problem
+      x-auth: problem-owner-reviewer-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Problem review event list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemReviewEventPageEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/problems/cursor:
     get:
@@ -990,6 +1079,66 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/contests/{id}/roles:
+    post:
+      tags: [Contests]
+      operationId: grantContestRole
+      summary: Grant a role within a contest
+      x-owner: WP5 Contest
+      x-auth: contest-owner-manager-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContestRoleGrantRequest"
+      responses:
+        "200":
+          description: Contest role assignment created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContestRoleAssignmentEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/contests/{id}/roles/{role}/users/{user_id}:
+    delete:
+      tags: [Contests]
+      operationId: revokeContestRole
+      summary: Revoke a role within a contest
+      x-owner: WP5 Contest
+      x-auth: contest-owner-manager-admin-root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: role
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ContestRole" }
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContestRoleRevokeRequest"
+      responses:
+        "204":
+          description: Contest role assignment revoked.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/admin/users:
     get:
       tags: [Admin Users]
@@ -1000,9 +1149,6 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
-        - name: role
-          in: query
-          schema: { $ref: "#/components/schemas/UserRole" }
         - name: status
           in: query
           schema: { $ref: "#/components/schemas/UserStatus" }
@@ -1048,6 +1194,62 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
         "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/users/{id}/roles:
+    post:
+      tags: [Admin Users]
+      operationId: grantUserRole
+      summary: Grant a global role to a user
+      x-owner: WP2 Auth/User
+      x-auth: root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleGrantRequest"
+      responses:
+        "200":
+          description: Role assignment created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleAssignmentEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/users/{id}/roles/{role}:
+    delete:
+      tags: [Admin Users]
+      operationId: revokeUserRole
+      summary: Revoke a global role from a user
+      x-owner: WP2 Auth/User
+      x-auth: root
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: role
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/UserRole" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleRevokeRequest"
+      responses:
+        "204":
+          description: Role assignment revoked.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/admin/users/cursor:
     get:
       tags: [Admin Users]
@@ -1058,9 +1260,6 @@ paths:
       parameters:
         - $ref: "#/components/parameters/PageSize"
         - $ref: "#/components/parameters/Cursor"
-        - name: role
-          in: query
-          schema: { $ref: "#/components/schemas/UserRole" }
         - name: status
           in: query
           schema: { $ref: "#/components/schemas/UserStatus" }
@@ -1271,12 +1470,24 @@ components:
             - auth.token_expired
             - auth.refresh_token_revoked
             - user.email_exists
+            - role.invalid_target
+            - role.invalid_role
+            - role.reason_required
+            - role.last_root
+            - role.protected
+            - role.already_assigned
+            - role.not_found
             - problem.id_invalid
             - problem.forbidden
             - problem.not_found
             - problem.slug_conflict
             - problem.not_publishable
             - problem.testcase_not_ready
+            - problem.status_managed_by_review
+            - problem.review_invalid_state
+            - problem.review_decision_invalid
+            - problem.review_comment_required
+            - problem.self_review_forbidden
             - problem_check.id_invalid
             - problem_check.not_found
             - testcase.invalid_archive
@@ -1289,6 +1500,12 @@ components:
             - contest.ended
             - contest.registration_required
             - contest.scoreboard_hidden
+            - contest.role_target_invalid
+            - contest.role_invalid
+            - contest.role_reason_required
+            - contest.role_not_found
+            - contest.role_target_not_found
+            - contest.role_exists
             - queue.dispatch_failed
             - judge.engine_unavailable
             - service_unavailable
@@ -1305,7 +1522,10 @@ components:
         total: { type: integer, format: int64, minimum: 0 }
     UserRole:
       type: string
-      enum: [user, admin, root]
+      enum: [user, author, reviewer, operator, admin, root]
+    ContestRole:
+      type: string
+      enum: [contest_staff, contest_manager, contest_judge]
     UserStatus:
       type: string
       enum: [active, disabled, deleted]
@@ -1317,7 +1537,7 @@ components:
       enum: [private, public, contest_only]
     ProblemStatus:
       type: string
-      enum: [draft, published, archived]
+      enum: [draft, in_review, changes_requested, published, archived]
     TestcaseSetStatus:
       type: string
       enum: [uploading, ready, disabled]
@@ -1374,14 +1594,19 @@ components:
         user: { $ref: "#/components/schemas/UserResponse" }
     UserResponse:
       type: object
-      required: [id, email, username, role, status, created_at, updated_at]
+      required: [id, email, username, roles, permissions, status, created_at, updated_at]
       properties:
         id: { type: integer, format: int64 }
         email: { type: string, format: email }
         username: { type: string }
         avatar_url: { type: string, nullable: true }
         bio: { type: string, nullable: true }
-        role: { $ref: "#/components/schemas/UserRole" }
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/UserRole" }
+        permissions:
+          type: array
+          items: { type: string }
         status: { $ref: "#/components/schemas/UserStatus" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -1390,8 +1615,54 @@ components:
       properties:
         username: { type: string }
         bio: { type: string, nullable: true }
-        role: { $ref: "#/components/schemas/UserRole" }
         status: { $ref: "#/components/schemas/UserStatus" }
+    RoleGrantRequest:
+      type: object
+      required: [role, reason]
+      properties:
+        role: { $ref: "#/components/schemas/UserRole" }
+        reason: { type: string, minLength: 1 }
+    RoleRevokeRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1 }
+    RoleAssignment:
+      type: object
+      required: [id, user_id, role, granted_at]
+      properties:
+        id: { type: integer, format: int64 }
+        user_id: { type: integer, format: int64 }
+        role: { $ref: "#/components/schemas/UserRole" }
+        granted_by: { type: integer, format: int64, nullable: true }
+        granted_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time, nullable: true }
+    RoleAssignmentEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/RoleAssignment" } }
+    ContestRoleGrantRequest:
+      type: object
+      required: [user_id, role, reason]
+      properties:
+        user_id: { type: integer, format: int64, minimum: 1 }
+        role: { $ref: "#/components/schemas/ContestRole" }
+        reason: { type: string, minLength: 1 }
+    ContestRoleRevokeRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1 }
+    ContestRoleAssignment:
+      type: object
+      required: [id, contest_id, user_id, role, granted_at]
+      properties:
+        id: { type: integer, format: int64 }
+        contest_id: { type: integer, format: int64 }
+        user_id: { type: integer, format: int64 }
+        role: { $ref: "#/components/schemas/ContestRole" }
+        granted_by: { type: integer, format: int64, nullable: true }
+        granted_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time, nullable: true }
     ProblemLimits:
       type: object
       required: [time_limit_ms, memory_limit_kb]
@@ -1423,7 +1694,6 @@ components:
         tags:
           type: array
           items: { type: string }
-        status: { $ref: "#/components/schemas/ProblemStatus" }
     ProblemResponse:
       type: object
       required: [id, title, slug, difficulty, visibility, status, tags, limits, owner_user_id, created_at, updated_at]
@@ -1606,6 +1876,40 @@ components:
         blockers:
           type: array
           items: { $ref: "#/components/schemas/ProblemAuthoringBlocker" }
+    ProblemReviewDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [approve, request_changes]
+        comment: { type: string }
+    ProblemReviewEvent:
+      type: object
+      required: [id, problem_id, actor_user_id, from_status, to_status, decision, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        problem_id: { type: integer, format: int64 }
+        actor_user_id: { type: integer, format: int64 }
+        from_status: { $ref: "#/components/schemas/ProblemStatus" }
+        to_status: { $ref: "#/components/schemas/ProblemStatus" }
+        decision:
+          type: string
+          enum: [submit, approve, request_changes]
+        comment: { type: string }
+        created_at: { type: string, format: date-time }
+    ProblemReviewQueue:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          required: [items]
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/ProblemResponse" } }
+    ProblemReviewEventPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ProblemReviewEvent" } }
     SubmissionCreateRequest:
       type: object
       required: [problem_id, language_id, source_code]
@@ -2045,6 +2349,12 @@ components:
     ProblemStatsEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ProblemStatsResponse" } }
+    ProblemReviewQueueEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ProblemReviewQueue" } }
+    ProblemReviewEventPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ProblemReviewEventPage" } }
     SubmissionEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/SubmissionResponse" } }
@@ -2078,6 +2388,9 @@ components:
     ContestRegistrationEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ContestRegistrationResponse" } }
+    ContestRoleAssignmentEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/ContestRoleAssignment" } }
     ScoreboardEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ScoreboardResponse" } }

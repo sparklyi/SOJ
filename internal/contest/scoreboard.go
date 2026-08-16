@@ -74,7 +74,11 @@ func (s *ScoreboardService) Scoreboard(ctx context.Context, actor auth.Actor, co
 	if err != nil {
 		return ScoreboardResponse{}, err
 	}
-	if err := s.reader.canReadContest(ctx, actor, contest); err != nil {
+	actor, err = s.reader.actorWithContestRoles(ctx, actor, contestID)
+	if err != nil {
+		return ScoreboardResponse{}, err
+	}
+	if err := s.reader.canReadContestAs(ctx, actor, contest); err != nil {
 		return ScoreboardResponse{}, err
 	}
 	view := s.defaultScoreboardView(contest, query.View)
@@ -339,7 +343,7 @@ func (s *ScoreboardService) canViewScoreboard(actor auth.Actor, contest ContestR
 	now := s.reader.now()
 	switch view {
 	case ScoreboardViewLive:
-		if now.Before(contest.FreezeAt) || actor.Admin() || actor.UserID == contest.OwnerUserID {
+		if now.Before(contest.FreezeAt) || canViewContestResults(actor, contest) {
 			return nil
 		}
 		return apperror.Forbidden("contest.scoreboard_hidden", "live scoreboard is hidden after freeze time")

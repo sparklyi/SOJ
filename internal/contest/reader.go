@@ -6,6 +6,7 @@ import (
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 )
 
 type contestReaderStore interface {
@@ -20,18 +21,23 @@ type contestReaderStore interface {
 // ContestReader serves contest catalog and access-controlled read workflows.
 type ContestReader struct {
 	store contestReaderStore
+	roles ContestRoleStore
 	now   func() time.Time
 }
 
 // NewContestReader builds a contest reader with its read store and clock.
-func NewContestReader(store contestReaderStore, now func() time.Time) *ContestReader {
+func NewContestReader(store contestReaderStore, now func() time.Time, roleStore ...ContestRoleStore) *ContestReader {
 	if store == nil {
 		panic("contest reader store is required")
 	}
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &ContestReader{store: store, now: now}
+	var roles ContestRoleStore
+	if len(roleStore) > 0 {
+		roles = roleStore[0]
+	}
+	return &ContestReader{store: store, roles: roles, now: now}
 }
 
 // GetContest returns a contest after applying viewer access and frontend fields.
@@ -58,6 +64,13 @@ func (r *ContestReader) ListContests(ctx context.Context, actor auth.Actor, filt
 		filter.IncludePrivate = true
 	} else if actor.Authenticated() {
 		filter.VisibleToUserID = actor.UserID
+		if r.roles != nil {
+			ids, err := r.roles.ListContestIDs(ctx, actor.UserID)
+			if err != nil {
+				return ContestList{}, err
+			}
+			filter.VisibleToContestIDs = ids
+		}
 	}
 	filter.Limit = filter.PageSize
 	filter.Offset = (filter.Page - 1) * filter.PageSize
@@ -84,6 +97,13 @@ func (r *ContestReader) ListContestsByCursor(ctx context.Context, actor auth.Act
 		filter.IncludePrivate = true
 	} else if actor.Authenticated() {
 		filter.VisibleToUserID = actor.UserID
+		if r.roles != nil {
+			ids, err := r.roles.ListContestIDs(ctx, actor.UserID)
+			if err != nil {
+				return ContestCursorPage{}, err
+			}
+			filter.VisibleToContestIDs = ids
+		}
 	}
 	limit := filter.PageSize
 	cursor := ContestCursor{
@@ -161,6 +181,17 @@ func (r *ContestReader) canReadContest(ctx context.Context, actor auth.Actor, co
 	if contest.Visibility == VisibilityPublic || actor.Admin() || actor.UserID == contest.OwnerUserID {
 		return nil
 	}
+	scoped, err := r.actorWithContestRoles(ctx, actor, contest.ID)
+	if err != nil {
+		return err
+	}
+	return r.canReadContestAs(ctx, scoped, contest)
+}
+
+func (r *ContestReader) canReadContestAs(ctx context.Context, actor auth.Actor, contest ContestRecord) error {
+	if contest.Visibility == VisibilityPublic || actor.Admin() || actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestRead) == nil {
+		return nil
+	}
 	if !actor.Authenticated() {
 		return apperror.Unauthorized("auth_required", "authentication required")
 	}
@@ -169,4 +200,20 @@ func (r *ContestReader) canReadContest(ctx context.Context, actor auth.Actor, co
 		return nil
 	}
 	return apperror.Forbidden("contest.not_allowed", "contest access denied")
+}
+
+func (r *ContestReader) actorWithContestRoles(ctx context.Context, actor auth.Actor, contestID int64) (auth.Actor, error) {
+	if r.roles == nil || !actor.Authenticated() || contestID <= 0 {
+		return actor, nil
+	}
+	roles, err := r.roles.ListContestRoles(ctx, contestID, actor.UserID)
+	if err != nil {
+		return auth.Actor{}, err
+	}
+	for _, role := range roles {
+		if !actor.HasRole(role) {
+			actor.Roles = append(actor.Roles, role)
+		}
+	}
+	return actor, nil
 }

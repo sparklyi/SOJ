@@ -248,7 +248,13 @@ func (r *ProblemReader) AuthorizeProblemRejudge(ctx context.Context, actor auth.
 	if err != nil {
 		return err
 	}
-	return canWriteProblem(actor, p)
+	if err := (RBACProblemPolicy{}).CanRejudge(actor); err != nil {
+		return err
+	}
+	if p.Status != StatusPublished {
+		return apperror.Conflict("problem.not_published", "only published problems can be rejudged")
+	}
+	return nil
 }
 
 func (r *ProblemReader) Stats(ctx context.Context, actor auth.Actor, problemID int64) (ProblemStats, error) {

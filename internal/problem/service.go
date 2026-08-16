@@ -155,7 +155,7 @@ type UpdateProblemInput struct {
 	Slug          *string  `json:"slug"`
 	Difficulty    *string  `json:"difficulty"`
 	Visibility    *string  `json:"visibility"`
-	Status        *string  `json:"status"`
+	Status        *string  `json:"-"`
 	TimeLimitMS   *int32   `json:"time_limit_ms"`
 	MemoryLimitKB *int32   `json:"memory_limit_kb"`
 	Tags          []string `json:"tags"`
@@ -286,11 +286,12 @@ type Service struct {
 	reader    *ProblemReader
 	authoring *ProblemAuthoring
 	checks    *ProblemCheckService
+	review    *ProblemReviewService
 }
 
 // NewService composes the public problem API.
 // It panics if a collaborator is nil.
-func NewService(reader *ProblemReader, authoring *ProblemAuthoring, checks *ProblemCheckService) *Service {
+func NewService(reader *ProblemReader, authoring *ProblemAuthoring, checks *ProblemCheckService, review ...*ProblemReviewService) *Service {
 	if reader == nil {
 		panic("problem reader is required")
 	}
@@ -300,7 +301,11 @@ func NewService(reader *ProblemReader, authoring *ProblemAuthoring, checks *Prob
 	if checks == nil {
 		panic("problem check service is required")
 	}
-	return &Service{reader: reader, authoring: authoring, checks: checks}
+	var reviewService *ProblemReviewService
+	if len(review) > 0 {
+		reviewService = review[0]
+	}
+	return &Service{reader: reader, authoring: authoring, checks: checks, review: reviewService}
 }
 
 func (s *Service) CreateProblem(ctx context.Context, actor auth.Actor, input CreateProblemInput) (ProblemRecord, error) {
@@ -353,6 +358,42 @@ func (s *Service) RunProblemCheck(ctx context.Context, actor auth.Actor, problem
 
 func (s *Service) GetProblemCheck(ctx context.Context, actor auth.Actor, problemID int64, checkID int64) (ProblemCheckResult, error) {
 	return s.checks.GetProblemCheck(ctx, actor, problemID, checkID)
+}
+
+func (s *Service) SubmitProblemReview(ctx context.Context, actor auth.Actor, problemID int64) (ProblemResponse, error) {
+	if s.review == nil {
+		return ProblemResponse{}, apperror.ServiceUnavailable("problem review service unavailable")
+	}
+	problem, err := s.review.Submit(ctx, actor, problemID)
+	if err != nil {
+		return ProblemResponse{}, err
+	}
+	return s.reader.ProblemResponse(ctx, problem)
+}
+
+func (s *Service) ListProblemReviewQueue(ctx context.Context, actor auth.Actor, filter ProblemReviewQueueFilter) (ProblemReviewQueue, error) {
+	if s.review == nil {
+		return ProblemReviewQueue{}, apperror.ServiceUnavailable("problem review service unavailable")
+	}
+	return s.review.Queue(ctx, actor, filter)
+}
+
+func (s *Service) DecideProblemReview(ctx context.Context, actor auth.Actor, problemID int64, input ProblemReviewDecisionInput) (ProblemResponse, error) {
+	if s.review == nil {
+		return ProblemResponse{}, apperror.ServiceUnavailable("problem review service unavailable")
+	}
+	problem, err := s.review.Decide(ctx, actor, problemID, input)
+	if err != nil {
+		return ProblemResponse{}, err
+	}
+	return s.reader.ProblemResponse(ctx, problem)
+}
+
+func (s *Service) ListProblemReviewEvents(ctx context.Context, actor auth.Actor, problemID int64) ([]ProblemReviewEvent, error) {
+	if s.review == nil {
+		return nil, apperror.ServiceUnavailable("problem review service unavailable")
+	}
+	return s.review.Events(ctx, actor, problemID)
 }
 
 func (s *Service) ProblemResponse(ctx context.Context, p ProblemRecord) (ProblemResponse, error) {
@@ -613,13 +654,7 @@ func requireAuthenticated(actor auth.Actor) error {
 }
 
 func canWriteProblem(actor auth.Actor, p ProblemRecord) error {
-	if err := requireAuthenticated(actor); err != nil {
-		return err
-	}
-	if actor.Admin() || actor.UserID == p.OwnerUserID {
-		return nil
-	}
-	return apperror.Forbidden("problem.forbidden", "problem owner or admin required")
+	return (RBACProblemPolicy{}).CanEdit(actor, p)
 }
 
 func canReadProblem(actor auth.Actor, p ProblemRecord) error {
@@ -663,9 +698,6 @@ func validateUpdateProblem(input UpdateProblemInput) error {
 	}
 	if input.Visibility != nil && !validVisibility(*input.Visibility) {
 		return apperror.BadRequest("problem.visibility_invalid", "visibility is invalid")
-	}
-	if input.Status != nil && !validStatus(*input.Status) {
-		return apperror.BadRequest("problem.status_invalid", "status is invalid")
 	}
 	if input.TimeLimitMS != nil && *input.TimeLimitMS <= 0 {
 		return apperror.BadRequest("problem.time_limit_invalid", "time_limit_ms must be positive")
@@ -786,15 +818,6 @@ func validDifficulty(value string) bool {
 func validVisibility(value string) bool {
 	switch value {
 	case VisibilityPrivate, VisibilityPublic, VisibilityContestOnly:
-		return true
-	default:
-		return false
-	}
-}
-
-func validStatus(value string) bool {
-	switch value {
-	case StatusDraft, StatusPublished, StatusArchived:
 		return true
 	default:
 		return false
