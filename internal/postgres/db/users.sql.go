@@ -15,23 +15,21 @@ import (
 const countUsers = `-- name: CountUsers :one
 SELECT count(*)::bigint
 FROM users
-WHERE ($1::text IS NULL OR role = $1::text)
-  AND ($2::text IS NULL OR status = $2::text)
+WHERE ($1::text IS NULL OR status = $1::text)
   AND (
-      $3::text IS NULL
-      OR email ILIKE '%' || $3::text || '%'
-      OR username ILIKE '%' || $3::text || '%'
+      $2::text IS NULL
+      OR email ILIKE '%' || $2::text || '%'
+      OR username ILIKE '%' || $2::text || '%'
   )
 `
 
 type CountUsersParams struct {
-	Role    pgtype.Text `db:"role" json:"role"`
 	Status  pgtype.Text `db:"status" json:"status"`
 	Keyword pgtype.Text `db:"keyword" json:"keyword"`
 }
 
 func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countUsers, arg.Role, arg.Status, arg.Keyword)
+	row := q.db.QueryRow(ctx, countUsers, arg.Status, arg.Keyword)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -92,12 +90,11 @@ INSERT INTO users (
     username,
     avatar_url,
     bio,
-    role,
     status
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6
 )
-RETURNING id, email, password_hash, username, avatar_url, bio, role, status, created_at, updated_at
+RETURNING id, email, password_hash, username, avatar_url, bio, status, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -106,7 +103,6 @@ type CreateUserParams struct {
 	Username     string      `db:"username" json:"username"`
 	AvatarUrl    pgtype.Text `db:"avatar_url" json:"avatar_url"`
 	Bio          pgtype.Text `db:"bio" json:"bio"`
-	Role         string      `db:"role" json:"role"`
 	Status       string      `db:"status" json:"status"`
 }
 
@@ -118,7 +114,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		arg.Username,
 		arg.AvatarUrl,
 		arg.Bio,
-		arg.Role,
 		arg.Status,
 	)
 	var i User
@@ -129,7 +124,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Username,
 		&i.AvatarUrl,
 		&i.Bio,
-		&i.Role,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -161,7 +155,7 @@ func (q *Queries) GetRefreshTokenByHash(ctx context.Context, tokenHash string) (
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, username, avatar_url, bio, role, status, created_at, updated_at
+SELECT id, email, password_hash, username, avatar_url, bio, status, created_at, updated_at
 FROM users
 WHERE lower(email) = lower($1)
 `
@@ -176,7 +170,6 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.Username,
 		&i.AvatarUrl,
 		&i.Bio,
-		&i.Role,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -185,7 +178,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, username, avatar_url, bio, role, status, created_at, updated_at
+SELECT id, email, password_hash, username, avatar_url, bio, status, created_at, updated_at
 FROM users
 WHERE id = $1
 `
@@ -200,7 +193,6 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.Username,
 		&i.AvatarUrl,
 		&i.Bio,
-		&i.Role,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -209,21 +201,19 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, email, password_hash, username, avatar_url, bio, role, status, created_at, updated_at
+SELECT id, email, password_hash, username, avatar_url, bio, status, created_at, updated_at
 FROM users
-WHERE ($1::text IS NULL OR role = $1::text)
-  AND ($2::text IS NULL OR status = $2::text)
+WHERE ($1::text IS NULL OR status = $1::text)
   AND (
-      $3::text IS NULL
-      OR email ILIKE '%' || $3::text || '%'
-      OR username ILIKE '%' || $3::text || '%'
+      $2::text IS NULL
+      OR email ILIKE '%' || $2::text || '%'
+      OR username ILIKE '%' || $2::text || '%'
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $5 OFFSET $4
+LIMIT $4 OFFSET $3
 `
 
 type ListUsersParams struct {
-	Role    pgtype.Text `db:"role" json:"role"`
 	Status  pgtype.Text `db:"status" json:"status"`
 	Keyword pgtype.Text `db:"keyword" json:"keyword"`
 	Offset  int32       `db:"offset" json:"offset"`
@@ -232,7 +222,6 @@ type ListUsersParams struct {
 
 func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error) {
 	rows, err := q.db.Query(ctx, listUsers,
-		arg.Role,
 		arg.Status,
 		arg.Keyword,
 		arg.Offset,
@@ -252,7 +241,6 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.Username,
 			&i.AvatarUrl,
 			&i.Bio,
-			&i.Role,
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -301,17 +289,15 @@ const updateUserAdminFields = `-- name: UpdateUserAdminFields :one
 UPDATE users
 SET username = coalesce($1, username),
     bio = coalesce($2, bio),
-    role = coalesce($3, role),
-    status = coalesce($4, status),
+    status = coalesce($3, status),
     updated_at = now()
-WHERE id = $5
-RETURNING id, email, password_hash, username, avatar_url, bio, role, status, created_at, updated_at
+WHERE id = $4
+RETURNING id, email, password_hash, username, avatar_url, bio, status, created_at, updated_at
 `
 
 type UpdateUserAdminFieldsParams struct {
 	Username pgtype.Text `db:"username" json:"username"`
 	Bio      pgtype.Text `db:"bio" json:"bio"`
-	Role     pgtype.Text `db:"role" json:"role"`
 	Status   pgtype.Text `db:"status" json:"status"`
 	ID       int64       `db:"id" json:"id"`
 }
@@ -320,7 +306,6 @@ func (q *Queries) UpdateUserAdminFields(ctx context.Context, arg UpdateUserAdmin
 	row := q.db.QueryRow(ctx, updateUserAdminFields,
 		arg.Username,
 		arg.Bio,
-		arg.Role,
 		arg.Status,
 		arg.ID,
 	)
@@ -332,7 +317,6 @@ func (q *Queries) UpdateUserAdminFields(ctx context.Context, arg UpdateUserAdmin
 		&i.Username,
 		&i.AvatarUrl,
 		&i.Bio,
-		&i.Role,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,

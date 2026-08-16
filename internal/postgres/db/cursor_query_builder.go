@@ -9,7 +9,6 @@ import (
 )
 
 type ListUsersByCursorParams struct {
-	Role            pgtype.Text        `db:"role" json:"role"`
 	Status          pgtype.Text        `db:"status" json:"status"`
 	Keyword         pgtype.Text        `db:"keyword" json:"keyword"`
 	BeforeCreatedAt pgtype.Timestamptz `db:"before_created_at" json:"before_created_at"`
@@ -95,9 +94,6 @@ func (b *cursorQueryBuilder) finish(selectSQL, orderBy string, limit int32) (str
 
 func buildListUsersByCursorQuery(arg ListUsersByCursorParams) (string, []any) {
 	builder := cursorQueryBuilder{}
-	if arg.Role.Valid {
-		builder.add("role = " + builder.bind(arg.Role.String, "::text"))
-	}
 	if arg.Status.Valid {
 		builder.add("status = " + builder.bind(arg.Status.String, "::text"))
 	}
@@ -110,7 +106,7 @@ func buildListUsersByCursorQuery(arg ListUsersByCursorParams) (string, []any) {
 	builder.add("(created_at, id) < (" + beforeArg + ", " + beforeIDArg + ")")
 
 	return builder.finish(
-		"SELECT id, email, password_hash, username, avatar_url, bio, role, status, created_at, updated_at\nFROM users",
+		"SELECT id, email, password_hash, username, avatar_url, bio, status, created_at, updated_at\nFROM users",
 		"created_at DESC, id DESC",
 		arg.Limit,
 	)
@@ -235,7 +231,6 @@ func (q *Queries) ListUsersByCursor(ctx context.Context, arg ListUsersByCursorPa
 			&item.Username,
 			&item.AvatarUrl,
 			&item.Bio,
-			&item.Role,
 			&item.Status,
 			&item.CreatedAt,
 			&item.UpdatedAt,
