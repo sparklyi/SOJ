@@ -57,7 +57,7 @@ func TestRunProblemCheckReturnsCreatedEnvelope(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/checks", nil)
 	req.Header.Set("X-User-ID", "10")
-	req.Header.Set("X-User-Role", "user")
+	req.Header.Set("X-User-Role", "author")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -241,7 +241,7 @@ func TestGetProblemAuthoringStateReturnsOwnerWorkspace(t *testing.T) {
 	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems/1/authoring", nil)
 	req.Header.Set("X-User-ID", "10")
-	req.Header.Set("X-User-Role", "user")
+	req.Header.Set("X-User-Role", "author")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -284,7 +284,7 @@ func TestCreateProblemStoresTags(t *testing.T) {
 	repo := newFakeRepository()
 	service := newProblemService(repo, &fakeStorage{})
 
-	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, CreateProblemInput{
+	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, CreateProblemInput{
 		Title:         "Two Sum",
 		Slug:          "two-sum",
 		Difficulty:    DifficultyEasy,

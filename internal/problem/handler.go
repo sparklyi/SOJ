@@ -134,6 +134,27 @@ func (h *Handler) listProblemsByCursor(c *gin.Context) {
 	httpapi.OK(c, data)
 }
 
+func (h *Handler) listReviewQueue(c *gin.Context) {
+	page, ok := int32Query(c, "page", 1)
+	if !ok || page <= 0 {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "page must be a positive integer"))
+		return
+	}
+	pageSize, ok := int32Query(c, "page_size", 20)
+	if !ok || pageSize <= 0 || pageSize > 100 {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "page_size must be between 1 and 100"))
+		return
+	}
+	queue, err := h.service.ListProblemReviewQueue(c.Request.Context(), actorFromContext(c), ProblemReviewQueueFilter{
+		Page: page, PageSize: pageSize,
+	})
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, queue)
+}
+
 func (h *Handler) getProblemAuthoringState(c *gin.Context) {
 	id, ok := problemIDParam(c)
 	if !ok {
@@ -199,6 +220,50 @@ func (h *Handler) archiveProblem(c *gin.Context) {
 		return
 	}
 	httpapi.NoContent(c)
+}
+
+func (h *Handler) submitReview(c *gin.Context) {
+	id, ok := problemIDParam(c)
+	if !ok {
+		return
+	}
+	problem, err := h.service.SubmitProblemReview(c.Request.Context(), actorFromContext(c), id)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, problem)
+}
+
+func (h *Handler) decideReview(c *gin.Context) {
+	id, ok := problemIDParam(c)
+	if !ok {
+		return
+	}
+	var req ProblemReviewDecisionInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpapi.Error(c, apperror.BadRequest("request.invalid", "invalid request body"))
+		return
+	}
+	problem, err := h.service.DecideProblemReview(c.Request.Context(), actorFromContext(c), id, req)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, problem)
+}
+
+func (h *Handler) listReviewEvents(c *gin.Context) {
+	id, ok := problemIDParam(c)
+	if !ok {
+		return
+	}
+	events, err := h.service.ListProblemReviewEvents(c.Request.Context(), actorFromContext(c), id)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, gin.H{"items": events})
 }
 
 func (h *Handler) createStatement(c *gin.Context) {
@@ -446,7 +511,7 @@ func actorFromContext(c *gin.Context) auth.Actor {
 		actor.UserID = userID
 	}
 	if role, err := auth.ParseRole(c.GetHeader("X-User-Role")); err == nil {
-		actor.Role = role
+		actor.Roles = []auth.Role{role}
 	}
 	if requestID, ok := c.Get(httpapi.ContextRequestID); ok {
 		if value, ok := requestID.(string); ok {

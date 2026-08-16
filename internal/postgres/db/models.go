@@ -221,6 +221,17 @@ type ProblemCheckRun struct {
 	StatementID   pgtype.Int8        `db:"statement_id" json:"statement_id"`
 }
 
+type ProblemReviewEvent struct {
+	ID          int64              `db:"id" json:"id"`
+	ProblemID   int64              `db:"problem_id" json:"problem_id"`
+	ActorUserID int64              `db:"actor_user_id" json:"actor_user_id"`
+	FromStatus  string             `db:"from_status" json:"from_status"`
+	ToStatus    string             `db:"to_status" json:"to_status"`
+	Decision    string             `db:"decision" json:"decision"`
+	Comment     string             `db:"comment" json:"comment"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
 type ProblemStatement struct {
 	ID                int64              `db:"id" json:"id"`
 	ProblemID         int64              `db:"problem_id" json:"problem_id"`

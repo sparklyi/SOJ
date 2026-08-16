@@ -78,10 +78,12 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	)
 	problemRepo := problem.NewPostgresRepository(pool)
 	problemReader := problem.NewProblemReader(problemRepo, objectStorage)
+	problemReview := problem.NewProblemReviewService(problemRepo, problemRepo, problem.RBACProblemPolicy{})
 	problemService := problem.NewService(
 		problemReader,
 		problem.NewProblemAuthoring(problemRepo, objectStorage),
 		problem.NewProblemCheckService(problemRepo, objectStorage, time.Now),
+		problemReview,
 	)
 	contestRepo := contest.NewPostgresRepository(pool)
 	contestReader := contest.NewContestReader(contestRepo, time.Now)

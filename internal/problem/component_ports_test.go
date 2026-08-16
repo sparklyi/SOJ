@@ -109,6 +109,10 @@ func (*problemAuthoringTxStub) UpdateProblem(_ context.Context, id int64, _ Upda
 	return ProblemRecord{ID: id, OwnerUserID: 3, Status: StatusDraft}, nil
 }
 
+func (*problemAuthoringTxStub) SetProblemStatus(_ context.Context, id int64, status string) (ProblemRecord, error) {
+	return ProblemRecord{ID: id, OwnerUserID: 3, Status: status}, nil
+}
+
 func (*problemAuthoringTxStub) ArchiveProblem(_ context.Context, id int64) (ProblemRecord, error) {
 	return ProblemRecord{ID: id, OwnerUserID: 3, Status: StatusArchived}, nil
 }
@@ -166,7 +170,7 @@ func TestProblemAuthoringUsesOnlyAuthoringTransaction(t *testing.T) {
 	store := &problemAuthoringStoreStub{}
 	authoring := NewProblemAuthoring(store, testcaseArchiveWriterStub{})
 
-	created, err := authoring.CreateProblem(t.Context(), auth.Actor{UserID: 3, Role: auth.RoleUser}, CreateProblemInput{
+	created, err := authoring.CreateProblem(t.Context(), auth.Actor{UserID: 3, Roles: []auth.Role{auth.RoleAuthor}}, CreateProblemInput{
 		Title:         "Sum",
 		Slug:          "sum",
 		Difficulty:    DifficultyEasy,
@@ -225,7 +229,7 @@ func (problemCheckTxStub) CompleteProblemCheckRun(_ context.Context, input Compl
 func TestProblemCheckServiceUsesOnlyCheckStore(t *testing.T) {
 	checks := NewProblemCheckService(problemCheckStoreStub{}, testcaseArchiveReaderStub{}, func() time.Time { return time.Unix(10, 0).UTC() })
 
-	got, err := checks.GetProblemCheck(t.Context(), auth.Actor{UserID: 3, Role: auth.RoleUser}, 7, 9)
+	got, err := checks.GetProblemCheck(t.Context(), auth.Actor{UserID: 3, Roles: []auth.Role{auth.RoleAuthor}}, 7, 9)
 	if err != nil {
 		t.Fatalf("GetProblemCheck() error = %v", err)
 	}
