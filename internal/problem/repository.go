@@ -96,6 +96,12 @@ func (r *PostgresRepository) WithProblemCheckTx(ctx context.Context, fn func(con
 	})
 }
 
+func (r *PostgresRepository) WithProblemReviewTx(ctx context.Context, fn func(context.Context, problemReviewTx) error) error {
+	return r.withTx(ctx, func(tx *txRepository) error {
+		return fn(ctx, tx)
+	})
+}
+
 func (r *PostgresRepository) CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error) {
 	p, err := r.queries.CreateProblem(ctx, db.CreateProblemParams{
 		OwnerUserID:   ownerUserID,
@@ -249,6 +255,43 @@ func (r *PostgresRepository) GetProblemStats(ctx context.Context, problemID int6
 	return statsFromDB(stats), mapDBErr(err)
 }
 
+func (r *PostgresRepository) ListProblemsForReview(ctx context.Context, filter ProblemReviewQueueFilter) ([]ProblemRecord, int64, error) {
+	limit := filter.PageSize
+	if limit <= 0 {
+		limit = 20
+	}
+	page := filter.Page
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+	rows, err := r.queries.ListProblemsForReview(ctx, db.ListProblemsForReviewParams{Limit: limit, Offset: offset})
+	if err != nil {
+		return nil, 0, mapDBErr(err)
+	}
+	total, err := r.queries.CountProblemsForReview(ctx)
+	if err != nil {
+		return nil, 0, mapDBErr(err)
+	}
+	items := make([]ProblemRecord, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, problemFromDB(row))
+	}
+	return items, total, nil
+}
+
+func (r *PostgresRepository) ListProblemReviewEvents(ctx context.Context, problemID int64) ([]ProblemReviewEvent, error) {
+	rows, err := r.queries.ListProblemReviewEvents(ctx, problemID)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	items := make([]ProblemReviewEvent, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, problemReviewEventFromDB(row))
+	}
+	return items, nil
+}
+
 type txRepository struct {
 	queries *db.Queries
 }
@@ -270,6 +313,18 @@ func (r *txRepository) CreateProblem(ctx context.Context, ownerUserID int64, inp
 func (r *txRepository) GetProblem(ctx context.Context, id int64) (ProblemRecord, error) {
 	p, err := r.queries.GetProblemByID(ctx, id)
 	return problemFromGetRow(p), mapDBErr(err)
+}
+
+func (r *txRepository) CreateProblemReviewEvent(ctx context.Context, event ProblemReviewEvent) (ProblemReviewEvent, error) {
+	created, err := r.queries.CreateProblemReviewEvent(ctx, db.CreateProblemReviewEventParams{
+		ProblemID:   event.ProblemID,
+		ActorUserID: event.ActorUserID,
+		FromStatus:  event.FromStatus,
+		ToStatus:    event.ToStatus,
+		Decision:    event.Decision,
+		Comment:     event.Comment,
+	})
+	return problemReviewEventFromDB(created), mapDBErr(err)
 }
 
 func (r *txRepository) ListProblems(ctx context.Context, filter ListProblemsFilter) ([]ProblemRecord, error) {
@@ -343,6 +398,10 @@ func listProblemsByCursor(ctx context.Context, q *db.Queries, filter ListProblem
 
 func (r *txRepository) UpdateProblem(ctx context.Context, id int64, input UpdateProblemInput) (ProblemRecord, error) {
 	return updateProblem(ctx, r.queries, id, input)
+}
+
+func (r *txRepository) SetProblemStatus(ctx context.Context, id int64, status string) (ProblemRecord, error) {
+	return updateProblem(ctx, r.queries, id, UpdateProblemInput{Status: &status})
 }
 
 func (r *txRepository) ArchiveProblem(ctx context.Context, id int64) (ProblemRecord, error) {
@@ -594,6 +653,19 @@ func problemFromDB(p db.Problem) ProblemRecord {
 		CreatedAt:     p.CreatedAt.Time,
 		UpdatedAt:     p.UpdatedAt.Time,
 		PublishedAt:   p.PublishedAt.Time,
+	}
+}
+
+func problemReviewEventFromDB(event db.ProblemReviewEvent) ProblemReviewEvent {
+	return ProblemReviewEvent{
+		ID:          event.ID,
+		ProblemID:   event.ProblemID,
+		ActorUserID: event.ActorUserID,
+		FromStatus:  event.FromStatus,
+		ToStatus:    event.ToStatus,
+		Decision:    event.Decision,
+		Comment:     event.Comment,
+		CreatedAt:   event.CreatedAt.Time,
 	}
 }
 

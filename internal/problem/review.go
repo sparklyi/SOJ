@@ -54,7 +54,7 @@ type problemReviewStore interface {
 
 type problemReviewTx interface {
 	LockProblemForUpdate(context.Context, int64) (ProblemRecord, error)
-	UpdateProblem(context.Context, int64, UpdateProblemInput) (ProblemRecord, error)
+	SetProblemStatus(context.Context, int64, string) (ProblemRecord, error)
 	CreateProblemReviewEvent(context.Context, ProblemReviewEvent) (ProblemReviewEvent, error)
 }
 
@@ -173,8 +173,7 @@ func (s *ProblemReviewService) transition(ctx context.Context, actor auth.Actor,
 		if current.Status != fromStatus {
 			return apperror.Conflict("problem.review_invalid_state", "problem state changed before the review action completed")
 		}
-		status := toStatus
-		updated, err = tx.UpdateProblem(ctx, problemID, UpdateProblemInput{Status: &status})
+		updated, err = tx.SetProblemStatus(ctx, problemID, toStatus)
 		if err != nil {
 			return err
 		}

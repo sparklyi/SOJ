@@ -135,6 +135,11 @@ func (s *reviewMemoryStore) UpdateProblem(_ context.Context, _ int64, input Upda
 	return s.problem, nil
 }
 
+func (s *reviewMemoryStore) SetProblemStatus(_ context.Context, _ int64, status string) (ProblemRecord, error) {
+	s.problem.Status = status
+	return s.problem, nil
+}
+
 func (s *reviewMemoryStore) CreateProblemReviewEvent(_ context.Context, event ProblemReviewEvent) (ProblemReviewEvent, error) {
 	event.ID = int64(len(s.events) + 1)
 	s.events = append(s.events, event)

@@ -15,7 +15,7 @@ type problemPublishReadStore interface {
 }
 
 type problemStatusUpdater interface {
-	UpdateProblem(ctx context.Context, id int64, input UpdateProblemInput) (ProblemRecord, error)
+	SetProblemStatus(ctx context.Context, id int64, status string) (ProblemRecord, error)
 }
 
 type problemAuthoringReadiness struct {
@@ -42,7 +42,7 @@ func demotePublishedProblem(ctx context.Context, store problemStatusUpdater, pro
 		return nil
 	}
 	status := StatusDraft
-	_, err := store.UpdateProblem(ctx, problem.ID, UpdateProblemInput{Status: &status})
+	_, err := store.SetProblemStatus(ctx, problem.ID, status)
 	return err
 }
 
