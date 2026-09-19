@@ -20,6 +20,7 @@ type ContestRoleAssignment struct {
 	ID        int64      `json:"id"`
 	ContestID int64      `json:"contest_id"`
 	UserID    int64      `json:"user_id"`
+	Username  string     `json:"username,omitempty"`
 	Role      auth.Role  `json:"role"`
 	GrantedBy *int64     `json:"granted_by,omitempty"`
 	GrantedAt time.Time  `json:"granted_at"`
@@ -39,6 +40,7 @@ type ContestRoleRevokeInput struct {
 type ContestRoleStore interface {
 	ListContestIDs(context.Context, int64) ([]int64, error)
 	ListContestRoles(context.Context, int64, int64) ([]auth.Role, error)
+	ListContestRoleAssignments(context.Context, int64) ([]ContestRoleAssignment, error)
 	GrantContestRole(context.Context, int64, int64, auth.Role, int64, string) (ContestRoleAssignment, error)
 	RevokeContestRole(context.Context, int64, int64, auth.Role, int64, string) error
 }
@@ -117,6 +119,63 @@ func (r *PostgresContestRoleStore) ListContestRoles(ctx context.Context, contest
 		return nil, err
 	}
 	return roles, nil
+}
+
+// ListContestRoleAssignments returns every active assignment inside one contest
+// so contest owners and managers can review who holds which scoped role.
+func (r *PostgresContestRoleStore) ListContestRoleAssignments(ctx context.Context, contestID int64) ([]ContestRoleAssignment, error) {
+	if contestID <= 0 {
+		return nil, apperror.NotFound("contest.role_not_found", "contest role assignment not found")
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT a.id, a.contest_id, a.user_id, a.role_code, a.granted_by, a.granted_at, a.revoked_at, u.username
+		FROM contest_role_assignments AS a
+		JOIN users AS u ON u.id = a.user_id
+		WHERE a.contest_id = $1 AND a.revoked_at IS NULL
+		ORDER BY a.user_id, a.role_code
+	`, contestID)
+	if err != nil {
+		return nil, mapContestRoleDBError(err)
+	}
+	defer rows.Close()
+
+	assignments := make([]ContestRoleAssignment, 0)
+	for rows.Next() {
+		var (
+			assignment ContestRoleAssignment
+			roleCode   string
+			grantedBy  pgtype.Int8
+			revokedAt  pgtype.Timestamptz
+		)
+		if err := rows.Scan(
+			&assignment.ID,
+			&assignment.ContestID,
+			&assignment.UserID,
+			&roleCode,
+			&grantedBy,
+			&assignment.GrantedAt,
+			&revokedAt,
+			&assignment.Username,
+		); err != nil {
+			return nil, err
+		}
+		role, err := auth.ParseRole(roleCode)
+		if err != nil || !auth.IsContestRole(role) {
+			return nil, fmt.Errorf("invalid contest role assignment %q", roleCode)
+		}
+		assignment.Role = role
+		if grantedBy.Valid {
+			assignment.GrantedBy = &grantedBy.Int64
+		}
+		if revokedAt.Valid {
+			assignment.RevokedAt = &revokedAt.Time
+		}
+		assignments = append(assignments, assignment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return assignments, nil
 }
 
 func (r *PostgresContestRoleStore) GrantContestRole(ctx context.Context, contestID, userID int64, role auth.Role, grantedBy int64, reason string) (ContestRoleAssignment, error) {

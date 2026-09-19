@@ -107,6 +107,7 @@ func (a *ContestAuthoring) UpdateContest(ctx context.Context, actor auth.Actor, 
 			updated.Problems = problems
 			updated.ScoringMode = ScoringModeACM
 			updated.Registered = a.reader.actorRegisteredForContest(ctx, actor, updated.ID)
+			updated.CurrentUserRoles = a.reader.currentUserRoles(ctx, actor, updated.ID)
 			return nil
 		}
 		updated, err = a.reader.withFrontendContract(ctx, actor, updated)
