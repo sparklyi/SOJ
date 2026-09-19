@@ -29,7 +29,10 @@ services:
       - soj-redis-data:/data
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # MinIO publishes its images to quay.io. The Docker Hub minio/* repositories
+    # were removed, so these pinned tags only resolve from Quay. Keep the tag
+    # unchanged and do not "simplify" the registry back to Docker Hub.
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -46,7 +49,7 @@ services:
       - soj-minio-data:/data
 
   minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
     depends_on:
       minio:
         condition: service_healthy
