@@ -2,6 +2,7 @@ package contest
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -24,7 +25,35 @@ func (s *contestRoleMemoryStore) ListContestIDs(_ context.Context, userID int64)
 }
 
 func (s *contestRoleMemoryStore) ListContestRoles(_ context.Context, contestID, userID int64) ([]auth.Role, error) {
-	return append([]auth.Role(nil), s.roles[[2]int64{contestID, userID}]...), nil
+	roles := append([]auth.Role(nil), s.roles[[2]int64{contestID, userID}]...)
+	sort.Slice(roles, func(i, j int) bool { return roles[i] < roles[j] })
+	return roles, nil
+}
+
+func (s *contestRoleMemoryStore) ListContestRoleAssignments(_ context.Context, contestID int64) ([]ContestRoleAssignment, error) {
+	assignments := make([]ContestRoleAssignment, 0)
+	for key, roles := range s.roles {
+		if key[0] != contestID {
+			continue
+		}
+		sorted := append([]auth.Role(nil), roles...)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		for _, role := range sorted {
+			assignments = append(assignments, ContestRoleAssignment{
+				ID:        1,
+				ContestID: contestID,
+				UserID:    key[1],
+				Role:      role,
+			})
+		}
+	}
+	sort.Slice(assignments, func(i, j int) bool {
+		if assignments[i].UserID != assignments[j].UserID {
+			return assignments[i].UserID < assignments[j].UserID
+		}
+		return assignments[i].Role < assignments[j].Role
+	})
+	return assignments, nil
 }
 
 func (s *contestRoleMemoryStore) GrantContestRole(context.Context, int64, int64, auth.Role, int64, string) (ContestRoleAssignment, error) {
@@ -155,5 +184,83 @@ func TestContestStaffCannotSeeFullSubmissionDiagnostics(t *testing.T) {
 	judge := submissionResultVisibility(contest, auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestJudge}}, sub, now)
 	if judge.Visibility != "visible" || !judge.ShowAdminDiagnostics {
 		t.Fatalf("judge visibility = %+v, want visible diagnostics", judge)
+	}
+}
+
+type publicContestReaderStore struct{ privateContestReaderStore }
+
+func (publicContestReaderStore) GetContest(context.Context, int64) (ContestRecord, error) {
+	return ContestRecord{ID: 9, OwnerUserID: 1, Visibility: VisibilityPublic}, nil
+}
+
+func TestContestRecordExposesCurrentUserRoles(t *testing.T) {
+	roles := &contestRoleMemoryStore{roles: map[[2]int64][]auth.Role{
+		{9, 7}: {auth.RoleContestStaff, auth.RoleContestJudge},
+	}}
+	reader := NewContestReader(privateContestReaderStore{}, nil, roles)
+
+	record, err := reader.GetContest(t.Context(), auth.Actor{UserID: 7}, 9)
+	if err != nil {
+		t.Fatalf("GetContest error = %v", err)
+	}
+	want := []auth.Role{auth.RoleContestJudge, auth.RoleContestStaff}
+	if len(record.CurrentUserRoles) != len(want) {
+		t.Fatalf("current user roles = %v, want %v", record.CurrentUserRoles, want)
+	}
+	for i := range want {
+		if record.CurrentUserRoles[i] != want[i] {
+			t.Fatalf("current user roles = %v, want %v", record.CurrentUserRoles, want)
+		}
+	}
+}
+
+func TestContestRecordExposesEmptyRolesForAnonymousViewer(t *testing.T) {
+	reader := NewContestReader(publicContestReaderStore{}, nil, nil)
+
+	record, err := reader.GetContest(t.Context(), auth.Actor{}, 9)
+	if err != nil {
+		t.Fatalf("GetContest error = %v", err)
+	}
+	if record.CurrentUserRoles == nil {
+		t.Fatal("current user roles = nil, want empty array")
+	}
+	if len(record.CurrentUserRoles) != 0 {
+		t.Fatalf("current user roles = %v, want empty array", record.CurrentUserRoles)
+	}
+}
+
+func TestListContestRolesRequiresContestManager(t *testing.T) {
+	repo := newMemoryRepository()
+	repo.contests[9] = ContestRecord{ID: 9, OwnerUserID: 1, Visibility: VisibilityPrivate, Status: StatusPublished}
+	roles := &contestRoleMemoryStore{roles: map[[2]int64][]auth.Role{
+		{9, 7}: {auth.RoleContestManager},
+		{9, 8}: {auth.RoleContestStaff},
+	}}
+	reader := NewContestReader(repo, nil, roles)
+	service := NewService(
+		reader,
+		NewContestAuthoring(repo, reader),
+		NewContestPolicy(reader, repo),
+		NewScoreboardService(reader, repo),
+		roles,
+	)
+
+	assignments, err := service.ListContestRoles(t.Context(), auth.Actor{UserID: 7}, 9)
+	if err != nil {
+		t.Fatalf("contest manager ListContestRoles error = %v", err)
+	}
+	if len(assignments) != 2 {
+		t.Fatalf("assignments = %v, want 2 entries", assignments)
+	}
+
+	if _, err := service.ListContestRoles(t.Context(), auth.Actor{UserID: 8}, 9); err == nil {
+		t.Fatal("contest staff can list role assignments")
+	}
+	if _, err := service.ListContestRoles(t.Context(), auth.Actor{}, 9); err == nil {
+		t.Fatal("anonymous actor can list role assignments")
+	}
+	admin := auth.Actor{UserID: 5, Roles: []auth.Role{auth.RoleAdmin}}
+	if _, err := service.ListContestRoles(t.Context(), admin, 9); err != nil {
+		t.Fatalf("admin ListContestRoles error = %v", err)
 	}
 }

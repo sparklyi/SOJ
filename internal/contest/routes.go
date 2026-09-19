@@ -20,6 +20,7 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	contests.DELETE("/:id", m.handler.deleteContest)
 	contests.POST("/:id/registrations", m.handler.register)
 	contests.GET("/:id/scoreboard", m.handler.scoreboard)
+	contests.GET("/:id/roles", m.handler.listRoles)
 	contests.POST("/:id/roles", m.handler.grantRole)
 	contests.DELETE("/:id/roles/:role/users/:user_id", m.handler.revokeRole)
 }

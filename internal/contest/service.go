@@ -43,22 +43,26 @@ const (
 )
 
 type ContestRecord struct {
-	ID             int64            `json:"id"`
-	OwnerUserID    int64            `json:"owner_user_id"`
-	Title          string           `json:"title"`
-	Description    *string          `json:"description,omitempty"`
-	Visibility     string           `json:"visibility"`
-	Status         string           `json:"status"`
-	StartAt        time.Time        `json:"start_at"`
-	EndAt          time.Time        `json:"end_at"`
-	FreezeAt       time.Time        `json:"freeze_at"`
-	InviteCodeHash string           `json:"-"`
-	ScoreRevision  int64            `json:"-"`
-	ScoringMode    string           `json:"scoring_mode"`
-	Registered     bool             `json:"registered"`
-	Problems       []ContestProblem `json:"problems,omitempty"`
-	CreatedAt      time.Time        `json:"created_at,omitempty"`
-	UpdatedAt      time.Time        `json:"updated_at,omitempty"`
+	ID             int64     `json:"id"`
+	OwnerUserID    int64     `json:"owner_user_id"`
+	Title          string    `json:"title"`
+	Description    *string   `json:"description,omitempty"`
+	Visibility     string    `json:"visibility"`
+	Status         string    `json:"status"`
+	StartAt        time.Time `json:"start_at"`
+	EndAt          time.Time `json:"end_at"`
+	FreezeAt       time.Time `json:"freeze_at"`
+	InviteCodeHash string    `json:"-"`
+	ScoreRevision  int64     `json:"-"`
+	ScoringMode    string    `json:"scoring_mode"`
+	Registered     bool      `json:"registered"`
+	// CurrentUserRoles exposes the viewer's contest-scoped roles so the frontend
+	// can gate contest management surfaces. Always serialized, empty for
+	// anonymous viewers.
+	CurrentUserRoles []auth.Role      `json:"current_user_roles"`
+	Problems         []ContestProblem `json:"problems,omitempty"`
+	CreatedAt        time.Time        `json:"created_at,omitempty"`
+	UpdatedAt        time.Time        `json:"updated_at,omitempty"`
 }
 
 type ContestProblem struct {
@@ -67,6 +71,13 @@ type ContestProblem struct {
 	Alias     string `json:"alias"`
 	SortOrder int32  `json:"sort_order"`
 	Title     string `json:"title,omitempty"`
+}
+
+// ContestRoleAssignmentPage is the read model for listing the scoped role
+// assignments of one contest.
+type ContestRoleAssignmentPage struct {
+	Items []ContestRoleAssignment `json:"items"`
+	Total int64                   `json:"total"`
 }
 
 type ContestRegistration struct {
@@ -287,6 +298,26 @@ func (s *Service) SubmissionResultVisibilities(ctx context.Context, actor auth.A
 
 func (s *Service) Scoreboard(ctx context.Context, actor auth.Actor, contestID int64, query ScoreboardQuery) (ScoreboardResponse, error) {
 	return s.scoreboard.Scoreboard(ctx, actor, contestID, query)
+}
+
+// ListContestRoles lists the active scoped role assignments of one contest.
+// Contest owners, contest managers, admins, and root may read it.
+func (s *Service) ListContestRoles(ctx context.Context, actor auth.Actor, contestID int64) ([]ContestRoleAssignment, error) {
+	if s.roles == nil {
+		return nil, apperror.ServiceUnavailable("contest role store unavailable")
+	}
+	contest, err := s.reader.getContest(ctx, contestID)
+	if err != nil {
+		return nil, err
+	}
+	actor, err = s.reader.actorWithContestRoles(ctx, actor, contestID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireContestManager(actor, contest); err != nil {
+		return nil, err
+	}
+	return s.roles.ListContestRoleAssignments(ctx, contestID)
 }
 
 func (s *Service) GrantContestRole(ctx context.Context, actor auth.Actor, contestID int64, input ContestRoleGrantInput) (ContestRoleAssignment, error) {

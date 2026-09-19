@@ -31,6 +31,27 @@ func TestRootHasEveryPermission(t *testing.T) {
 	}
 }
 
+func TestAdminHasEveryPermission(t *testing.T) {
+	got := PermissionsForRoles([]Role{RoleAdmin})
+	if !equalPermissions(got, AllPermissions()) {
+		t.Fatalf("admin permissions = %v, want %v", got, AllPermissions())
+	}
+}
+
+func TestFullAccessRolesAuthorizeEveryPermission(t *testing.T) {
+	for _, role := range []Role{RoleAdmin, RoleRoot} {
+		if !IsFullAccessRole(role) {
+			t.Fatalf("IsFullAccessRole(%s) = false, want true", role)
+		}
+		subject := NewSubject(auth.Actor{UserID: 5, Roles: []auth.Role{role}})
+		for _, permission := range AllPermissions() {
+			if err := Authorize(subject, permission); err != nil {
+				t.Fatalf("Authorize(%s, %s) error = %v", role, permission, err)
+			}
+		}
+	}
+}
+
 func TestContestRolesExposeOnlyScopedPermissions(t *testing.T) {
 	manager := PermissionsForRoles([]Role{RoleContestManager})
 	if !equalPermissions(manager, []Permission{PermissionContestManage, PermissionContestRead}) {
