@@ -166,6 +166,7 @@ func (r *ContestReader) withFrontendContract(ctx context.Context, actor auth.Act
 	record.Problems = problems
 	record.ScoringMode = ScoringModeACM
 	record.Registered = r.actorRegisteredForContest(ctx, actor, record.ID)
+	record.CurrentUserRoles = r.currentUserRoles(ctx, actor, record.ID)
 	return record, nil
 }
 
@@ -175,6 +176,19 @@ func (r *ContestReader) actorRegisteredForContest(ctx context.Context, actor aut
 	}
 	registration, err := r.getRegistration(ctx, contestID, actor.UserID)
 	return err == nil && registration.Status == RegistrationActive
+}
+
+// currentUserRoles returns the viewer's active contest-scoped roles. It never
+// returns nil so the JSON contract always carries an array.
+func (r *ContestReader) currentUserRoles(ctx context.Context, actor auth.Actor, contestID int64) []auth.Role {
+	if r.roles == nil || !actor.Authenticated() || contestID <= 0 {
+		return []auth.Role{}
+	}
+	roles, err := r.roles.ListContestRoles(ctx, contestID, actor.UserID)
+	if err != nil || roles == nil {
+		return []auth.Role{}
+	}
+	return roles
 }
 
 func (r *ContestReader) canReadContest(ctx context.Context, actor auth.Actor, contest ContestRecord) error {

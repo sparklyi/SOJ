@@ -177,6 +177,19 @@ func (h *Handler) scoreboard(c *gin.Context) {
 	httpapi.OK(c, board)
 }
 
+func (h *Handler) listRoles(c *gin.Context) {
+	id, ok := contestIDParam(c)
+	if !ok {
+		return
+	}
+	assignments, err := h.service.ListContestRoles(c.Request.Context(), actorFromContext(c), id)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, ContestRoleAssignmentPage{Items: assignments, Total: int64(len(assignments))})
+}
+
 func (h *Handler) grantRole(c *gin.Context) {
 	id, ok := contestIDParam(c)
 	if !ok {

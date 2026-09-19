@@ -44,7 +44,11 @@ const (
 	PermissionUserManage          Permission = "user.manage"
 	PermissionRoleGrant           Permission = "role.grant"
 	PermissionRoleRevoke          Permission = "role.revoke"
-	PermissionSystemManage        Permission = "system.manage"
+	// PermissionSystemManage is reserved. No HTTP endpoint consumes it yet; it is
+	// intentionally kept in AllPermissions so full-access roles already carry it
+	// once the system administration surface ships. Do not hand it to a
+	// non-full-access role.
+	PermissionSystemManage Permission = "system.manage"
 )
 
 var rolePermissions = map[Role][]Permission{
@@ -80,13 +84,24 @@ var rolePermissions = map[Role][]Permission{
 		PermissionSubmissionRejudge,
 		PermissionJudgeInspect,
 	},
-	RoleAdmin: {
-		PermissionProblemManageAll,
-		PermissionContestManageAll,
-		PermissionSubmissionRejudge,
-		PermissionJudgeInspect,
-		PermissionUserManage,
-	},
+}
+
+// fullAccessRoles hold every known permission. Admin and root are both
+// intentionally full-access: the difference between them is operational
+// (root is the break-glass account) rather than a difference in permission
+// set, so admin must not be described by a partial rolePermissions entry.
+var fullAccessRoles = []Role{
+	RoleAdmin,
+	RoleRoot,
+}
+
+func IsFullAccessRole(role Role) bool {
+	for _, full := range fullAccessRoles {
+		if role == full {
+			return true
+		}
+	}
+	return false
 }
 
 var allPermissions = []Permission{
@@ -152,7 +167,7 @@ func IsContestRole(role Role) bool {
 }
 
 func RolePermissions(role Role) []Permission {
-	if role == RoleRoot {
+	if IsFullAccessRole(role) {
 		return AllPermissions()
 	}
 	return append([]Permission(nil), rolePermissions[role]...)
