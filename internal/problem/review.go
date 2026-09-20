@@ -73,9 +73,24 @@ type ProblemReviewService struct {
 	store     problemReviewStore
 	readiness problemReviewReadiness
 	policy    ProblemReviewPolicy
+	stats     statsRefresher
 }
 
-func NewProblemReviewService(store problemReviewStore, readiness problemReviewReadiness, policy ProblemReviewPolicy) *ProblemReviewService {
+// statsRefresher 让题目发布后刷新站级聚合缓存；接口留在本包，
+// 不引入 stats 包的依赖（依赖方向是「领域服务通知缓存」）。
+type statsRefresher interface {
+	Refresh(context.Context)
+}
+
+// ProblemReviewOption adjusts optional collaborators.
+type ProblemReviewOption func(*ProblemReviewService)
+
+// WithStatsRefresher wires the site-aggregate cache refresher.
+func WithStatsRefresher(refresher statsRefresher) ProblemReviewOption {
+	return func(s *ProblemReviewService) { s.stats = refresher }
+}
+
+func NewProblemReviewService(store problemReviewStore, readiness problemReviewReadiness, policy ProblemReviewPolicy, options ...ProblemReviewOption) *ProblemReviewService {
 	if store == nil {
 		panic("problem review store is required")
 	}
@@ -85,7 +100,15 @@ func NewProblemReviewService(store problemReviewStore, readiness problemReviewRe
 	if policy == nil {
 		panic("problem review policy is required")
 	}
-	return &ProblemReviewService{store: store, readiness: readiness, policy: policy}
+	return &ProblemReviewService{store: store, readiness: readiness, policy: policy, stats: applyProblemReviewOptions(options)}
+}
+
+func applyProblemReviewOptions(options []ProblemReviewOption) statsRefresher {
+	service := &ProblemReviewService{}
+	for _, option := range options {
+		option(service)
+	}
+	return service.stats
 }
 
 func (s *ProblemReviewService) Submit(ctx context.Context, actor auth.Actor, problemID int64) (ProblemRecord, error) {
@@ -126,9 +149,20 @@ func (s *ProblemReviewService) Decide(ctx context.Context, actor auth.Actor, pro
 		if err := ensurePublishable(ctx, s.readiness, problemID); err != nil {
 			return ProblemRecord{}, err
 		}
-		return s.transition(ctx, actor, problemID, problem.Status, StatusPublished, input.Decision, input.Comment)
+		updated, err := s.transition(ctx, actor, problemID, problem.Status, StatusPublished, input.Decision, input.Comment)
+		if err == nil {
+			// 发布已落库，刷新首页聚合（先 PG 后 Redis 的顺序在这里兑现）。
+			s.refreshStats(ctx)
+		}
+		return updated, err
 	}
 	return s.transition(ctx, actor, problemID, problem.Status, StatusChangesRequested, input.Decision, input.Comment)
+}
+
+func (s *ProblemReviewService) refreshStats(ctx context.Context) {
+	if s.stats != nil {
+		s.stats.Refresh(ctx)
+	}
 }
 
 func (s *ProblemReviewService) Queue(ctx context.Context, actor auth.Actor, filter ProblemReviewQueueFilter) (ProblemReviewQueue, error) {

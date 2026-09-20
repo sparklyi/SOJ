@@ -18,10 +18,17 @@ type languageStore interface {
 type LanguageService struct {
 	store    languageStore
 	provider languageProvider
+	stats    statsRefresher
 }
 
-func NewLanguageService(store languageStore, provider languageProvider) *LanguageService {
-	return &LanguageService{store: store, provider: provider}
+// NewLanguageService builds the service. 最后一个可选参数是站级聚合刷新器
+// （见 stats 包）：语言目录写入 PG 成功后刷新首页聚合缓存。
+func NewLanguageService(store languageStore, provider languageProvider, stats ...statsRefresher) *LanguageService {
+	service := &LanguageService{store: store, provider: provider}
+	if len(stats) > 0 {
+		service.stats = stats[0]
+	}
+	return service
 }
 
 func (s *LanguageService) ListLanguages(ctx context.Context, actor auth.Actor, input ListLanguagesInput) ([]LanguageRecord, int64, error) {
@@ -59,6 +66,7 @@ func (s *LanguageService) SyncLanguages(ctx context.Context, actor auth.Actor) (
 		}
 		updated = append(updated, record)
 	}
+	s.refreshStats(ctx)
 	return updated, nil
 }
 
@@ -66,5 +74,16 @@ func (s *LanguageService) UpdateLanguage(ctx context.Context, actor auth.Actor, 
 	if !actor.Admin() {
 		return LanguageRecord{}, apperror.Forbidden("admin_required", "admin role required")
 	}
-	return s.store.UpdateLanguage(ctx, id, input)
+	record, err := s.store.UpdateLanguage(ctx, id, input)
+	if err == nil {
+		// 启用/停用会改变公开语言数，首页聚合跟着走。
+		s.refreshStats(ctx)
+	}
+	return record, err
+}
+
+func (s *LanguageService) refreshStats(ctx context.Context) {
+	if s.stats != nil {
+		s.stats.Refresh(ctx)
+	}
 }
