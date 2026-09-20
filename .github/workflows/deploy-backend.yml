@@ -1,0 +1,46 @@
+name: Deploy Backend
+
+# 打 v*.*.* tag 时构建 4 个服务镜像（Dockerfile.v2 + COMMAND 构建参数），
+# docker save 压缩后作为 Release 资产发布。
+# 服务器（2G 内存）不做任何构建：轮询到新 tag 后下载、docker load、重打 :latest、
+# compose up -d，由服务器侧 /opt/soj/bin/api-deploy.sh 完成。
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+env:
+  SERVICES: "api worker judge-agent migrate"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build service images
+        run: |
+          VER="${GITHUB_REF_NAME}"
+          for SVC in $SERVICES; do
+            echo "[deploy-backend] building soj-$SVC $VER"
+            docker buildx build --load \
+              --build-arg COMMAND="soj-$SVC" \
+              --build-arg GOPROXY="https://proxy.golang.org,direct" \
+              -t "soj-$SVC:$VER" \
+              -f Dockerfile.v2 .
+            docker save "soj-$SVC:$VER" | gzip > "/tmp/soj-$SVC-$VER.tar.gz"
+          done
+          ls -lh /tmp/soj-*.tar.gz
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/soj-*.tar.gz

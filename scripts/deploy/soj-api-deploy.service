@@ -1,0 +1,6 @@
+[Unit]
+Description=SOJ backend tag poll (deploy a new v* release if any)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/soj/bin/api-deploy-check.sh
