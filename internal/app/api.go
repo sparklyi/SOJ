@@ -17,11 +17,13 @@ import (
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
 	"SOJ/internal/problem"
+	"SOJ/internal/stats"
 	"SOJ/internal/storage"
 	"SOJ/internal/submission"
 	"SOJ/internal/user"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -67,6 +69,17 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 
 	jwtManager := auth.NewJWTManager(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL)
+
+	// 站级聚合（首页三数）：PG 是事实源，Redis 缓存 cache-aside；
+	// 各领域服务在自己的 PG 写入成功后调 Refresh，顺序是先 PG 后 Redis。
+	redisClient := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr})
+	defer redisClient.Close()
+	statsService := stats.NewService(
+		stats.NewPostgresStore(pool),
+		stats.NewRedisCache(redisClient, time.Hour),
+		logger,
+	)
+
 	queries := db.New(pool)
 	userRepo := user.NewPostgresRepository(queries)
 	roleRepo := user.NewPostgresRoleRepository(pool)
@@ -78,7 +91,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	)
 	problemRepo := problem.NewPostgresRepository(pool)
 	problemReader := problem.NewProblemReader(problemRepo, objectStorage)
-	problemReview := problem.NewProblemReviewService(problemRepo, problemRepo, problem.RBACProblemPolicy{})
+	problemReview := problem.NewProblemReviewService(problemRepo, problemRepo, problem.RBACProblemPolicy{}, problem.WithStatsRefresher(statsService))
 	problemService := problem.NewService(
 		problemReader,
 		problem.NewProblemAuthoring(problemRepo, objectStorage),
@@ -103,6 +116,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		ProblemReader: problemReader,
 		SourceStore:   sourceStore,
 		ContestPolicy: contestService,
+		Stats:         statsService,
 	})
 	reader := submission.NewSubmissionReader(submissionRepo, contestService)
 	runs := submission.NewRunService(submission.RunServiceOptions{
@@ -114,7 +128,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		Parallelism:   cfg.Judge.RunParallelism,
 		Timeout:       cfg.Judge.Timeout,
 	})
-	languages := submission.NewLanguageService(submissionRepo, judgeEngine)
+	languages := submission.NewLanguageService(submissionRepo, judgeEngine, statsService)
 	completer := submission.NewSubmissionCompleter(submissionRepo)
 	submissionService := submission.NewService(creator, reader, runs, languages, completer)
 	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemReader, contests: contestService}, nil, metrics)
@@ -132,6 +146,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 			problem.NewModule(problemService),
 			contest.NewModule(contestService),
 			submission.NewModule(submission.NewHandler(submissionService, rejudgeService)),
+			stats.NewModule(statsService),
 		},
 	})
 	logger.InfoContext(ctx, "starting soj api", "addr", cfg.HTTP.Addr)

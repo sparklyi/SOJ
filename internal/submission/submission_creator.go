@@ -15,12 +15,19 @@ type submissionCreationStore interface {
 	CreateSubmissionWithTask(context.Context, SubmissionRecord, time.Time) (SubmissionRecord, JudgeTaskRecord, error)
 }
 
+// statsRefresher 让提交创建后刷新站级聚合缓存。接口留在本包而不是
+// 引 stats 包：依赖方向是「领域服务通知缓存」，不是「领域服务依赖缓存」。
+type statsRefresher interface {
+	Refresh(context.Context)
+}
+
 // SubmissionCreator creates a submission and its pending judge task.
 type SubmissionCreator struct {
 	store         submissionCreationStore
 	problems      problem.Reader
 	sourceStore   sourceWriter
 	contestPolicy ContestSubmissionPolicy
+	stats         statsRefresher
 	now           func() time.Time
 }
 
@@ -29,7 +36,9 @@ type SubmissionCreatorOptions struct {
 	ProblemReader problem.Reader
 	SourceStore   sourceWriter
 	ContestPolicy ContestSubmissionPolicy
-	Now           func() time.Time
+	// Stats 可选：提交落库成功后刷新站级聚合（题目数/提交数/语言数）。
+	Stats statsRefresher
+	Now   func() time.Time
 }
 
 func NewSubmissionCreator(options SubmissionCreatorOptions) *SubmissionCreator {
@@ -42,6 +51,7 @@ func NewSubmissionCreator(options SubmissionCreatorOptions) *SubmissionCreator {
 		problems:      options.ProblemReader,
 		sourceStore:   options.SourceStore,
 		contestPolicy: options.ContestPolicy,
+		stats:         options.Stats,
 		now:           now,
 	}
 }
@@ -93,6 +103,11 @@ func (s *SubmissionCreator) CreateSubmission(ctx context.Context, actor auth.Act
 	}, s.now())
 	if err != nil {
 		return CreateSubmissionOutput{}, err
+	}
+	// PG 已提交成功，现在才轮到缓存：先 PG 后 Redis 的顺序在这里兑现。
+	// 刷新失败不影响提交本身（Refresh 内部吞错记日志）。
+	if s.stats != nil {
+		s.stats.Refresh(ctx)
 	}
 	return CreateSubmissionOutput{Submission: submission, Task: task}, nil
 }
