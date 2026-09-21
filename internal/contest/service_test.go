@@ -397,12 +397,12 @@ func TestListContestsAppliesVisibilityRules(t *testing.T) {
 	repo.registrations[3] = []ContestRegistration{{ID: 1, ContestID: 3, UserID: 20, Status: RegistrationActive}}
 	service := newContestService(repo)
 
-	anonymous, err := service.ListContests(context.Background(), auth.Anonymous("req"), ListContestFilter{})
+	plainUser, err := service.ListContests(context.Background(), auth.Actor{UserID: 40, Role: auth.RoleUser}, ListContestFilter{})
 	if err != nil {
-		t.Fatalf("anonymous ListContests returned error: %v", err)
+		t.Fatalf("plain user ListContests returned error: %v", err)
 	}
-	if len(anonymous.Items) != 1 || anonymous.Total != 1 || anonymous.Items[0].ID != 1 {
-		t.Fatalf("anonymous list = %+v, want public contest only", anonymous)
+	if len(plainUser.Items) != 1 || plainUser.Total != 1 || plainUser.Items[0].ID != 1 {
+		t.Fatalf("plain user list = %+v, want public contest only", plainUser)
 	}
 
 	registered, err := service.ListContests(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, ListContestFilter{})
@@ -429,7 +429,8 @@ func TestListContestsByCursorReturnsNextCursor(t *testing.T) {
 	repo.contests[1] = ContestRecord{ID: 1, Title: "First", Visibility: VisibilityPublic, Status: StatusPublished, StartAt: start.Add(-2 * time.Minute), EndAt: start, FreezeAt: start}
 	service := newContestService(repo)
 
-	page, err := service.ListContestsByCursor(context.Background(), auth.Anonymous("req"), ListContestFilter{PageSize: 1})
+	viewer := auth.Actor{UserID: 30, Role: auth.RoleUser}
+	page, err := service.ListContestsByCursor(context.Background(), viewer, ListContestFilter{PageSize: 1})
 	if err != nil {
 		t.Fatalf("ListContestsByCursor returned error: %v", err)
 	}
@@ -440,12 +441,44 @@ func TestListContestsByCursorReturnsNextCursor(t *testing.T) {
 		t.Fatalf("next cursor = %+v, want contest 2 cursor", page.NextCursor)
 	}
 
-	second, err := service.ListContestsByCursor(context.Background(), auth.Anonymous("req"), ListContestFilter{PageSize: 1, Cursor: page.NextCursor})
+	second, err := service.ListContestsByCursor(context.Background(), viewer, ListContestFilter{PageSize: 1, Cursor: page.NextCursor})
 	if err != nil {
 		t.Fatalf("second cursor page: %v", err)
 	}
 	if len(second.Items) != 1 || second.Items[0].ID != 1 || second.NextCursor != nil {
 		t.Fatalf("second cursor page = %+v, want only contest 1 without next cursor", second)
+	}
+}
+
+func TestContestReadsRequireAuthentication(t *testing.T) {
+	// 站点策略：比赛内容（列表、翻页、详情）一律要求登录。
+	start := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+	repo := newMemoryRepository()
+	repo.contests[1] = ContestRecord{ID: 1, Title: "Public", Visibility: VisibilityPublic, Status: StatusPublished, StartAt: start, EndAt: start.Add(time.Hour), FreezeAt: start}
+	service := newContestService(repo)
+	anonymous := auth.Anonymous("req")
+
+	_, err := service.ListContests(context.Background(), anonymous, ListContestFilter{})
+	assertAuthRequired(t, err)
+
+	_, err = service.ListContestsByCursor(context.Background(), anonymous, ListContestFilter{})
+	assertAuthRequired(t, err)
+
+	_, err = service.GetContest(context.Background(), anonymous, 1)
+	assertAuthRequired(t, err)
+}
+
+func assertAuthRequired(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected auth.required error, got nil")
+	}
+	appErr, ok := apperror.From(err)
+	if !ok {
+		t.Fatalf("expected app error, got %T %v", err, err)
+	}
+	if appErr.Code != "auth.required" {
+		t.Fatalf("expected auth.required, got %s", appErr.Code)
 	}
 }
 
