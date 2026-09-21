@@ -173,12 +173,26 @@ func TestProblemAuthoringStateReturnsCurrentValidCheck(t *testing.T) {
 	}
 }
 
-func TestListProblemsMineRequiresAuthentication(t *testing.T) {
+func TestProblemReadsRequireAuthentication(t *testing.T) {
+	// 站点策略：题库内容（列表、翻页、详情、题面、统计）一律要求登录。
 	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, Title: "Public", Slug: "public", Status: StatusPublished, Visibility: VisibilityPublic}
 	service := newProblemService(repo, &fakeStorage{})
+	anonymous := auth.Anonymous("req")
 
-	_, err := service.ListProblems(t.Context(), auth.Actor{}, ListProblemsFilter{Mine: true})
+	_, err := service.ListProblems(t.Context(), anonymous, ListProblemsFilter{})
+	assertAppCode(t, err, "auth.required")
 
+	_, err = service.ListProblemsByCursor(t.Context(), anonymous, ListProblemsFilter{})
+	assertAppCode(t, err, "auth.required")
+
+	_, err = service.GetProblem(t.Context(), anonymous, 1)
+	assertAppCode(t, err, "auth.required")
+
+	_, err = service.CurrentStatement(t.Context(), anonymous, 1)
+	assertAppCode(t, err, "auth.required")
+
+	_, err = service.Stats(t.Context(), anonymous, 1)
 	assertAppCode(t, err, "auth.required")
 }
 
@@ -197,7 +211,8 @@ func TestListProblemsByCursorReturnsNextCursor(t *testing.T) {
 	repo.problems[1] = ProblemRecord{ID: 1, Title: "First", Slug: "first", Status: StatusPublished, Visibility: VisibilityPublic, CreatedAt: now.Add(-2 * time.Minute)}
 	service := newProblemService(repo, &fakeStorage{})
 
-	page, err := service.ListProblemsByCursor(context.Background(), auth.Anonymous("req"), ListProblemsFilter{PageSize: 1})
+	viewer := auth.Actor{UserID: 30, Roles: []auth.Role{auth.RoleUser}}
+	page, err := service.ListProblemsByCursor(context.Background(), viewer, ListProblemsFilter{PageSize: 1})
 	if err != nil {
 		t.Fatalf("ListProblemsByCursor returned error: %v", err)
 	}
@@ -208,7 +223,7 @@ func TestListProblemsByCursorReturnsNextCursor(t *testing.T) {
 		t.Fatalf("next cursor = %+v, want problem 2 cursor", page.NextCursor)
 	}
 
-	second, err := service.ListProblemsByCursor(context.Background(), auth.Anonymous("req"), ListProblemsFilter{PageSize: 1, Cursor: page.NextCursor})
+	second, err := service.ListProblemsByCursor(context.Background(), viewer, ListProblemsFilter{PageSize: 1, Cursor: page.NextCursor})
 	if err != nil {
 		t.Fatalf("second cursor page: %v", err)
 	}

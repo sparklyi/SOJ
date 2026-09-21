@@ -42,6 +42,10 @@ func NewContestReader(store contestReaderStore, now func() time.Time, roleStore 
 
 // GetContest returns a contest after applying viewer access and frontend fields.
 func (r *ContestReader) GetContest(ctx context.Context, actor auth.Actor, id int64) (ContestRecord, error) {
+	// 站点策略：比赛内容（含详情）一律要求登录，匿名访客只保留首页的站级统计。
+	if !actor.Authenticated() {
+		return ContestRecord{}, apperror.Unauthorized("auth.required", "authentication required")
+	}
 	record, err := r.getContest(ctx, id)
 	if err != nil {
 		return ContestRecord{}, err
@@ -54,6 +58,9 @@ func (r *ContestReader) GetContest(ctx context.Context, actor auth.Actor, id int
 
 // ListContests returns a page of contests visible to the actor.
 func (r *ContestReader) ListContests(ctx context.Context, actor auth.Actor, filter ListContestFilter) (ContestList, error) {
+	if !actor.Authenticated() {
+		return ContestList{}, apperror.Unauthorized("auth.required", "authentication required")
+	}
 	if filter.Page <= 0 {
 		filter.Page = 1
 	}
@@ -90,6 +97,9 @@ func (r *ContestReader) ListContests(ctx context.Context, actor auth.Actor, filt
 
 // ListContestsByCursor returns a cursor page of contests visible to the actor.
 func (r *ContestReader) ListContestsByCursor(ctx context.Context, actor auth.Actor, filter ListContestFilter) (ContestCursorPage, error) {
+	if !actor.Authenticated() {
+		return ContestCursorPage{}, apperror.Unauthorized("auth.required", "authentication required")
+	}
 	if filter.PageSize <= 0 || filter.PageSize > 100 {
 		filter.PageSize = 20
 	}
