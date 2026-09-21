@@ -108,7 +108,7 @@ func TestContestComponentsUseFocusedPorts(t *testing.T) {
 	policy := NewContestPolicy(reader, contestRegistrationWriterStub{})
 	scoreboard := NewScoreboardService(reader, scoreboardStoreStub{})
 
-	if _, err := reader.GetContest(t.Context(), auth.Anonymous("request"), 1); err != nil {
+	if _, err := reader.GetContest(t.Context(), auth.Actor{UserID: 8, Role: auth.RoleUser}, 1); err != nil {
 		t.Fatalf("ContestReader.GetContest() error = %v", err)
 	}
 	if _, err := authoring.DeleteContest(t.Context(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1); err != nil {

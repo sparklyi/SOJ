@@ -71,7 +71,7 @@ func (problemReaderStoreStub) GetProblemStats(context.Context, int64) (ProblemSt
 func TestProblemReaderUsesOnlyReadStore(t *testing.T) {
 	reader := NewProblemReader(problemReaderStoreStub{}, testcaseArchiveReaderStub{})
 
-	got, err := reader.GetProblem(t.Context(), auth.Actor{}, 7)
+	got, err := reader.GetProblem(t.Context(), auth.Actor{UserID: 8, Role: auth.RoleUser}, 7)
 	if err != nil {
 		t.Fatalf("GetProblem() error = %v", err)
 	}
