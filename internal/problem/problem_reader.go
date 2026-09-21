@@ -38,6 +38,10 @@ func NewProblemReader(store problemReaderStore, archives testcaseArchiveReader) 
 }
 
 func (r *ProblemReader) GetProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
+	// 站点策略：题库内容（含详情）一律要求登录，匿名访客只保留首页的站级统计。
+	if err := requireAuthenticated(actor); err != nil {
+		return ProblemRecord{}, err
+	}
 	p, err := r.store.GetProblem(ctx, id)
 	if err != nil {
 		return ProblemRecord{}, err
@@ -49,8 +53,8 @@ func (r *ProblemReader) GetProblem(ctx context.Context, actor auth.Actor, id int
 }
 
 func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemList, error) {
-	if filter.Mine && !actor.Authenticated() {
-		return ProblemList{}, requireAuthenticated(actor)
+	if err := requireAuthenticated(actor); err != nil {
+		return ProblemList{}, err
 	}
 	filter = normalizeListFilter(actor, filter)
 	items, err := r.store.ListProblems(ctx, filter)
@@ -73,8 +77,8 @@ func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filt
 }
 
 func (r *ProblemReader) ListProblemsByCursor(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemCursorPage, error) {
-	if filter.Mine && !actor.Authenticated() {
-		return ProblemCursorPage{}, requireAuthenticated(actor)
+	if err := requireAuthenticated(actor); err != nil {
+		return ProblemCursorPage{}, err
 	}
 	filter = normalizeListFilter(actor, filter)
 	limit := filter.PageSize
@@ -142,6 +146,9 @@ func (r *ProblemReader) GetProblemAuthoringState(ctx context.Context, actor auth
 }
 
 func (r *ProblemReader) CurrentStatement(ctx context.Context, actor auth.Actor, problemID int64) (Statement, error) {
+	if err := requireAuthenticated(actor); err != nil {
+		return Statement{}, err
+	}
 	p, err := r.store.GetProblem(ctx, problemID)
 	if err != nil {
 		return Statement{}, err
@@ -258,6 +265,9 @@ func (r *ProblemReader) AuthorizeProblemRejudge(ctx context.Context, actor auth.
 }
 
 func (r *ProblemReader) Stats(ctx context.Context, actor auth.Actor, problemID int64) (ProblemStats, error) {
+	if err := requireAuthenticated(actor); err != nil {
+		return ProblemStats{}, err
+	}
 	p, err := r.store.GetProblem(ctx, problemID)
 	if err != nil {
 		return ProblemStats{}, err

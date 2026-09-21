@@ -214,10 +214,10 @@ func TestContestRecordExposesCurrentUserRoles(t *testing.T) {
 	}
 }
 
-func TestContestRecordExposesEmptyRolesForAnonymousViewer(t *testing.T) {
+func TestContestRecordExposesEmptyRolesForViewersWithoutRoles(t *testing.T) {
 	reader := NewContestReader(publicContestReaderStore{}, nil, nil)
 
-	record, err := reader.GetContest(t.Context(), auth.Actor{}, 9)
+	record, err := reader.GetContest(t.Context(), auth.Actor{UserID: 42, Role: auth.RoleUser}, 9)
 	if err != nil {
 		t.Fatalf("GetContest error = %v", err)
 	}
