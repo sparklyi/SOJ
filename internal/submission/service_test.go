@@ -250,7 +250,12 @@ func TestWorkerRecordsJudgeTaskMetrics(t *testing.T) {
 	}
 }
 
-func TestCreateRunJudgesCustomStdinImmediately(t *testing.T) {
+// TestCreateRunExecutesThroughRunNotJudge 钉住本模块最关键的一条界线：
+//
+// 一次 self-run 走的是 Run，不是 Judge。走 Judge 的话，判题引擎会把这次运行
+// 当成「用零个测试点判题」——而真实判题核正是因此从来不执行程序，只回一个
+// 空的 accepted。这个 bug 在线上活了很久，因为它看起来「成功」了。
+func TestCreateRunExecutesThroughRunNotJudge(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "42\n", TimeMS: 12, MemoryKB: 256})
@@ -268,12 +273,20 @@ func TestCreateRunJudgesCustomStdinImmediately(t *testing.T) {
 	if out.Run.Status != StatusAccepted || out.Run.Stdout != "42\n" {
 		t.Fatalf("run = %+v", out.Run)
 	}
-	requests := engine.Requests()
-	if len(requests) != 1 {
-		t.Fatalf("judge request count = %d", len(requests))
+	if judging := engine.Requests(); len(judging) != 0 {
+		t.Fatalf("run produced %d judging requests, want 0: a self-run must not be judged", len(judging))
 	}
-	if requests[0].Stdin != "21 21\n" || len(requests[0].Testcases) != 0 {
-		t.Fatalf("request = %+v", requests[0])
+
+	runs := engine.RunRequests()
+	if len(runs) != 1 {
+		t.Fatalf("run request count = %d, want 1", len(runs))
+	}
+	if runs[0].Stdin != "21 21\n" {
+		t.Fatalf("run stdin = %q, want %q", runs[0].Stdin, "21 21\n")
+	}
+	// 语言默认内存上限必须传下去，否则沙箱拿不到限制。
+	if runs[0].MemoryKB != 262144 {
+		t.Fatalf("run memory limit = %d, want the language default 262144", runs[0].MemoryKB)
 	}
 }
 
@@ -501,6 +514,16 @@ func newBlockingRunJudge() *blockingRunJudge {
 }
 
 func (e *blockingRunJudge) Judge(ctx context.Context, request judge.Request) (judge.Result, error) {
+	return e.block(ctx)
+}
+
+// Run blocks exactly like Judge: RunService drives runs through Run now, and the
+// capacity tests need the run to stay in flight.
+func (e *blockingRunJudge) Run(ctx context.Context, request judge.RunRequest) (judge.Result, error) {
+	return e.block(ctx)
+}
+
+func (e *blockingRunJudge) block(ctx context.Context) (judge.Result, error) {
 	select {
 	case e.started <- struct{}{}:
 	default:

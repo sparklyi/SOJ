@@ -102,6 +102,16 @@ SMOKE_REAL_JUDGE=1 make smoke
 
 process backend 适合本地验证，但不是生产 sandbox。
 
+如需在本地真正跑通**自测运行**（题目页的「运行测试」与练习场），把 endpoint 切到 `local://`：
+
+```bash
+SOJ_ENV=local SOJ_JUDGE_ENDPOINT=local:// SOJ_JUDGE_SANDBOX_BACKEND=process make up
+```
+
+`local://` 让 API 进程自己编译执行源码，只适合单机部署与本地开发。它**拒绝 `docker` 后端**：
+只有 `soj-judge-agent` 允许持有 Docker socket。生产环境要跑自测运行，需要把 self-run 接入
+judge-agent 的异步链路，那是独立的一项工作。
+
 如需通过 Docker runner 容器跑本地真实代码 smoke：
 
 ```bash
@@ -181,7 +191,7 @@ Docker smoke test 会验证注册、创建题目、上传题面、上传测试�
 | `SOJ_STORAGE_ACCESS_KEY` | 对象存储 access key。 |
 | `SOJ_STORAGE_SECRET_KEY` | 对象存储 secret key。 |
 | `SOJ_JWT_SECRET` | JWT 签名密钥。真实部署必须替换。 |
-| `SOJ_JUDGE_ENDPOINT` | 评测 endpoint，例如 `fake://accepted` 或 `agent://local`。 |
+| `SOJ_JUDGE_ENDPOINT` | 评测 endpoint。`fake://accepted` 返回预设结果；`agent://local` 表示评测交给 judge-agent，此时**自测运行不可用**；`local://` 表示自测运行在本进程内执行（仅限单机/本地，拒绝 `docker` 后端）。 |
 | `SOJ_JUDGE_TIMEOUT` | 评测超时时间，默认 `30s`。 |
 | `SOJ_JUDGE_RUN_PARALLELISM` | API 侧 self-run 的全局并发槽位，默认 `1`。 |
 | `SOJ_JUDGE_RUN_PER_USER` | 单用户同时在途的 self-run 上限，默认 `2`。练习场与题目页共用该上限。 |

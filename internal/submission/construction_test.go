@@ -9,12 +9,21 @@ import (
 	"SOJ/internal/queue"
 )
 
+// runEngineTestDouble is what the test constructors need: a judging engine for
+// the worker paths and a run engine for RunService. Production keeps those as
+// two separate interfaces (judge.JudgeEngine and submission.runExecutor); a test
+// double is allowed to be one object because the fakes implement both.
+type runEngineTestDouble interface {
+	judge.JudgeEngine
+	runExecutor
+}
+
 type serviceTestOptions struct {
 	Repository              *memoryRepo
 	ProblemReader           problem.Reader
 	TestcaseResolver        problem.TestcaseResolver
 	SourceStore             sourceWriter
-	Judge                   judge.JudgeEngine
+	Judge                   runEngineTestDouble
 	ContestSubmissionPolicy ContestSubmissionPolicy
 	ContestVisibilityPolicy ContestResultVisibilityPolicy
 	Now                     func() time.Time
@@ -50,7 +59,7 @@ func newServiceForTest(options serviceTestOptions) *Service {
 		Store:          options.Repository,
 		ProblemReader:  problems,
 		SourceStore:    sourceStore,
-		Judge:          judgeEngine,
+		Runner:         judgeEngine,
 		Now:            options.Now,
 		Wait:           options.RunWait,
 		Timeout:        options.RunTimeout,
