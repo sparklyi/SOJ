@@ -597,6 +597,13 @@ func (r *memoryRepo) AdmitRun(ctx context.Context, input AdmitRunInput) (RunReco
 	}
 	return arg, nil
 }
+func (r *memoryRepo) DeleteArtifact(ctx context.Context, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.artifacts, id)
+	r.events = append(r.events, "delete_artifact")
+	return nil
+}
 func (r *memoryRepo) MarkRunRunning(ctx context.Context, id int64) (RunRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

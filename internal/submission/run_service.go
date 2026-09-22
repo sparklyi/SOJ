@@ -17,6 +17,7 @@ type runStore interface {
 	AdmitRun(context.Context, AdmitRunInput) (RunRecord, error)
 	GetRun(context.Context, int64) (RunRecord, error)
 	UpdateRunStatus(context.Context, int64, judge.Result) (RunRecord, error)
+	DeleteArtifact(context.Context, int64) error
 }
 
 // RunService creates self-runs and reports their outcome.
@@ -33,7 +34,7 @@ type runStore interface {
 type RunService struct {
 	store       runStore
 	problems    problem.Reader
-	sourceStore sourceWriter
+	sourceStore sourceStorage
 	// runner is nil in queued mode. See the type comment.
 	runner     runExecutor
 	now        func() time.Time
@@ -54,7 +55,7 @@ type RunService struct {
 type RunServiceOptions struct {
 	Store         runStore
 	ProblemReader problem.Reader
-	SourceStore   sourceWriter
+	SourceStore   sourceStorage
 	// Runner executes runs inside this process. Nil means runs are enqueued for
 	// the judge-agent instead, which is the production path: the API process
 	// must not run untrusted code, and only the judge-agent holds a sandbox.
@@ -207,6 +208,11 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 		NextRunAt: s.now(),
 	})
 	if err != nil {
+		// Admission is decided after the source is uploaded, because the object
+		// key and the row are created together. A refusal therefore has to undo
+		// the upload: otherwise every rejected run leaves an object that nothing
+		// references and no other query can find.
+		s.discardSource(ctx, artifact)
 		return CreateRunOutput{}, err
 	}
 	if inline {
@@ -237,6 +243,22 @@ func (s *RunService) CompleteRun(ctx context.Context, runID int64, result judge.
 		return current, nil
 	}
 	return s.store.UpdateRunStatus(ctx, runID, result)
+}
+
+// discardSource undoes an upload that admission refused.
+//
+// The object goes before the row, the same order the retention sweep uses: a
+// failure then leaves the row that points at the object, which the orphan sweep
+// can still find. The reverse would leave an object nothing can find.
+//
+// It runs on a context detached from the request, because the request is exactly
+// what is being refused -- and it is best-effort on purpose: the run is already
+// rejected, so a failure here must not turn into a different error.
+func (s *RunService) discardSource(ctx context.Context, artifact ArtifactRecord) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRunFinalizeTimeout)
+	defer cancel()
+	_ = s.sourceStore.Delete(cleanupCtx, artifact.StorageKey)
+	_ = s.store.DeleteArtifact(cleanupCtx, artifact.ID)
 }
 
 // awaitRun gives a fast run the chance to finish before the response is written,

@@ -976,6 +976,18 @@ func (q *Queries) CreateSubmission(ctx context.Context, arg CreateSubmissionPara
 	return i, err
 }
 
+const deleteArtifactByID = `-- name: DeleteArtifactByID :exec
+DELETE FROM artifacts
+WHERE id = $1
+`
+
+// Removing a source object row. Used when a run's upload has to be undone: the
+// object goes first, so a failure leaves this row for the sweep to find.
+func (q *Queries) DeleteArtifactByID(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteArtifactByID, id)
+	return err
+}
+
 const ensureContestProblemResultProjection = `-- name: EnsureContestProblemResultProjection :exec
 INSERT INTO contest_problem_results (
     contest_id,

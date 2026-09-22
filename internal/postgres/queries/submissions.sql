@@ -925,6 +925,12 @@ FROM runs
 WHERE user_id = $1
   AND status IN ('queued', 'running');
 
+-- name: DeleteArtifactByID :exec
+-- Removing a source object row. Used when a run's upload has to be undone: the
+-- object goes first, so a failure leaves this row for the sweep to find.
+DELETE FROM artifacts
+WHERE id = $1;
+
 -- name: LockUserForRunAdmission :one
 -- Serialises run admission per user so the count above cannot race an insert.
 SELECT id

@@ -68,6 +68,9 @@ type Querier interface {
 	CreateTestcaseSet(ctx context.Context, arg CreateTestcaseSetParams) (TestcaseSet, error)
 	// Owner: WP2 Auth/User
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	// Removing a source object row. Used when a run's upload has to be undone: the
+	// object goes first, so a failure leaves this row for the sweep to find.
+	DeleteArtifactByID(ctx context.Context, id int64) error
 	DeleteContestProblems(ctx context.Context, contestID int64) error
 	EnsureContestProblemResultProjection(ctx context.Context, arg EnsureContestProblemResultProjectionParams) error
 	FailActiveRejudgeBatchItemByTaskID(ctx context.Context, arg FailActiveRejudgeBatchItemByTaskIDParams) (RejudgeBatchItem, error)

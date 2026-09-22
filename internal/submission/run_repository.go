@@ -130,6 +130,12 @@ func (r *SQLRepository) MarkStaleRunsSystemError(ctx context.Context, staleBefor
 	return out, nil
 }
 
+// DeleteArtifact removes a source object row on its own. It is only for artifacts
+// that no run references -- DeleteExpiredRun owns the pair when there is a run.
+func (r *SQLRepository) DeleteArtifact(ctx context.Context, id int64) error {
+	return r.q.DeleteArtifactByID(ctx, id)
+}
+
 func runRecord(row db.Run) RunRecord {
 	return RunRecord{ID: row.ID, UserID: row.UserID, ProblemID: int8Value(row.ProblemID), LanguageID: row.LanguageID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, Stdin: row.Stdin.String, Stdout: row.Stdout.String, Stderr: row.Stderr.String, CompileOutput: row.CompileOutput.String, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), ErrorMessage: textValue(row.ErrorMessage), CreatedAt: row.CreatedAt.Time, FinishedAt: timeValue(row.FinishedAt), UpdatedAt: row.UpdatedAt.Time}
 }

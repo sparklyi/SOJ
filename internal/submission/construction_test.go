@@ -22,7 +22,7 @@ type serviceTestOptions struct {
 	Repository              *memoryRepo
 	ProblemReader           problem.Reader
 	TestcaseResolver        problem.TestcaseResolver
-	SourceStore             sourceWriter
+	SourceStore             sourceStorage
 	Judge                   runEngineTestDouble
 	ContestSubmissionPolicy ContestSubmissionPolicy
 	ContestVisibilityPolicy ContestResultVisibilityPolicy

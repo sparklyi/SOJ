@@ -43,6 +43,10 @@ func (sourceWriterStub) Put(context.Context, string, int64, []byte) (SourceObjec
 	return SourceObject{StorageKey: "source", ChecksumSHA256: "checksum", ContentType: "text/plain"}, nil
 }
 
+func (sourceWriterStub) Delete(context.Context, string) error {
+	return nil
+}
+
 type judgeRunnerStub struct{}
 
 func (judgeRunnerStub) Judge(context.Context, judge.Request) (judge.Result, error) {
@@ -171,6 +175,10 @@ func (runStoreStub) GetRun(_ context.Context, id int64) (RunRecord, error) {
 
 func (runStoreStub) UpdateRunStatus(_ context.Context, id int64, _ judge.Result) (RunRecord, error) {
 	return RunRecord{ID: id}, nil
+}
+
+func (runStoreStub) DeleteArtifact(_ context.Context, _ int64) error {
+	return nil
 }
 
 func TestRunServiceUsesOnlyRunStore(t *testing.T) {
