@@ -39,7 +39,11 @@ PREV_REF="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
 
 # compose 文件来自这个 checkout，镜像换版本了它也得跟着换。不同步的话就是
 # 「新镜像配旧 compose」——缺配置时不报错，只是行为不对。
-# 故意不带 --force：checkout 脏了就失败退出，而不是静默丢掉服务器上的手改。
+#
+# 不带 --force。git 自己的语义在这里正合适：改动会被这次切换覆盖时它会拒绝，
+# 脚本随即退出（journal 里看得到原因），而不是静默丢掉服务器上的手改；改动
+# 不被覆盖时它会连改动一起保留，那这份漂移在 checkout 的 `git status` 里
+# 看得见。也就是说：会丢东西才拦，不会丢就放行。
 echo "[api-deploy] syncing $BACKEND_DIR to $TAG"
 git -C "$BACKEND_DIR" fetch --tags --force --quiet origin
 git -C "$BACKEND_DIR" checkout --quiet "$TAG"
