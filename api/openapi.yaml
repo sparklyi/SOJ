@@ -819,6 +819,7 @@ paths:
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/runs/{id}:
     get:
@@ -1444,6 +1445,13 @@ components:
     ServiceUnavailable:
       x-owner: WP1 Data/API Contract
       description: Service unavailable.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
+    TooManyRequests:
+      x-owner: WP1 Data/API Contract
+      description: |
+        The caller exceeded a per-caller limit, such as the number of runs it
+        may have in flight at once. Distinct from ServiceUnavailable, which
+        means the service itself cannot take the work.
       content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } }
     InternalError:
       x-owner: WP1 Data/API Contract
@@ -2092,9 +2100,17 @@ components:
         error_message: { type: string, nullable: true }
     RunCreateRequest:
       type: object
-      required: [problem_id, language_id, source_code]
+      required: [language_id, source_code]
       properties:
-        problem_id: { type: integer, format: int64 }
+        problem_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Optional. Omit for a playground run: the source is compiled and
+            executed with the supplied stdin, and no problem is validated.
+            Supply it to attribute the run to a problem, which requires that
+            problem to be ready for judging.
         language_id: { type: integer, format: int64 }
         source_code: { type: string }
         stdin: { type: string }
@@ -2104,7 +2120,11 @@ components:
       properties:
         id: { type: integer, format: int64 }
         user_id: { type: integer, format: int64 }
-        problem_id: { type: integer, format: int64 }
+        problem_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Null when the run is not attached to a problem.
         language_id: { type: integer, format: int64 }
         status: { $ref: "#/components/schemas/JudgeStatus" }
         stdout: { type: string, nullable: true }

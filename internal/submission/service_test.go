@@ -261,7 +261,7 @@ func TestCreateRunJudgesCustomStdinImmediately(t *testing.T) {
 		Judge:         engine,
 	})
 
-	out, err := service.CreateRun(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main"), Stdin: "21 21\n"})
+	out, err := service.CreateRun(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main"), Stdin: "21 21\n"})
 	if err != nil {
 		t.Fatalf("CreateRun returned error: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestCreateRunReturnsRunningWhenShortWaitExpiresAndCompletesAsync(t *testing
 		RunTimeout:    time.Second,
 	})
 
-	out, err := service.CreateRun(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main"), Stdin: "21 21\n"})
+	out, err := service.CreateRun(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main"), Stdin: "21 21\n"})
 	if err != nil {
 		t.Fatalf("CreateRun returned error: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestCreateRunRejectsWhenExecutionCapacityIsExhausted(t *testing.T) {
 		RunTimeout:    time.Second,
 	})
 
-	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	if err != nil {
 		t.Fatalf("first CreateRun returned error: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestCreateRunRejectsWhenExecutionCapacityIsExhausted(t *testing.T) {
 	}
 	engine.waitStarted(t)
 
-	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
 		t.Fatalf("second CreateRun error=%v, want service unavailable", err)
@@ -375,7 +375,7 @@ func TestHandlerCreateRunReturnsServiceUnavailableWhenExecutionCapacityIsExhaust
 		RunWait:       time.Millisecond,
 		RunTimeout:    time.Second,
 	})
-	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	if err != nil {
 		t.Fatalf("first CreateRun returned error: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestServiceCloseCancelsActiveRunAndRejectsNewRuns(t *testing.T) {
 		RunTimeout:    time.Minute,
 	})
 
-	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	if err != nil {
 		t.Fatalf("first CreateRun returned error: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestServiceCloseCancelsActiveRunAndRejectsNewRuns(t *testing.T) {
 	if completed.ErrorMessage == nil || *completed.ErrorMessage != context.Canceled.Error() {
 		t.Fatalf("completed error message=%v, want %q", completed.ErrorMessage, context.Canceled.Error())
 	}
-	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
 		t.Fatalf("CreateRun after Close error=%v, want service unavailable", err)
@@ -455,7 +455,7 @@ func TestCreateRunRejectsWhenRunContextIsCanceled(t *testing.T) {
 	})
 
 	cancelRun()
-	_, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	_, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
 		t.Fatalf("CreateRun after run context cancellation error=%v, want service unavailable", err)

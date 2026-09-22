@@ -781,20 +781,27 @@ INSERT INTO runs (
     source_artifact_id,
     stdin
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6
 )
 RETURNING id, user_id, problem_id, language_id, status, source_artifact_id, stdin, stdout, stderr, compile_output, time_ms, memory_kb, error_message, created_at, finished_at, updated_at
 `
 
 type CreateRunParams struct {
 	UserID           int64       `db:"user_id" json:"user_id"`
-	ProblemID        int64       `db:"problem_id" json:"problem_id"`
+	ProblemID        pgtype.Int8 `db:"problem_id" json:"problem_id"`
 	LanguageID       int64       `db:"language_id" json:"language_id"`
 	Status           string      `db:"status" json:"status"`
 	SourceArtifactID pgtype.Int8 `db:"source_artifact_id" json:"source_artifact_id"`
 	Stdin            pgtype.Text `db:"stdin" json:"stdin"`
 }
 
+// problem_id is optional: a run attached to a problem validates the problem
+// first, a playground run passes nothing and skips that check entirely.
 func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, error) {
 	row := q.db.QueryRow(ctx, createRun,
 		arg.UserID,

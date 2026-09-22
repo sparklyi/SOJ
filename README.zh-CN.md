@@ -183,6 +183,8 @@ Docker smoke test 会验证注册、创建题目、上传题面、上传测试�
 | `SOJ_JWT_SECRET` | JWT 签名密钥。真实部署必须替换。 |
 | `SOJ_JUDGE_ENDPOINT` | 评测 endpoint，例如 `fake://accepted` 或 `agent://local`。 |
 | `SOJ_JUDGE_TIMEOUT` | 评测超时时间，默认 `30s`。 |
+| `SOJ_JUDGE_RUN_PARALLELISM` | API 侧 self-run 的全局并发槽位，默认 `1`。 |
+| `SOJ_JUDGE_RUN_PER_USER` | 单用户同时在途的 self-run 上限，默认 `2`。练习场与题目页共用该上限。 |
 | `SOJ_JUDGE_CLEANUP_TIMEOUT` | 判题 workspace 和容器清理的独立超时时间，默认 `5s`。 |
 | `SOJ_JUDGE_SANDBOX_BACKEND` | Judge-agent sandbox backend：`fake`、`process` 或 `docker`。 |
 | `SOJ_JUDGE_PARALLELISM` | Judge-agent 全局 sandbox slot 数。 |

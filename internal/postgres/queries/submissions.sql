@@ -826,6 +826,8 @@ WHERE status IN ('queued', 'running')
 RETURNING *;
 
 -- name: CreateRun :one
+-- problem_id is optional: a run attached to a problem validates the problem
+-- first, a playground run passes nothing and skips that check entirely.
 INSERT INTO runs (
     user_id,
     problem_id,
@@ -834,7 +836,12 @@ INSERT INTO runs (
     source_artifact_id,
     stdin
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    sqlc.arg('user_id'),
+    sqlc.narg('problem_id'),
+    sqlc.arg('language_id'),
+    sqlc.arg('status'),
+    sqlc.arg('source_artifact_id'),
+    sqlc.arg('stdin')
 )
 RETURNING *;
 

@@ -1,0 +1,14 @@
+-- A self-run is "source + stdin in, stdout / stderr / compile output out".
+-- Attaching it to a problem is optional, not required: the problem page runs a
+-- candidate against a problem, while the playground runs scratch code with no
+-- problem at all. The judge path never reads problem_id -- it only ever passed
+-- language, source, stdin and timeout to the sandbox -- so the NOT NULL was
+-- forcing an existence check that a playground run has no reason to pass.
+--
+-- rejudge_batches already models an optional problem / contest target this way
+-- (both nullable, exactly one set), so this keeps the schema consistent with
+-- itself rather than inventing a second resource for the same concept.
+--
+-- Dropping NOT NULL is a metadata-only change in PostgreSQL: no table rewrite,
+-- no long lock, safe to run online.
+ALTER TABLE runs ALTER COLUMN problem_id DROP NOT NULL;
