@@ -753,3 +753,41 @@ func TestResultConsumerDoesNotRewriteAFinishedRun(t *testing.T) {
 		t.Fatalf("run = %+v, want the finished run untouched", run)
 	}
 }
+
+// TaskProcessor is the in-process judging path: it loads testcases and judges.
+// A run must never reach it, even if an operator points both streams at the same
+// queue -- judging a run against a zero-value testcase set would either fail
+// confusingly or, worse, report a verdict for something nobody judged.
+func TestTaskProcessorSkipsRunTasks(t *testing.T) {
+	repo := newMemoryRepo()
+	runID := int64(12)
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, RunID: &runID, Status: "dispatched"}
+	repo.runs[runID] = RunRecord{ID: runID, UserID: 5, LanguageID: 71, Status: StatusRunning}
+	engine := judge.NewFakeEngine()
+	q := &memoryQueue{}
+	worker := newWorkerForTest(workerTestOptions{
+		Repository:       repo,
+		Queue:            q,
+		Judge:            engine,
+		ProblemReader:    fakeProblemReader{},
+		TestcaseResolver: fakeTestcaseResolver{},
+		SourceStore:      NewMemorySourceStore(),
+		Now:              func() time.Time { return time.Unix(100, 0).UTC() },
+	})
+
+	if err := worker.ProcessMessage(t.Context(), queue.Message{ID: "1-0", TaskID: 7}); err != nil {
+		t.Fatalf("ProcessMessage returned error: %v", err)
+	}
+	if len(engine.Requests()) != 0 {
+		t.Fatalf("Judge calls = %d, want 0: a run is executed by the agent, not judged here", len(engine.Requests()))
+	}
+	if len(q.acked) != 1 {
+		t.Fatalf("acked = %v, want the run message acked and left alone", q.acked)
+	}
+	if repo.tasks[7].Status != "dispatched" {
+		t.Fatalf("task status = %s, want it untouched", repo.tasks[7].Status)
+	}
+	if run := repo.runs[runID]; run.Status != StatusRunning {
+		t.Fatalf("run status = %s, want it untouched", run.Status)
+	}
+}
