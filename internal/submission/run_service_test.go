@@ -423,3 +423,53 @@ func TestCreateRunRejectsOversizedStdin(t *testing.T) {
 		t.Fatalf("rejected run created %d rows, want 0", len(repo.runs))
 	}
 }
+
+// recordingSourceStore notes when an object is removed, so a test can assert it
+// happens before the row that points at it.
+type recordingSourceStore struct {
+	inner *MemorySourceStore
+	log   *[]string
+}
+
+func (s recordingSourceStore) Put(ctx context.Context, ownerType string, ownerID int64, source []byte) (SourceObject, error) {
+	return s.inner.Put(ctx, ownerType, ownerID, source)
+}
+
+func (s recordingSourceStore) Delete(ctx context.Context, key string) error {
+	*s.log = append(*s.log, "delete_object")
+	return s.inner.Delete(ctx, key)
+}
+
+func TestCreateRunDiscardsTheSourceWhenAdmissionRefuses(t *testing.T) {
+	repo := runTestRepo()
+	store := NewMemorySourceStore()
+	service := newServiceForTest(serviceTestOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   recordingSourceStore{inner: store, log: &repo.events},
+		RunWait:       time.Millisecond,
+		RunPerUser:    1,
+		RunQueued:     true,
+	})
+	actor := auth.Actor{UserID: 5, Role: auth.RoleUser}
+
+	if _, err := service.CreateRun(t.Context(), actor, CreateRunInput{LanguageID: 71, Source: []byte("package main")}); err != nil {
+		t.Fatalf("first run returned error: %v", err)
+	}
+	before := len(store.objects)
+	_, err := service.CreateRun(t.Context(), actor, CreateRunInput{LanguageID: 71, Source: []byte("package second")})
+	if err == nil {
+		t.Fatal("second run returned no error, want the per-user limit")
+	}
+	if got := len(store.objects); got != before {
+		t.Fatalf("objects after a refused run = %d, want %d: the upload has to be undone", got, before)
+	}
+	if len(repo.artifacts) != 1 {
+		t.Fatalf("artifacts = %d, want 1: the refused run's artifact row has to be removed too", len(repo.artifacts))
+	}
+	// Order, not just outcome: if the row went first and the object delete then
+	// failed, the object would be unreachable from every query in the system.
+	if len(repo.events) != 2 || repo.events[0] != "delete_object" || repo.events[1] != "delete_artifact" {
+		t.Fatalf("events = %v, want the object removed before the artifact row", repo.events)
+	}
+}

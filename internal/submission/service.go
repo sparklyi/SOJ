@@ -66,6 +66,13 @@ func (s *MemorySourceStore) Put(_ context.Context, ownerType string, ownerID int
 	return SourceObject{StorageKey: key, ChecksumSHA256: checksum, SizeBytes: int64(len(source)), ContentType: "text/plain; charset=utf-8"}, nil
 }
 
+func (s *MemorySourceStore) Delete(_ context.Context, storageKey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.objects, storageKey)
+	return nil
+}
+
 func (s *MemorySourceStore) Get(_ context.Context, storageKey string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
