@@ -9,12 +9,21 @@ import (
 	"SOJ/internal/queue"
 )
 
+// runEngineTestDouble is what the test constructors need: a judging engine for
+// the worker paths and a run engine for RunService. Production keeps those as
+// two separate interfaces (judge.JudgeEngine and submission.runExecutor); a test
+// double is allowed to be one object because the fakes implement both.
+type runEngineTestDouble interface {
+	judge.JudgeEngine
+	runExecutor
+}
+
 type serviceTestOptions struct {
 	Repository              *memoryRepo
 	ProblemReader           problem.Reader
 	TestcaseResolver        problem.TestcaseResolver
-	SourceStore             sourceWriter
-	Judge                   judge.JudgeEngine
+	SourceStore             sourceStorage
+	Judge                   runEngineTestDouble
 	ContestSubmissionPolicy ContestSubmissionPolicy
 	ContestVisibilityPolicy ContestResultVisibilityPolicy
 	Now                     func() time.Time
@@ -22,6 +31,10 @@ type serviceTestOptions struct {
 	RunTimeout              time.Duration
 	RunContext              context.Context
 	RunParallelism          int
+	RunPerUser              int
+	// RunQueued leaves RunService with no engine, which is how production runs
+	// self-runs: they are enqueued for the judge-agent instead of executed here.
+	RunQueued bool
 }
 
 func newServiceForTest(options serviceTestOptions) *Service {
@@ -45,16 +58,21 @@ func newServiceForTest(options serviceTestOptions) *Service {
 		Now:           options.Now,
 	})
 	reader := NewSubmissionReader(options.Repository, options.ContestVisibilityPolicy)
+	var runEngine runExecutor = judgeEngine
+	if options.RunQueued {
+		runEngine = nil
+	}
 	runs := NewRunService(RunServiceOptions{
-		Store:         options.Repository,
-		ProblemReader: problems,
-		SourceStore:   sourceStore,
-		Judge:         judgeEngine,
-		Now:           options.Now,
-		Wait:          options.RunWait,
-		Timeout:       options.RunTimeout,
-		Context:       options.RunContext,
-		Parallelism:   options.RunParallelism,
+		Store:          options.Repository,
+		ProblemReader:  problems,
+		SourceStore:    sourceStore,
+		Runner:         runEngine,
+		Now:            options.Now,
+		Wait:           options.RunWait,
+		Timeout:        options.RunTimeout,
+		Context:        options.RunContext,
+		Parallelism:    options.RunParallelism,
+		MaxRunsPerUser: options.RunPerUser,
 	})
 	languages := NewLanguageService(options.Repository, judgeEngine)
 	completer := NewSubmissionCompleter(options.Repository)
@@ -62,8 +80,11 @@ func newServiceForTest(options serviceTestOptions) *Service {
 }
 
 type workerTestOptions struct {
-	Repository       *memoryRepo
-	Queue            queue.TaskQueue
+	Repository *memoryRepo
+	Queue      queue.TaskQueue
+	// RunQueue receives self-run request events. Nil leaves the dispatcher
+	// without a run stream, which is what a worker-only deployment looks like.
+	RunQueue         queue.TaskQueue
 	Judge            judgeRunner
 	ProblemReader    problem.Reader
 	TestcaseResolver workerTestcaseResolver
@@ -108,6 +129,7 @@ func newWorkerForTest(options workerTestOptions) *Worker {
 	dispatcher := NewTaskDispatcher(TaskDispatcherOptions{
 		Store:            options.Repository,
 		Queue:            taskQueue,
+		RunQueue:         options.RunQueue,
 		TestcaseResolver: testcases,
 		Metrics:          options.Metrics,
 		Now:              options.Now,

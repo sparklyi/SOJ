@@ -7,12 +7,13 @@ import (
 )
 
 type FakeEngine struct {
-	mu        sync.Mutex
-	results   []Result
-	err       error
-	languages []Language
-	requests  []Request
-	delay     time.Duration
+	mu          sync.Mutex
+	results     []Result
+	err         error
+	languages   []Language
+	requests    []Request
+	runRequests []RunRequest
+	delay       time.Duration
 }
 
 func NewFakeEngine(results ...Result) *FakeEngine {
@@ -37,16 +38,50 @@ func (e *FakeEngine) SetDelay(delay time.Duration) {
 	e.delay = delay
 }
 
+// Requests returns every judging request the engine has seen.
 func (e *FakeEngine) Requests() []Request {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]Request(nil), e.requests...)
 }
 
+// RunRequests returns every scratch run the engine has seen. Kept separate from
+// Requests because the two are different operations; folding them into one
+// slice would make a test unable to say which one it observed.
+func (e *FakeEngine) RunRequests() []RunRequest {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]RunRequest(nil), e.runRequests...)
+}
+
 func (e *FakeEngine) Judge(ctx context.Context, request Request) (Result, error) {
 	e.mu.Lock()
-	delay := e.delay
 	e.requests = append(e.requests, request)
+	e.mu.Unlock()
+
+	return e.serve(ctx)
+}
+
+// Run serves the next scripted result, exactly like Judge. A scratch run and a
+// judged submission differ in what the caller does with the result, not in how
+// a fake produces one.
+func (e *FakeEngine) Run(ctx context.Context, request RunRequest) (Result, error) {
+	if err := request.Validate(); err != nil {
+		return Result{}, err
+	}
+
+	e.mu.Lock()
+	e.runRequests = append(e.runRequests, request)
+	e.mu.Unlock()
+
+	return e.serve(ctx)
+}
+
+// serve applies the configured delay and returns the next scripted result.
+// Shared so Judge and Run cannot drift on how results are scripted.
+func (e *FakeEngine) serve(ctx context.Context) (Result, error) {
+	e.mu.Lock()
+	delay := e.delay
 	e.mu.Unlock()
 
 	if delay > 0 {

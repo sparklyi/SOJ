@@ -110,6 +110,10 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
 	judgeEngine := newJudgeEngine(cfg.Judge)
+	runEngine, err := newRunEngine(cfg, logger)
+	if err != nil {
+		return err
+	}
 	sourceStore := submission.NewObjectSourceStore(objectStorage)
 	creator := submission.NewSubmissionCreator(submission.SubmissionCreatorOptions{
 		Store:         submissionRepo,
@@ -123,10 +127,15 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		Store:         submissionRepo,
 		ProblemReader: problemReader,
 		SourceStore:   sourceStore,
-		Judge:         judgeEngine,
-		Context:       ctx,
-		Parallelism:   cfg.Judge.RunParallelism,
-		Timeout:       cfg.Judge.Timeout,
+		// A nil run engine is not a misconfiguration: it means this process
+		// enqueues runs for the judge-agent instead of executing them. See
+		// newRunEngine.
+		Runner:         runEngine,
+		Context:        ctx,
+		Parallelism:    cfg.Judge.RunParallelism,
+		MaxRunsPerUser: cfg.Judge.RunPerUser,
+		MaxStdinBytes:  cfg.Judge.RunStdinMaxBytes,
+		Timeout:        cfg.Judge.Timeout,
 	})
 	languages := submission.NewLanguageService(submissionRepo, judgeEngine, statsService)
 	completer := submission.NewSubmissionCompleter(submissionRepo)

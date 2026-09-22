@@ -50,6 +50,13 @@ func (s *ObjectSourceStore) Put(ctx context.Context, ownerType string, ownerID i
 	return SourceObject{StorageKey: info.Key, ChecksumSHA256: checksum, SizeBytes: int64(len(source)), ContentType: contentType}, nil
 }
 
+func (s *ObjectSourceStore) Delete(ctx context.Context, storageKey string) error {
+	if s.storage == nil {
+		return apperror.ServiceUnavailable("object storage unavailable")
+	}
+	return s.storage.Delete(ctx, storageKey)
+}
+
 func (s *ObjectSourceStore) Get(ctx context.Context, storageKey string) ([]byte, error) {
 	if s.storage == nil {
 		return nil, apperror.ServiceUnavailable("object storage unavailable")

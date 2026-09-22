@@ -59,6 +59,9 @@ func (r *memoryRepo) id() int64 {
 
 func (r *memoryRepo) CreateArtifact(ctx context.Context, arg ArtifactRecord) (ArtifactRecord, error) {
 	arg.ID = r.id()
+	if arg.CreatedAt.IsZero() {
+		arg.CreatedAt = time.Now().UTC()
+	}
 	r.artifacts[arg.ID] = arg
 	return arg, nil
 }
@@ -319,6 +322,21 @@ func (r *memoryRepo) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, su
 	}
 	return latest, nil
 }
+func (r *memoryRepo) GetLatestJudgeAttemptByRunID(ctx context.Context, runID int64) (JudgeAttemptRecord, error) {
+	var latest JudgeAttemptRecord
+	for _, attempt := range r.attempts {
+		if attempt.RunID == nil || *attempt.RunID != runID {
+			continue
+		}
+		if latest.ID == 0 || attempt.AttemptNo > latest.AttemptNo || (attempt.AttemptNo == latest.AttemptNo && attempt.ID > latest.ID) {
+			latest = attempt
+		}
+	}
+	if latest.ID == 0 {
+		return JudgeAttemptRecord{}, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
+	}
+	return latest, nil
+}
 func (r *memoryRepo) ListJudgeCaseResults(ctx context.Context, attemptID int64) ([]JudgeCaseResultRecord, error) {
 	r.judgeCaseResultReads++
 	return append([]JudgeCaseResultRecord(nil), r.cases[attemptID]...), nil
@@ -330,6 +348,20 @@ func (r *memoryRepo) GetSubmissionResult(ctx context.Context, submissionID int64
 		return SubmissionResultRecord{}, apperror.NotFound("submission_result.not_found", "submission result not found")
 	}
 	return row, nil
+}
+
+// sameSubject reports whether an existing attempt belongs to the same submission
+// or run as the incoming one. Exactly one of the ids is set, mirroring the
+// judge_attempts columns.
+func sameSubject(attempt JudgeAttemptRecord, input EnsureJudgeAttemptInput) bool {
+	switch {
+	case input.SubmissionID != nil:
+		return attempt.SubmissionID != nil && *attempt.SubmissionID == *input.SubmissionID
+	case input.RunID != nil:
+		return attempt.RunID != nil && *attempt.RunID == *input.RunID
+	default:
+		return false
+	}
 }
 func (r *memoryRepo) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAttemptInput) (JudgeAttemptRecord, error) {
 	if input.AttemptID != "" {
@@ -344,17 +376,19 @@ func (r *memoryRepo) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAt
 	}
 	attemptNo := int32(1)
 	for _, attempt := range r.attempts {
-		if attempt.SubmissionID != nil && *attempt.SubmissionID == input.SubmissionID && attempt.AttemptNo >= attemptNo {
-			if attempt.TaskID != nil && *attempt.TaskID == input.TaskID && !terminalStatus(attempt.Status) {
-				return attempt, nil
-			}
-			attemptNo = attempt.AttemptNo + 1
+		if !sameSubject(attempt, input) || attempt.AttemptNo < attemptNo {
+			continue
 		}
+		if attempt.TaskID != nil && *attempt.TaskID == input.TaskID && !terminalStatus(attempt.Status) {
+			return attempt, nil
+		}
+		attemptNo = attempt.AttemptNo + 1
 	}
 	id := r.id()
 	attempt := JudgeAttemptRecord{
 		ID:               id,
-		SubmissionID:     &input.SubmissionID,
+		SubmissionID:     input.SubmissionID,
+		RunID:            input.RunID,
 		TaskID:           &input.TaskID,
 		AttemptNo:        attemptNo,
 		ProtocolVersion:  input.ProtocolVersion,
@@ -374,14 +408,9 @@ func (r *memoryRepo) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAt
 	}
 	return attempt, nil
 }
-func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error) {
+func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (bool, error) {
 	if r.processedEvents[input.EventID] {
-		for _, attempt := range r.attempts {
-			if id, ok := r.attemptKeys[input.AttemptKey]; ok && attempt.ID == id && attempt.SubmissionID != nil {
-				return r.submissions[*attempt.SubmissionID], false, nil
-			}
-		}
-		return SubmissionRecord{}, false, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
+		return false, nil
 	}
 	attemptID, ok := r.attemptKeys[input.AttemptKey]
 	if !ok {
@@ -391,11 +420,31 @@ func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input Compl
 		}
 	}
 	if !ok {
-		return SubmissionRecord{}, false, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
+		return false, apperror.NotFound("judge_attempt.not_found", "judge attempt not found")
 	}
 	attempt := r.attempts[attemptID]
+	if attempt.RunID != nil {
+		run := r.runs[*attempt.RunID]
+		if terminalStatus(run.Status) {
+			// Mirrors completeRunAttempt: the result stream is at-least-once.
+			return false, nil
+		}
+		run.Status = dbStatus(input.Status)
+		run.Stdout = input.Result.Stdout
+		run.Stderr = input.Result.Stderr
+		run.CompileOutput = input.Result.CompileOutput
+		run.TimeMS = int32Ptr(int32(input.Result.TimeMS))
+		run.MemoryKB = int32Ptr(int32(input.Result.MemoryKB))
+		run.ErrorMessage = stringPtr(input.Result.ErrorMessage)
+		r.runs[run.ID] = run
+		attempt.Status = run.Status
+		attempt.Verdict = stringPtr(run.Status)
+		r.attempts[attemptID] = attempt
+		r.processedEvents[input.EventID] = true
+		return true, nil
+	}
 	if attempt.SubmissionID == nil {
-		return SubmissionRecord{}, false, fmt.Errorf("attempt %d is not a submission attempt", attemptID)
+		return false, fmt.Errorf("attempt %d is neither a submission nor a run attempt", attemptID)
 	}
 	submission := r.submissions[*attempt.SubmissionID]
 	status := dbStatus(input.Status)
@@ -428,13 +477,13 @@ func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input Compl
 		SafeSummary:  []byte(`{"verdict":"` + status + `"}`),
 	}
 	r.processedEvents[input.EventID] = true
-	return submission, true, nil
+	return true, nil
 }
 func (r *memoryRepo) CreateJudgeTask(ctx context.Context, submissionID int64, nextRunAt time.Time) (JudgeTaskRecord, error) {
 	if r.failCreateJudgeTask != nil {
 		return JudgeTaskRecord{}, r.failCreateJudgeTask
 	}
-	row := JudgeTaskRecord{ID: r.id(), SubmissionID: submissionID, Status: "pending", NextRunAt: nextRunAt}
+	row := JudgeTaskRecord{ID: r.id(), SubmissionID: &submissionID, Status: "pending", NextRunAt: nextRunAt}
 	r.tasks[row.ID] = row
 	return row, nil
 }
@@ -442,13 +491,19 @@ func (r *memoryRepo) GetJudgeTask(ctx context.Context, id int64) (JudgeTaskRecor
 	return r.tasks[id], nil
 }
 func (r *memoryRepo) ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]JudgeTaskRecord, error) {
+	return r.pendingTasks(func(task JudgeTaskRecord) bool { return task.SubmissionID != nil }), nil
+}
+func (r *memoryRepo) ClaimPendingRunTasks(ctx context.Context, limit int32) ([]JudgeTaskRecord, error) {
+	return r.pendingTasks(func(task JudgeTaskRecord) bool { return task.RunID != nil }), nil
+}
+func (r *memoryRepo) pendingTasks(match func(JudgeTaskRecord) bool) []JudgeTaskRecord {
 	var rows []JudgeTaskRecord
 	for _, task := range r.tasks {
-		if task.Status == "pending" {
+		if task.Status == "pending" && match(task) {
 			rows = append(rows, task)
 		}
 	}
-	return rows, nil
+	return rows
 }
 func (r *memoryRepo) MarkJudgeTaskDispatching(ctx context.Context, id int64) (JudgeTaskRecord, error) {
 	row := r.tasks[id]
@@ -489,7 +544,10 @@ func (r *memoryRepo) MarkJudgeTaskDead(ctx context.Context, id int64, reason str
 	row.Status = "dead"
 	row.LastError = reason
 	r.tasks[id] = row
-	if _, err := r.MarkSubmissionSystemError(ctx, row.SubmissionID, reason); err != nil {
+	if row.SubmissionID == nil {
+		return JudgeTaskRecord{}, errJudgeTaskIsNotASubmission
+	}
+	if _, err := r.MarkSubmissionSystemError(ctx, *row.SubmissionID, reason); err != nil {
 		return JudgeTaskRecord{}, err
 	}
 	r.events = append(r.events, "db_dead")
@@ -500,9 +558,12 @@ func (r *memoryRepo) RecoverDeadJudgeTask(ctx context.Context, id int64, nextRun
 	if row.Status != "dead" {
 		return JudgeTaskRecord{}, fmt.Errorf("judge task %d is not dead", id)
 	}
-	submission := r.submissions[row.SubmissionID]
+	if row.SubmissionID == nil {
+		return JudgeTaskRecord{}, errJudgeTaskIsNotASubmission
+	}
+	submission := r.submissions[*row.SubmissionID]
 	if submission.Status != StatusSystemErr {
-		return JudgeTaskRecord{}, fmt.Errorf("submission %d is not system_error", row.SubmissionID)
+		return JudgeTaskRecord{}, fmt.Errorf("submission %d is not system_error", *row.SubmissionID)
 	}
 	row.Status = "pending"
 	row.Attempts = 0
@@ -512,17 +573,105 @@ func (r *memoryRepo) RecoverDeadJudgeTask(ctx context.Context, id int64, nextRun
 	submission.Status = StatusQueued
 	submission.ErrorMessage = stringPtr(reason)
 	submission.JudgedAt = nil
-	r.submissions[row.SubmissionID] = submission
+	r.submissions[*row.SubmissionID] = submission
 	return row, nil
 }
-func (r *memoryRepo) CreateRun(ctx context.Context, arg RunRecord) (RunRecord, error) {
+func (r *memoryRepo) AdmitRun(ctx context.Context, input AdmitRunInput) (RunRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if input.MaxActive > 0 {
+		active := 0
+		for _, row := range r.runs {
+			if row.UserID == input.Run.UserID && !terminalStatus(row.Status) {
+				active++
+			}
+		}
+		if active >= input.MaxActive {
+			return RunRecord{}, apperror.TooManyRequests("run.user_limit_exceeded", "too many runs in flight for this user")
+		}
+	}
+	arg := input.Run
 	arg.ID = r.id()
 	r.runs[arg.ID] = arg
+	if input.Enqueue {
+		runID := arg.ID
+		r.tasks[r.id()] = JudgeTaskRecord{ID: r.nextID, RunID: &runID, Status: "pending", NextRunAt: input.NextRunAt}
+	}
 	return arg, nil
 }
+func (r *memoryRepo) DeleteArtifact(ctx context.Context, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.artifacts, id)
+	r.events = append(r.events, "delete_artifact")
+	return nil
+}
+func (r *memoryRepo) ListOrphanedRunArtifacts(ctx context.Context, input ListOrphanedArtifactsInput) ([]OrphanedArtifactRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []OrphanedArtifactRecord
+	for id, artifact := range r.artifacts {
+		if artifact.OwnerType != "run" || artifact.Kind != "source" {
+			continue
+		}
+		if !artifact.CreatedAt.Before(input.CreatedBefore) {
+			continue
+		}
+		referenced := false
+		for _, run := range r.runs {
+			if run.SourceArtifactID == id {
+				referenced = true
+				break
+			}
+		}
+		if referenced {
+			continue
+		}
+		out = append(out, OrphanedArtifactRecord{ID: id, StorageKey: artifact.StorageKey})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+func (r *memoryRepo) MarkRunRunning(ctx context.Context, id int64) (RunRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	row := r.runs[id]
+	if row.Status == StatusQueued {
+		row.Status = StatusRunning
+		r.runs[id] = row
+	}
+	return row, nil
+}
+
+// runTaskForRun returns the judge task enqueued for a run, so a test can prove a
+// queued run is actually going to be executed by somebody.
+func (r *memoryRepo) runTaskForRun(runID int64) (JudgeTaskRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, task := range r.tasks {
+		if task.RunID != nil && *task.RunID == runID {
+			return task, true
+		}
+	}
+	return JudgeTaskRecord{}, false
+}
+
+// runIDsForUser lists a user's runs in a stable order.
+func (r *memoryRepo) runIDsForUser(userID int64) []int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]int64, 0, len(r.runs))
+	for id, row := range r.runs {
+		if row.UserID == userID {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
 func (r *memoryRepo) GetRun(ctx context.Context, id int64) (RunRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -553,10 +702,14 @@ func (r *memoryRepo) ResetStaleJudgeTasks(ctx context.Context, staleBefore time.
 		row.Status = "pending"
 		row.LastError = reason
 		r.tasks[id] = row
-		if submission := r.submissions[row.SubmissionID]; submission.Status == StatusRunning {
+		if row.SubmissionID == nil {
+			rows = append(rows, row)
+			continue
+		}
+		if submission := r.submissions[*row.SubmissionID]; submission.Status == StatusRunning {
 			submission.Status = StatusQueued
 			submission.ErrorMessage = stringPtr(reason)
-			r.submissions[row.SubmissionID] = submission
+			r.submissions[*row.SubmissionID] = submission
 		}
 		rows = append(rows, row)
 	}

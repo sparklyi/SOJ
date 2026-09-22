@@ -80,31 +80,18 @@ func (c *Core) Judge(ctx context.Context, request Request) (judge.Result, error)
 	if err != nil {
 		return judge.Result{}, err
 	}
-	workspace, err := c.sandbox.Prepare(ctx, sandbox.PrepareRequest{
-		Profile: profile,
-		Source:  request.Source,
-		Limits:  limits(request.Timeout, request.MemoryKB, request.OutputLimitBytes),
-	})
+	workspace, err := c.prepareWorkspace(ctx, profile, request.Source, limits(request.Timeout, request.MemoryKB, request.OutputLimitBytes))
 	if err != nil {
 		return judge.Result{}, err
 	}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), c.cleanupTimeout)
-		defer cancel()
-		_ = c.sandbox.Cleanup(cleanupCtx, workspace)
-	}()
+	defer c.cleanupWorkspace(workspace)
 
 	compiled, err := c.sandbox.Compile(ctx, workspace, profile)
 	if err != nil {
 		return judge.Result{}, err
 	}
 	if compiled.Verdict != judge.VerdictAccepted {
-		return c.result(profile, judge.Result{
-			Verdict:       compiled.Verdict,
-			CompileOutput: compiled.Output,
-			ErrorMessage:  compiled.ErrorMessage,
-			JudgedAt:      c.now(),
-		}), nil
+		return c.compileFailed(profile, compiled), nil
 	}
 
 	results := make([]judge.CaseResult, 0, len(request.Cases))
@@ -159,6 +146,80 @@ func (c *Core) Judge(ctx context.Context, request Request) (judge.Result, error)
 		})
 	}
 	return c.result(profile, judge.Result{Verdict: verdict, TimeMS: maxTime, MemoryKB: maxMemory, Cases: results, JudgedAt: c.now()}), nil
+}
+
+// Run compiles source and executes it once with the given stdin, returning the
+// raw output. Nothing is compared and no testcase is involved: this is the
+// operation behind a self-run / playground run.
+//
+// It takes judge.RunRequest rather than a local request type because there is
+// nothing to translate -- unlike judging, where the port speaks in testcase
+// storage keys and the core in inline content.
+func (c *Core) Run(ctx context.Context, request judge.RunRequest) (judge.Result, error) {
+	if err := request.Validate(); err != nil {
+		return judge.Result{}, err
+	}
+	profile, err := c.languages.ResolveID(request.LanguageID)
+	if err != nil {
+		return judge.Result{}, err
+	}
+	workspace, err := c.prepareWorkspace(ctx, profile, request.Source, limits(request.Timeout, request.MemoryKB, 0))
+	if err != nil {
+		return judge.Result{}, err
+	}
+	defer c.cleanupWorkspace(workspace)
+
+	compiled, err := c.sandbox.Compile(ctx, workspace, profile)
+	if err != nil {
+		return judge.Result{}, err
+	}
+	if compiled.Verdict != judge.VerdictAccepted {
+		return c.compileFailed(profile, compiled), nil
+	}
+
+	run, err := c.sandbox.Run(ctx, workspace, profile, sandbox.RunRequest{
+		Stdin:  request.Stdin,
+		Limits: limits(request.Timeout, request.MemoryKB, 0),
+	})
+	if err != nil {
+		return judge.Result{}, err
+	}
+	return c.result(profile, judge.Result{
+		Verdict:      run.Verdict,
+		TimeMS:       run.TimeMS,
+		MemoryKB:     run.MemoryKB,
+		Stdout:       run.Stdout,
+		Stderr:       run.Stderr,
+		ErrorMessage: run.ErrorMessage,
+		JudgedAt:     c.now(),
+	}), nil
+}
+
+// prepareWorkspace allocates the sandbox workspace. Judging and running share
+// it so the prepare/cleanup pairing cannot drift between the two paths.
+func (c *Core) prepareWorkspace(ctx context.Context, profile language.Profile, source []byte, runLimits sandbox.Limits) (sandbox.Workspace, error) {
+	return c.sandbox.Prepare(ctx, sandbox.PrepareRequest{
+		Profile: profile,
+		Source:  source,
+		Limits:  runLimits,
+	})
+}
+
+func (c *Core) cleanupWorkspace(workspace sandbox.Workspace) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), c.cleanupTimeout)
+	defer cancel()
+	_ = c.sandbox.Cleanup(cleanupCtx, workspace)
+}
+
+// compileFailed is the final result whenever compilation does not succeed:
+// there is nothing to run, so both paths return it verbatim.
+func (c *Core) compileFailed(profile language.Profile, compiled sandbox.CompileResult) judge.Result {
+	return c.result(profile, judge.Result{
+		Verdict:       compiled.Verdict,
+		CompileOutput: compiled.Output,
+		ErrorMessage:  compiled.ErrorMessage,
+		JudgedAt:      c.now(),
+	})
 }
 
 func (c *Core) result(profile language.Profile, result judge.Result) judge.Result {

@@ -656,12 +656,17 @@ WHERE id = sqlc.arg('id')
 RETURNING *;
 
 -- name: CreateJudgeTask :one
+-- Exactly one subject per task; the table CHECK enforces it. A run task and a
+-- submission task share the whole lifecycle, which is why they share the table.
 INSERT INTO judge_tasks (
     submission_id,
+    run_id,
     status,
     next_run_at
 ) VALUES (
-    $1, $2, $3
+    sqlc.narg('submission_id'),
+    sqlc.narg('run_id'),
+    $1, $2
 )
 RETURNING *;
 
@@ -682,11 +687,15 @@ FROM judge_tasks
 WHERE submission_id = $1;
 
 -- name: ClaimPendingJudgeTasks :many
+-- Submission tasks only. Runs are claimed by ClaimPendingRunTasks so they can
+-- be published to their own stream: playground traffic must not sit in front of
+-- formal submissions.
 WITH claimed AS (
     SELECT id
     FROM judge_tasks
     WHERE status = 'pending'
       AND next_run_at <= now()
+      AND submission_id IS NOT NULL
     ORDER BY next_run_at, id
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -698,6 +707,30 @@ FROM claimed
 WHERE judge_tasks.id = claimed.id
   AND judge_tasks.status = 'pending'
 RETURNING judge_tasks.*;
+
+-- name: ClaimPendingRunTasks :many
+WITH claimed AS (
+    SELECT id
+    FROM judge_tasks
+    WHERE status = 'pending'
+      AND next_run_at <= now()
+      AND run_id IS NOT NULL
+    ORDER BY next_run_at, id
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE judge_tasks
+SET status = 'dispatching',
+    updated_at = now()
+FROM claimed
+WHERE judge_tasks.id = claimed.id
+  AND judge_tasks.status = 'pending'
+RETURNING judge_tasks.*;
+
+-- name: GetJudgeTaskByRunID :one
+SELECT *
+FROM judge_tasks
+WHERE run_id = $1;
 
 -- name: UpdateJudgeTaskDispatching :one
 UPDATE judge_tasks
@@ -826,6 +859,8 @@ WHERE status IN ('queued', 'running')
 RETURNING *;
 
 -- name: CreateRun :one
+-- problem_id is optional: a run attached to a problem validates the problem
+-- first, a playground run passes nothing and skips that check entirely.
 INSERT INTO runs (
     user_id,
     problem_id,
@@ -834,7 +869,12 @@ INSERT INTO runs (
     source_artifact_id,
     stdin
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    sqlc.arg('user_id'),
+    sqlc.narg('problem_id'),
+    sqlc.arg('language_id'),
+    sqlc.arg('status'),
+    sqlc.arg('source_artifact_id'),
+    sqlc.arg('stdin')
 )
 RETURNING *;
 
@@ -861,3 +901,84 @@ SET status = sqlc.arg('status'),
 WHERE id = sqlc.arg('id')
   AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING *;
+
+-- name: MarkRunRunning :one
+UPDATE runs
+SET status = 'running',
+    updated_at = now()
+WHERE id = $1
+  AND status = 'queued'
+RETURNING *;
+
+-- name: LockRunByID :one
+SELECT *
+FROM runs
+WHERE id = $1
+FOR UPDATE;
+
+-- name: CountActiveRunsByUser :one
+-- "Active" is what the per-user cap is about: a run the user is still waiting
+-- on. Counted in the database so the cap holds across API replicas, where an
+-- in-process counter would silently be N times the configured value.
+SELECT count(*)::bigint
+FROM runs
+WHERE user_id = $1
+  AND status IN ('queued', 'running');
+
+-- name: LockUserForRunAdmission :one
+-- Serialises run admission per user so the count above cannot race an insert.
+SELECT id
+FROM users
+WHERE id = $1
+FOR UPDATE;
+
+-- name: ListExpiredRuns :many
+-- Self-runs past the retention window, with the storage key of the object that
+-- has to be removed before the row.
+--
+-- Terminal status only. A run that never finished is MarkStaleRunsSystemError's
+-- business; deleting something that might still be executing would be
+-- indefensible, and that sweep has already terminated anything older than half
+-- an hour anyway.
+--
+-- LEFT JOIN so a run whose artifact is already gone is still deleted. An inner
+-- join would hide exactly the rows that most need removing.
+SELECT
+    runs.id,
+    runs.source_artifact_id,
+    artifacts.storage_key
+FROM runs
+LEFT JOIN artifacts ON artifacts.id = runs.source_artifact_id
+WHERE runs.status NOT IN ('queued', 'running')
+  AND runs.created_at < sqlc.arg('created_before')
+ORDER BY runs.created_at, runs.id
+LIMIT sqlc.arg('limit');
+
+-- name: DeleteRunByID :exec
+DELETE FROM runs
+WHERE id = $1;
+
+-- name: DeleteArtifactByID :exec
+DELETE FROM artifacts
+WHERE id = $1;
+
+-- name: ListOrphanedRunArtifacts :many
+-- Run source objects that no run points at.
+--
+-- These are left by a run whose source was uploaded and whose admission was then
+-- refused, or whose process died in between: the object is written before the
+-- decision is made, so the decision is the only place that can undo it, and a
+-- crash has no place at all. Without this sweep such an object is invisible to
+-- every other query in the system and stays forever.
+--
+-- Scoped to owner_type = 'run' and kind = 'source' so a submission's source,
+-- which is kept for rejudge, can never be picked up.
+SELECT artifacts.id, artifacts.storage_key
+FROM artifacts
+LEFT JOIN runs ON runs.source_artifact_id = artifacts.id
+WHERE artifacts.owner_type = 'run'
+  AND artifacts.kind = 'source'
+  AND artifacts.created_at < sqlc.arg('created_before')
+  AND runs.id IS NULL
+ORDER BY artifacts.created_at, artifacts.id
+LIMIT sqlc.arg('limit');

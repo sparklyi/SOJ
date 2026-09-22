@@ -75,8 +75,20 @@ func (taskDispatchStoreStub) MarkJudgeTaskDispatched(context.Context, int64, str
 	return JudgeTaskRecord{}, nil
 }
 
+func (taskDispatchStoreStub) ClaimPendingRunTasks(context.Context, int32) ([]JudgeTaskRecord, error) {
+	return nil, nil
+}
+
 func (taskDispatchStoreStub) GetSubmission(context.Context, int64) (SubmissionRecord, error) {
 	return SubmissionRecord{}, nil
+}
+
+func (taskDispatchStoreStub) GetRun(context.Context, int64) (RunRecord, error) {
+	return RunRecord{}, nil
+}
+
+func (taskDispatchStoreStub) MarkRunRunning(context.Context, int64) (RunRecord, error) {
+	return RunRecord{}, nil
 }
 
 func (taskDispatchStoreStub) GetArtifact(context.Context, int64) (ArtifactRecord, error) {
@@ -133,7 +145,7 @@ func TestTaskFailureHandlerUsesOnlyFailureStore(t *testing.T) {
 	taskQueue := &deadLetterQueueStub{}
 	handler := NewTaskFailureHandler(taskFailureStoreStub{}, taskQueue, 2, nil, nil)
 
-	result, err := handler.retryOrDead(t.Context(), queue.Message{ID: "1-0", TaskID: 1}, JudgeTaskRecord{ID: 1, SubmissionID: 2}, errors.New("judge unavailable"))
+	result, err := handler.retryOrDead(t.Context(), queue.Message{ID: "1-0", TaskID: 1}, JudgeTaskRecord{ID: 1, SubmissionID: int64Ptr(2)}, errors.New("judge unavailable"))
 	if err != nil {
 		t.Fatalf("retryOrDead() error = %v", err)
 	}

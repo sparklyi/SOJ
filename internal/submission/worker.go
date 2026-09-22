@@ -18,12 +18,15 @@ import (
 
 type taskDispatchStore interface {
 	ClaimPendingJudgeTasks(context.Context, int32) ([]JudgeTaskRecord, error)
+	ClaimPendingRunTasks(context.Context, int32) ([]JudgeTaskRecord, error)
 	RetryJudgeTask(context.Context, int64, time.Time, string) (JudgeTaskRecord, error)
 	MarkJudgeTaskDispatched(context.Context, int64, string) (JudgeTaskRecord, error)
 	GetSubmission(context.Context, int64) (SubmissionRecord, error)
+	GetRun(context.Context, int64) (RunRecord, error)
 	GetArtifact(context.Context, int64) (ArtifactRecord, error)
 	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
 	MarkSubmissionRunning(context.Context, int64) (SubmissionRecord, error)
+	MarkRunRunning(context.Context, int64) (RunRecord, error)
 	EnsureJudgeAttempt(context.Context, EnsureJudgeAttemptInput) (JudgeAttemptRecord, error)
 }
 
@@ -33,9 +36,14 @@ type taskDispatchMetrics interface {
 }
 
 // TaskDispatcher turns pending judge tasks into queue messages.
+//
+// Submissions and runs share the task table and lifecycle but not the stream:
+// a run goes to RunQueue so playground traffic never queues in front of a formal
+// submission. Only the event construction and the destination differ.
 type TaskDispatcher struct {
 	store     taskDispatchStore
 	queue     taskPublisher
+	runQueue  taskPublisher
 	testcases testcaseMetadataResolver
 	metrics   taskDispatchMetrics
 	now       func() time.Time
@@ -45,6 +53,7 @@ type TaskDispatcher struct {
 type TaskDispatcherOptions struct {
 	Store            taskDispatchStore
 	Queue            taskPublisher
+	RunQueue         taskPublisher
 	TestcaseResolver testcaseMetadataResolver
 	Metrics          taskDispatchMetrics
 	Now              func() time.Time
@@ -63,6 +72,7 @@ func NewTaskDispatcher(options TaskDispatcherOptions) *TaskDispatcher {
 	return &TaskDispatcher{
 		store:     options.Store,
 		queue:     options.Queue,
+		runQueue:  options.RunQueue,
 		testcases: options.TestcaseResolver,
 		metrics:   options.Metrics,
 		now:       now,
@@ -74,13 +84,41 @@ func (d *TaskDispatcher) DispatchPending(ctx context.Context, limit int32) (int,
 	if limit <= 0 {
 		limit = 16
 	}
+	submissions, err := d.dispatchSubmissions(ctx, limit)
+	if err != nil {
+		return submissions, err
+	}
+	runs, err := d.dispatchRuns(ctx, limit)
+	return submissions + runs, err
+}
+
+func (d *TaskDispatcher) dispatchSubmissions(ctx context.Context, limit int32) (int, error) {
 	tasks, err := d.store.ClaimPendingJudgeTasks(ctx, limit)
 	if err != nil {
 		return 0, err
 	}
+	return d.publish(ctx, tasks, d.queue, d.submissionRequestEvent)
+}
+
+func (d *TaskDispatcher) dispatchRuns(ctx context.Context, limit int32) (int, error) {
+	if d.runQueue == nil {
+		return 0, nil
+	}
+	tasks, err := d.store.ClaimPendingRunTasks(ctx, limit)
+	if err != nil {
+		return 0, err
+	}
+	return d.publish(ctx, tasks, d.runQueue, d.runRequestEvent)
+}
+
+// publish is the half of dispatching that does not care what the task is about:
+// build the event, publish it, record the stream id, and back off on failure.
+type requestEventBuilder func(context.Context, JudgeTaskRecord) (judgeevents.RequestEvent, error)
+
+func (d *TaskDispatcher) publish(ctx context.Context, tasks []JudgeTaskRecord, target taskPublisher, build requestEventBuilder) (int, error) {
 	dispatched := 0
 	for _, task := range tasks {
-		event, err := d.requestEvent(ctx, task)
+		event, err := build(ctx, task)
 		if err != nil {
 			return dispatched, err
 		}
@@ -91,7 +129,7 @@ func (d *TaskDispatcher) DispatchPending(ctx context.Context, limit int32) (int,
 		if d.metrics != nil {
 			d.metrics.RecordJudgeRequestPayloadSize(len(payload))
 		}
-		streamID, err := d.queue.Publish(ctx, task.ID, payload)
+		streamID, err := target.Publish(ctx, task.ID, payload)
 		if err != nil {
 			d.record("error")
 			_, _ = d.store.RetryJudgeTask(ctx, task.ID, d.now().Add(d.backoff(task.Attempts)), err.Error())
@@ -107,8 +145,11 @@ func (d *TaskDispatcher) DispatchPending(ctx context.Context, limit int32) (int,
 	return dispatched, nil
 }
 
-func (d *TaskDispatcher) requestEvent(ctx context.Context, task JudgeTaskRecord) (judgeevents.RequestEvent, error) {
-	submission, err := d.store.GetSubmission(ctx, task.SubmissionID)
+func (d *TaskDispatcher) submissionRequestEvent(ctx context.Context, task JudgeTaskRecord) (judgeevents.RequestEvent, error) {
+	if task.SubmissionID == nil {
+		return judgeevents.RequestEvent{}, errJudgeTaskIsNotASubmission
+	}
+	submission, err := d.store.GetSubmission(ctx, *task.SubmissionID)
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
@@ -133,7 +174,7 @@ func (d *TaskDispatcher) requestEvent(ctx context.Context, task JudgeTaskRecord)
 	fallbackTraceID := fmt.Sprintf("trace-submission-%d-task-%d", submission.ID, task.ID)
 	traceID, traceContext := traceIdentityFromContext(ctx, fallbackTraceID)
 	attempt, err := d.store.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
-		SubmissionID:    submission.ID,
+		SubmissionID:    &submission.ID,
 		TaskID:          task.ID,
 		LanguageID:      language.ID,
 		TestcaseSetID:   testcaseSet.ID,
@@ -172,6 +213,72 @@ func (d *TaskDispatcher) requestEvent(ctx context.Context, task JudgeTaskRecord)
 		TimeoutMS: language.DefaultTimeLimit.Milliseconds(),
 		MemoryKB:  language.DefaultMemoryKB,
 		Priority:  "formal",
+		CreatedAt: now,
+	}
+	if err := event.Validate(); err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	return event, nil
+}
+
+// runRequestEvent builds the request for a self-run. It carries no testcase set
+// -- there is nothing to judge, only source plus stdin to execute -- and is
+// marked scratch so the agent can prefer formal work if it ever needs to.
+func (d *TaskDispatcher) runRequestEvent(ctx context.Context, task JudgeTaskRecord) (judgeevents.RequestEvent, error) {
+	if task.RunID == nil {
+		return judgeevents.RequestEvent{}, errJudgeTaskIsNotARun
+	}
+	run, err := d.store.GetRun(ctx, *task.RunID)
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	artifact, err := d.store.GetArtifact(ctx, run.SourceArtifactID)
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	language, err := d.store.GetEnabledLanguage(ctx, run.LanguageID)
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	now := d.now()
+	if run.Status == StatusQueued {
+		if _, err := d.store.MarkRunRunning(ctx, run.ID); err != nil {
+			return judgeevents.RequestEvent{}, err
+		}
+	}
+	fallbackTraceID := fmt.Sprintf("trace-run-%d-task-%d", run.ID, task.ID)
+	traceID, traceContext := traceIdentityFromContext(ctx, fallbackTraceID)
+	attempt, err := d.store.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
+		RunID:           &run.ID,
+		TaskID:          task.ID,
+		LanguageID:      language.ID,
+		ProtocolVersion: judgeevents.RequestEventType,
+		JudgeEngine:     judge.EngineSOJAgent,
+		TraceID:         traceID,
+		StartedAt:       now,
+	})
+	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	attemptID := strconv.FormatInt(attempt.ID, 10)
+	event := judgeevents.RequestEvent{
+		ProtocolVersion: judgeevents.RequestEventType,
+		EventID:         fmt.Sprintf("judge-request-%s", attemptID),
+		AttemptID:       attemptID,
+		TraceID:         valueOr(attempt.TraceID, traceID),
+		TraceContext:    traceContext,
+		RunID:           run.ID,
+		LanguageID:      language.ID,
+		LanguageSlug:    language.EngineLanguageID,
+		SourceArtifact: judgeevents.ArtifactRef{
+			ID:          artifact.ID,
+			StorageKey:  artifact.StorageKey,
+			ContentHash: artifact.ChecksumSHA256,
+		},
+		Stdin:     run.Stdin,
+		TimeoutMS: language.DefaultTimeLimit.Milliseconds(),
+		MemoryKB:  language.DefaultMemoryKB,
+		Priority:  judgeevents.PriorityScratch,
 		CreatedAt: now,
 	}
 	if err := event.Validate(); err != nil {
@@ -239,7 +346,7 @@ func (h *TaskFailureHandler) retryOrDead(ctx context.Context, message queue.Mess
 	if _, err := h.store.RetryJudgeTask(ctx, task.ID, h.now().Add(h.backoff(task.Attempts)), reason); err != nil {
 		return "error", err
 	}
-	if _, err := h.store.MarkSubmissionQueued(ctx, task.SubmissionID, reason); err != nil {
+	if _, err := h.store.MarkSubmissionQueued(ctx, *task.SubmissionID, reason); err != nil {
 		return "error", err
 	}
 	return "retry", h.queue.Ack(ctx, message.ID)
@@ -308,8 +415,16 @@ func (p *TaskProcessor) processMessage(ctx context.Context, message queue.Messag
 	if task.Status == "done" || task.Status == "dead" {
 		return "skipped", p.queue.Ack(ctx, message.ID)
 	}
+	// TaskProcessor is the in-process judging path: it loads testcases and judges.
+	// Runs are executed by the judge-agent instead, so a run task that shows up
+	// here (only possible if an operator points both streams at the same queue)
+	// is acked and left alone. A stuck run is recovered by ResetStaleTasks and
+	// MarkStaleRuns, both of which are subject-agnostic.
+	if task.RunID != nil {
+		return "skipped", p.queue.Ack(ctx, message.ID)
+	}
 
-	submission, err := p.store.GetSubmission(ctx, task.SubmissionID)
+	submission, err := p.store.GetSubmission(ctx, *task.SubmissionID)
 	if err != nil {
 		return p.failures.retryOrDead(ctx, message, task, err)
 	}

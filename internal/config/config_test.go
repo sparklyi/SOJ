@@ -98,6 +98,18 @@ func TestLoadDefaultsJudgeRunParallelism(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsJudgeRunPerUser(t *testing.T) {
+	t.Setenv("SOJ_JUDGE_RUN_PER_USER", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Judge.RunPerUser != 2 {
+		t.Fatalf("Judge.RunPerUser = %d, want 2", cfg.Judge.RunPerUser)
+	}
+}
+
 func TestLoadRejectsInvalidJudgeRunParallelism(t *testing.T) {
 	for _, value := range []string{"0", "-1", "not-a-number"} {
 		t.Run(value, func(t *testing.T) {

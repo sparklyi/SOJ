@@ -15,9 +15,9 @@ type resultConsumerStoreStub struct {
 	input CompleteJudgeAttemptResultInput
 }
 
-func (s *resultConsumerStoreStub) CompleteJudgeAttemptResult(_ context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error) {
+func (s *resultConsumerStoreStub) CompleteJudgeAttemptResult(_ context.Context, input CompleteJudgeAttemptResultInput) (bool, error) {
 	s.input = input
-	return SubmissionRecord{ID: 1, Status: StatusAccepted}, true, nil
+	return true, nil
 }
 
 func TestResultConsumerUsesOnlyResultStore(t *testing.T) {

@@ -72,6 +72,27 @@ type ContestRegistration struct {
 	PenaltyMinutes int32              `db:"penalty_minutes" json:"penalty_minutes"`
 }
 
+type ContestRoleAssignment struct {
+	ID        int64              `db:"id" json:"id"`
+	ContestID int64              `db:"contest_id" json:"contest_id"`
+	UserID    int64              `db:"user_id" json:"user_id"`
+	RoleCode  string             `db:"role_code" json:"role_code"`
+	GrantedBy pgtype.Int8        `db:"granted_by" json:"granted_by"`
+	GrantedAt pgtype.Timestamptz `db:"granted_at" json:"granted_at"`
+	RevokedAt pgtype.Timestamptz `db:"revoked_at" json:"revoked_at"`
+}
+
+type ContestRoleAuditEvent struct {
+	ID          int64              `db:"id" json:"id"`
+	ContestID   int64              `db:"contest_id" json:"contest_id"`
+	UserID      int64              `db:"user_id" json:"user_id"`
+	RoleCode    string             `db:"role_code" json:"role_code"`
+	ActorUserID pgtype.Int8        `db:"actor_user_id" json:"actor_user_id"`
+	Action      string             `db:"action" json:"action"`
+	Reason      string             `db:"reason" json:"reason"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
 type ContestScoreSnapshot struct {
 	ID             int64              `db:"id" json:"id"`
 	ContestID      int64              `db:"contest_id" json:"contest_id"`
@@ -154,7 +175,7 @@ type JudgeCaseResult struct {
 
 type JudgeTask struct {
 	ID           int64              `db:"id" json:"id"`
-	SubmissionID int64              `db:"submission_id" json:"submission_id"`
+	SubmissionID pgtype.Int8        `db:"submission_id" json:"submission_id"`
 	StreamID     pgtype.Text        `db:"stream_id" json:"stream_id"`
 	Status       string             `db:"status" json:"status"`
 	Attempts     int32              `db:"attempts" json:"attempts"`
@@ -162,6 +183,7 @@ type JudgeTask struct {
 	LastError    pgtype.Text        `db:"last_error" json:"last_error"`
 	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	RunID        pgtype.Int8        `db:"run_id" json:"run_id"`
 }
 
 type Language struct {
@@ -323,7 +345,7 @@ type RoleAuditEvent struct {
 type Run struct {
 	ID               int64              `db:"id" json:"id"`
 	UserID           int64              `db:"user_id" json:"user_id"`
-	ProblemID        int64              `db:"problem_id" json:"problem_id"`
+	ProblemID        pgtype.Int8        `db:"problem_id" json:"problem_id"`
 	LanguageID       int64              `db:"language_id" json:"language_id"`
 	Status           string             `db:"status" json:"status"`
 	SourceArtifactID pgtype.Int8        `db:"source_artifact_id" json:"source_artifact_id"`

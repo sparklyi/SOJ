@@ -429,3 +429,78 @@ func tableSchema(t *testing.T, schema, tableName, nextTableName string) string {
 	}
 	return schema[start : start+end]
 }
+
+// A run and a submission share the judge_tasks table but not the stream, so the
+// two claim queries must be disjoint. If either filter disappears, a run lands
+// on the submission stream (or the reverse) and the split stops meaning anything.
+func TestClaimQueriesAreDisjointBySubject(t *testing.T) {
+	for name, want := range map[string]struct{ query, filter, foreign string }{
+		"ClaimPendingJudgeTasks": {query: claimPendingJudgeTasks, filter: "AND submission_id IS NOT NULL", foreign: "run_id"},
+		"ClaimPendingRunTasks":   {query: claimPendingRunTasks, filter: "AND run_id IS NOT NULL", foreign: "submission_id"},
+	} {
+		if !strings.Contains(want.query, want.filter) {
+			t.Fatalf("%s missing %q:\n%s", name, want.filter, want.query)
+		}
+		// The filter must also be exclusive. Only the selection is checked: the
+		// RETURNING clause names every column, so it always mentions both
+		// subjects and says nothing about which rows were selected.
+		selection, _, _ := strings.Cut(want.query, "UPDATE judge_tasks")
+		if strings.Contains(selection, want.foreign) {
+			t.Fatalf("%s selects on %s, so the two claims are not disjoint:\n%s", name, want.foreign, selection)
+		}
+		if !strings.Contains(want.query, "FOR UPDATE SKIP LOCKED") {
+			t.Fatalf("%s missing FOR UPDATE SKIP LOCKED:\n%s", name, want.query)
+		}
+	}
+}
+
+// The per-user run cap counts runs that have not finished. Counting terminal
+// statuses would let a user's completed runs block new ones forever.
+func TestCountActiveRunsByUserCountsOnlyInFlightRuns(t *testing.T) {
+	if !strings.Contains(countActiveRunsByUser, "AND status IN ('queued', 'running')") {
+		t.Fatalf("CountActiveRunsByUser does not restrict to in-flight statuses:\n%s", countActiveRunsByUser)
+	}
+}
+
+// Admission is a count followed by an insert, so the user row has to be locked
+// or two concurrent requests can both see room.
+func TestLockUserForRunAdmissionLocksTheRow(t *testing.T) {
+	if !strings.Contains(lockUserForRunAdmission, "FOR UPDATE") {
+		t.Fatalf("LockUserForRunAdmission does not lock the row:\n%s", lockUserForRunAdmission)
+	}
+}
+
+// Retention deletes data, so its selection has to be narrow in two ways: only
+// finished runs, and only runs with an object to remove in the same row.
+func TestListExpiredRunsOnlySelectsFinishedRuns(t *testing.T) {
+	for _, want := range []string{
+		"WHERE runs.status NOT IN ('queued', 'running')",
+		"runs.created_at <",
+		// An inner join would hide exactly the runs that most need removing:
+		// those whose artifact is already gone. Anchored on FROM so a LEFT JOIN
+		// is what is actually asserted, not just the presence of the words.
+		"FROM runs\nLEFT JOIN artifacts ON artifacts.id = runs.source_artifact_id",
+		"ORDER BY runs.created_at, runs.id",
+	} {
+		if !strings.Contains(listExpiredRuns, want) {
+			t.Fatalf("ListExpiredRuns missing %q:\n%s", want, listExpiredRuns)
+		}
+	}
+}
+
+// The orphan sweep deletes objects nothing points at. Two guards keep it away
+// from data that does have an owner: it only ever looks at run source objects
+// (a submission's source is kept for rejudge), and it only takes artifacts no
+// run references.
+func TestListOrphanedRunArtifactsIsScopedToUnreferencedRunSources(t *testing.T) {
+	for _, want := range []string{
+		"artifacts.owner_type = 'run'",
+		"artifacts.kind = 'source'",
+		"runs.id IS NULL",
+		"artifacts.created_at <",
+	} {
+		if !strings.Contains(listOrphanedRunArtifacts, want) {
+			t.Fatalf("ListOrphanedRunArtifacts missing %q:\n%s", want, listOrphanedRunArtifacts)
+		}
+	}
+}
