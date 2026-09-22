@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -61,13 +62,14 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		_ = redisClient.Close()
 	}()
 
-	requestQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
-		Stream:     envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream),
-		Group:      envOr("SOJ_JUDGE_AGENT_GROUP", "judge-agents"),
-		Consumer:   judgeAgentConsumerName(),
-		MaxLen:     cfg.Redis.StreamMaxLen,
-		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
-	})
+	agentStreams, err := parseJudgeAgentStreams(envOr("SOJ_JUDGE_AGENT_STREAMS", judgeAgentStreamsAll))
+	if err != nil {
+		return err
+	}
+	requestQueues := judgeAgentRequestQueues(redisClient, cfg, agentStreams)
+	if len(requestQueues) == 0 {
+		return fmt.Errorf("SOJ_JUDGE_AGENT_STREAMS=%q leaves the agent with no stream to consume", envOr("SOJ_JUDGE_AGENT_STREAMS", judgeAgentStreamsAll))
+	}
 	resultQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
 		Stream:     envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
 		Group:      envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
@@ -76,8 +78,10 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		MaxLen:     cfg.Redis.StreamMaxLen,
 		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
 	})
-	if err := requestQueue.Ensure(ctx); err != nil {
-		return err
+	for _, stream := range requestQueues {
+		if err := stream.Queue.Ensure(ctx); err != nil {
+			return err
+		}
 	}
 	if err := resultQueue.Ensure(ctx); err != nil {
 		return err
@@ -102,7 +106,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 
-	readiness := newJudgeAgentReadiness(requestQueue, resultQueue, objectStore, sandboxReady, metrics)
+	readiness := newJudgeAgentReadiness(requestQueues, resultQueue, objectStore, sandboxReady, metrics)
 	router := httpapi.NewRouter(httpapi.RouterOptions{
 		Metrics:        metrics,
 		ReadyCheck:     readiness.Check,
@@ -116,16 +120,18 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
 
-	logger.InfoContext(ctx, "starting soj judge agent", "health_addr", *healthAddr, "request_stream", envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "sandbox_backend", sandboxBackend, "parallelism", parallelism)
+	logger.InfoContext(ctx, "starting soj judge agent", "health_addr", *healthAddr, "request_streams", judgeRequestStreamNames(requestQueues), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "sandbox_backend", sandboxBackend, "parallelism", parallelism)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 1+len(requestQueues))
 	go func() {
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
-	go func() {
-		errCh <- runJudgeAgentLoop(runCtx, agent, requestQueue, maxBatch, cfg.Redis.Block, slotLimiter, metrics)
-	}()
+	for _, stream := range requestQueues {
+		go func(stream judgeRequestStream) {
+			errCh <- runJudgeAgentLoop(runCtx, agent, stream.Queue, maxBatch, cfg.Redis.Block, slotLimiter, metrics)
+		}(stream)
+	}
 
 	err = <-errCh
 	cancel()
@@ -255,8 +261,12 @@ func judgeAgentMessageLanguageKey(message queue.Message) string {
 func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, metrics *observability.Metrics, logger *slog.Logger, publisher submission.ResultPublisher) (judgeRequestProcessor, observability.CheckFunc, error) {
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	if backend == sandbox.BackendFake {
+		// One fake engine serves both capabilities; passing it twice keeps each
+		// field honest about which operation it is used for.
+		engine := fakeJudgeEngine(cfg.Judge.Endpoint)
 		return submission.NewFakeAsyncAgent(submission.FakeAsyncAgentOptions{
-			Judge:           newJudgeEngine(cfg.Judge),
+			Judge:           engine,
+			Run:             engine,
 			SourceStore:     sourceStore,
 			ResultPublisher: publisher,
 		}), nil, nil

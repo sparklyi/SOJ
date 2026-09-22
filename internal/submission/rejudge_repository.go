@@ -44,7 +44,7 @@ func (r *SQLRepository) CreateRejudgeBatchWithItems(ctx context.Context, input C
 		}
 		targets := make([]rejudgeTarget, 0, len(submissions))
 		for _, candidate := range submissions {
-			task, err := q.GetJudgeTaskBySubmissionID(ctx, candidate.ID)
+			task, err := q.GetJudgeTaskBySubmissionID(ctx, validInt8(candidate.ID))
 			if err != nil {
 				return err
 			}
@@ -95,7 +95,7 @@ func (r *SQLRepository) CreateRejudgeBatchWithItems(ctx context.Context, input C
 			if err != nil {
 				return err
 			}
-			if _, err := q.PrepareJudgeTaskForRejudge(ctx, db.PrepareJudgeTaskForRejudgeParams{NextRunAt: timestamptz(input.NextRunAt), ID: target.task.ID, SubmissionID: target.submission.ID}); err != nil {
+			if _, err := q.PrepareJudgeTaskForRejudge(ctx, db.PrepareJudgeTaskForRejudgeParams{NextRunAt: timestamptz(input.NextRunAt), ID: target.task.ID, SubmissionID: validInt8(target.submission.ID)}); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return apperror.Conflict("rejudge.task_not_ready", "submission judge task is not done or dead")
 				}

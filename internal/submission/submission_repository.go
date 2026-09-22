@@ -33,7 +33,7 @@ func (r *SQLRepository) CreateSubmissionWithTask(ctx context.Context, arg Submis
 		}
 		submission = submissionRecord(submissionRow)
 		taskRow, err := q.CreateJudgeTask(ctx, db.CreateJudgeTaskParams{
-			SubmissionID: submission.ID,
+			SubmissionID: validInt8(submission.ID),
 			Status:       "pending",
 			NextRunAt:    timestamptz(nextRunAt),
 		})

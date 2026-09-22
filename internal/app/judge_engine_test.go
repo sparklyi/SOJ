@@ -106,20 +106,20 @@ func TestNewRunEngineFakeEndpointRuns(t *testing.T) {
 	}
 }
 
-// TestNewRunEngineAgentEndpointFailsLoudly 钉住现状而不是假装它能跑：
-// 走 agent 时 API 进程没有执行能力，必须报出一个指名端点的错误。
-// 静默返回一个空的 accepted 才是真正危险的——那正是修复前的行为。
-func TestNewRunEngineAgentEndpointFailsLoudly(t *testing.T) {
+// TestNewRunEngineAgentEndpointHasNoInProcessEngine pins the production path:
+// with agent:// the API process has no execution capability at all, and the nil
+// engine is how RunService knows to enqueue the run instead of running it.
+//
+// Returning an engine that fails at call time was the old behaviour, and it made
+// every production self-run a system_error. A nil engine that the service reads
+// as "queued" is a decision; an engine that always errors is an accident.
+func TestNewRunEngineAgentEndpointHasNoInProcessEngine(t *testing.T) {
 	engine, err := newRunEngine(config.Config{Judge: config.JudgeConfig{Endpoint: "agent://local"}}, nil)
 	if err != nil {
 		t.Fatalf("newRunEngine returned error: %v", err)
 	}
-	_, runErr := engine.Run(context.Background(), judge.RunRequest{LanguageID: 71, Source: []byte("package main")})
-	if runErr == nil {
-		t.Fatal("Run returned nil error, want the endpoint named in the failure")
-	}
-	if !strings.Contains(runErr.Error(), "agent://local") {
-		t.Fatalf("error = %q, want it to name the endpoint", runErr)
+	if engine != nil {
+		t.Fatalf("newRunEngine = %#v, want nil so runs are enqueued for the agent", engine)
 	}
 }
 

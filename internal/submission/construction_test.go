@@ -32,6 +32,9 @@ type serviceTestOptions struct {
 	RunContext              context.Context
 	RunParallelism          int
 	RunPerUser              int
+	// RunQueued leaves RunService with no engine, which is how production runs
+	// self-runs: they are enqueued for the judge-agent instead of executed here.
+	RunQueued bool
 }
 
 func newServiceForTest(options serviceTestOptions) *Service {
@@ -55,11 +58,15 @@ func newServiceForTest(options serviceTestOptions) *Service {
 		Now:           options.Now,
 	})
 	reader := NewSubmissionReader(options.Repository, options.ContestVisibilityPolicy)
+	var runEngine runExecutor = judgeEngine
+	if options.RunQueued {
+		runEngine = nil
+	}
 	runs := NewRunService(RunServiceOptions{
 		Store:          options.Repository,
 		ProblemReader:  problems,
 		SourceStore:    sourceStore,
-		Runner:         judgeEngine,
+		Runner:         runEngine,
 		Now:            options.Now,
 		Wait:           options.RunWait,
 		Timeout:        options.RunTimeout,
@@ -73,8 +80,11 @@ func newServiceForTest(options serviceTestOptions) *Service {
 }
 
 type workerTestOptions struct {
-	Repository       *memoryRepo
-	Queue            queue.TaskQueue
+	Repository *memoryRepo
+	Queue      queue.TaskQueue
+	// RunQueue receives self-run request events. Nil leaves the dispatcher
+	// without a run stream, which is what a worker-only deployment looks like.
+	RunQueue         queue.TaskQueue
 	Judge            judgeRunner
 	ProblemReader    problem.Reader
 	TestcaseResolver workerTestcaseResolver
@@ -119,6 +129,7 @@ func newWorkerForTest(options workerTestOptions) *Worker {
 	dispatcher := NewTaskDispatcher(TaskDispatcherOptions{
 		Store:            options.Repository,
 		Queue:            taskQueue,
+		RunQueue:         options.RunQueue,
 		TestcaseResolver: testcases,
 		Metrics:          options.Metrics,
 		Now:              options.Now,

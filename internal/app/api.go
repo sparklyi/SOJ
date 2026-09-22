@@ -124,13 +124,17 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	})
 	reader := submission.NewSubmissionReader(submissionRepo, contestService)
 	runs := submission.NewRunService(submission.RunServiceOptions{
-		Store:          submissionRepo,
-		ProblemReader:  problemReader,
-		SourceStore:    sourceStore,
+		Store:         submissionRepo,
+		ProblemReader: problemReader,
+		SourceStore:   sourceStore,
+		// A nil run engine is not a misconfiguration: it means this process
+		// enqueues runs for the judge-agent instead of executing them. See
+		// newRunEngine.
 		Runner:         runEngine,
 		Context:        ctx,
 		Parallelism:    cfg.Judge.RunParallelism,
 		MaxRunsPerUser: cfg.Judge.RunPerUser,
+		MaxStdinBytes:  cfg.Judge.RunStdinMaxBytes,
 		Timeout:        cfg.Judge.Timeout,
 	})
 	languages := submission.NewLanguageService(submissionRepo, judgeEngine, statsService)

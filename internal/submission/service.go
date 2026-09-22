@@ -31,6 +31,13 @@ const (
 	defaultRunParallelism     = 1
 	defaultRunPerUser         = 2
 	defaultRunFinalizeTimeout = 5 * time.Second
+	// defaultRunStdinMaxBytes bounds the stdin a run may carry. It is stored in
+	// runs.stdin and put on the request event, so an unbounded value is both a
+	// database and a queue-payload problem.
+	defaultRunStdinMaxBytes = 64 << 10
+	// runAwaitPollInterval is how often CreateRun re-reads the run row while
+	// waiting for it to finish. The row is small and read by primary key.
+	runAwaitPollInterval = 25 * time.Millisecond
 )
 
 type SourceObject struct {

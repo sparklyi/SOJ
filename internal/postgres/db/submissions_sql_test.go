@@ -429,3 +429,43 @@ func tableSchema(t *testing.T, schema, tableName, nextTableName string) string {
 	}
 	return schema[start : start+end]
 }
+
+// A run and a submission share the judge_tasks table but not the stream, so the
+// two claim queries must be disjoint. If either filter disappears, a run lands
+// on the submission stream (or the reverse) and the split stops meaning anything.
+func TestClaimQueriesAreDisjointBySubject(t *testing.T) {
+	for name, want := range map[string]struct{ query, filter, foreign string }{
+		"ClaimPendingJudgeTasks": {query: claimPendingJudgeTasks, filter: "AND submission_id IS NOT NULL", foreign: "run_id"},
+		"ClaimPendingRunTasks":   {query: claimPendingRunTasks, filter: "AND run_id IS NOT NULL", foreign: "submission_id"},
+	} {
+		if !strings.Contains(want.query, want.filter) {
+			t.Fatalf("%s missing %q:\n%s", name, want.filter, want.query)
+		}
+		// The filter must also be exclusive. Only the selection is checked: the
+		// RETURNING clause names every column, so it always mentions both
+		// subjects and says nothing about which rows were selected.
+		selection, _, _ := strings.Cut(want.query, "UPDATE judge_tasks")
+		if strings.Contains(selection, want.foreign) {
+			t.Fatalf("%s selects on %s, so the two claims are not disjoint:\n%s", name, want.foreign, selection)
+		}
+		if !strings.Contains(want.query, "FOR UPDATE SKIP LOCKED") {
+			t.Fatalf("%s missing FOR UPDATE SKIP LOCKED:\n%s", name, want.query)
+		}
+	}
+}
+
+// The per-user run cap counts runs that have not finished. Counting terminal
+// statuses would let a user's completed runs block new ones forever.
+func TestCountActiveRunsByUserCountsOnlyInFlightRuns(t *testing.T) {
+	if !strings.Contains(countActiveRunsByUser, "AND status IN ('queued', 'running')") {
+		t.Fatalf("CountActiveRunsByUser does not restrict to in-flight statuses:\n%s", countActiveRunsByUser)
+	}
+}
+
+// Admission is a count followed by an insert, so the user row has to be locked
+// or two concurrent requests can both see room.
+func TestLockUserForRunAdmissionLocksTheRow(t *testing.T) {
+	if !strings.Contains(lockUserForRunAdmission, "FOR UPDATE") {
+		t.Fatalf("LockUserForRunAdmission does not lock the row:\n%s", lockUserForRunAdmission)
+	}
+}

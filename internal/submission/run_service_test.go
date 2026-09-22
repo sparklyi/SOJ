@@ -192,32 +192,72 @@ func TestRunSlotReleasedAfterCompletion(t *testing.T) {
 	}
 }
 
-func TestUserRunCounterCleanedUpWhenIdle(t *testing.T) {
+// A queued run is not executed by the API at all: it becomes a judge task and
+// the judge-agent runs it. This is the production path, so it is pinned here
+// rather than only in an integration test.
+func TestQueuedRunEnqueuesTaskInsteadOfExecuting(t *testing.T) {
 	repo := runTestRepo()
+	problems := &recordingProblemReader{}
 	service := newServiceForTest(serviceTestOptions{
-		Repository:     repo,
-		ProblemReader:  fakeProblemReader{},
-		SourceStore:    NewMemorySourceStore(),
-		Judge:          judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted}),
-		RunWait:        time.Second,
-		RunParallelism: 2,
-		RunPerUser:     2,
+		Repository:    repo,
+		ProblemReader: problems,
+		SourceStore:   NewMemorySourceStore(),
+		RunWait:       time.Millisecond,
+		RunQueued:     true,
 	})
 
-	out, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
+	out, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main"), Stdin: "7 8"})
 	if err != nil {
-		t.Fatalf("CreateRun returned error: %v", err)
+		t.Fatalf("queued CreateRun returned error: %v", err)
 	}
-	waitForRunStatus(t, repo, out.Run.ID, StatusAccepted)
+	if out.Run.Status != StatusQueued {
+		t.Fatalf("queued run status=%s, want %s: nothing has executed yet", out.Run.Status, StatusQueued)
+	}
+	if len(problems.seen) != 0 {
+		t.Fatalf("playground run consulted the problem reader for %v, want no problem check", problems.seen)
+	}
+	task, ok := repo.runTaskForRun(out.Run.ID)
+	if !ok {
+		t.Fatalf("queued run %d has no judge task, so nothing would ever execute it", out.Run.ID)
+	}
+	if task.Status != "pending" {
+		t.Fatalf("enqueued task status=%s, want pending", task.Status)
+	}
+	if out.Run.Stdin != "7 8" {
+		t.Fatalf("run stdin=%q, want %q: the agent executes with it", out.Run.Stdin, "7 8")
+	}
+}
 
-	service.runs.runMu.Lock()
-	tracked := len(service.runs.userRuns)
-	service.runs.runMu.Unlock()
-	if tracked != 0 {
-		t.Fatalf("tracked users after completion=%d, want 0: zero entries must be deleted, not stored", tracked)
+// The per-user cap counts runs the user is still waiting on, not requests in
+// progress. In queued mode the request is long gone while the run is still in
+// flight, so an in-process counter would measure the wrong thing entirely.
+func TestQueuedRunPerUserLimitCountsInFlightRuns(t *testing.T) {
+	repo := runTestRepo()
+	service := newServiceForTest(serviceTestOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   NewMemorySourceStore(),
+		RunWait:       time.Millisecond,
+		RunPerUser:    2,
+		RunQueued:     true,
+	})
+
+	for i := 0; i < 2; i++ {
+		if _, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")}); err != nil {
+			t.Fatalf("queued run %d returned error: %v", i+1, err)
+		}
 	}
-	if used := len(service.runs.runSlots); used != 0 {
-		t.Fatalf("global slots in use=%d, want 0", used)
+	if _, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")}); err == nil {
+		t.Fatal("third queued run returned no error, want per-user limit")
+	}
+	// The two in-flight runs are still queued, so the limit must lift as soon as
+	// they reach a terminal status.
+	first := repo.runIDsForUser(5)[0]
+	if _, err := repo.UpdateRunStatus(t.Context(), first, judge.Result{Verdict: judge.VerdictAccepted}); err != nil {
+		t.Fatalf("complete first run: %v", err)
+	}
+	if _, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")}); err != nil {
+		t.Fatalf("run after completion returned error: %v, want the in-flight count to drop", err)
 	}
 }
 
@@ -245,9 +285,10 @@ func TestUserLimitRejectionDoesNotConsumeGlobalSlot(t *testing.T) {
 		t.Fatal("second run returned no error, want per-user limit")
 	}
 
-	// A rejected run must not hold onto a global slot. Checking the per-user gate
-	// after the global pool is what leaks here: the slot is taken, the run is
-	// refused, and nothing gives the slot back, so other users starve.
+	// A rejected run must not hold onto a global slot. The per-user gate lives in
+	// the database now, so it is checked after the slot is taken -- which means
+	// only the deferred release stands between a rejection and a leaked slot.
+	// Without it other users would starve one slot at a time.
 	if used := len(service.runs.runSlots); used != 1 {
 		t.Fatalf("global slots in use=%d, want 1: a per-user rejection must not consume a global slot", used)
 	}
@@ -326,4 +367,59 @@ func postRun(router http.Handler, body, userID string) *httptest.ResponseRecorde
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	return rec
+}
+
+// The per-user cap has to be a property of the row, not of a request: it is the
+// only way it can hold across API replicas, where an in-process counter would
+// silently be N times the configured value.
+func TestAdmitRunEnforcesLimitAcrossServiceInstances(t *testing.T) {
+	repo := runTestRepo()
+	options := serviceTestOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   NewMemorySourceStore(),
+		RunWait:       time.Millisecond,
+		RunPerUser:    1,
+		RunQueued:     true,
+	}
+	// Two services, one database: this is what two API replicas look like.
+	first := newServiceForTest(options)
+	second := newServiceForTest(options)
+
+	if _, err := first.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")}); err != nil {
+		t.Fatalf("first replica CreateRun returned error: %v", err)
+	}
+	_, err := second.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")})
+	if err == nil {
+		t.Fatal("second replica admitted a run the first replica had already filled the budget with")
+	}
+	appErr, ok := apperror.From(err)
+	if !ok || appErr.HTTPStatus != http.StatusTooManyRequests {
+		t.Fatalf("second replica error=%v, want 429", err)
+	}
+}
+
+// stdin is stored in the run row and placed on the request event, so it has to be
+// bounded. Without a bound one request can bloat both.
+func TestCreateRunRejectsOversizedStdin(t *testing.T) {
+	repo := runTestRepo()
+	service := newServiceForTest(serviceTestOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   NewMemorySourceStore(),
+		RunQueued:     true,
+	})
+
+	_, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{
+		LanguageID: 71,
+		Source:     []byte("package main"),
+		Stdin:      strings.Repeat("x", defaultRunStdinMaxBytes+1),
+	})
+	appErr, ok := apperror.From(err)
+	if !ok || appErr.HTTPStatus != http.StatusUnprocessableEntity || appErr.Code != "run.stdin_too_large" {
+		t.Fatalf("oversized stdin error=%v, want 422 run.stdin_too_large", err)
+	}
+	if len(repo.runs) != 0 {
+		t.Fatalf("rejected run created %d rows, want 0", len(repo.runs))
+	}
 }

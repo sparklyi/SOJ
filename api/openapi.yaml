@@ -809,7 +809,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/RunEnvelope"
         "202":
-          description: Run is still executing.
+          description: |
+            Run is still executing. Poll `GET /api/v1/runs/{id}` until the status
+            is terminal. With the `agent://` endpoint the run is queued for the
+            judge-agent, so a 202 is the normal answer for anything that has to
+            compile.
           content:
             application/json:
               schema:
@@ -2113,7 +2117,13 @@ components:
             problem to be ready for judging.
         language_id: { type: integer, format: int64 }
         source_code: { type: string }
-        stdin: { type: string }
+        stdin:
+          type: string
+          maxLength: 65536
+          description: |
+            Input passed to the program on stdin. Bounded by
+            `SOJ_JUDGE_RUN_STDIN_MAX_BYTES`; larger input is rejected with
+            `422 run.stdin_too_large`.
     RunResponse:
       type: object
       required: [id, user_id, problem_id, language_id, status, created_at, updated_at]

@@ -34,15 +34,14 @@ func newJudgeEngine(cfg config.JudgeConfig) judge.JudgeEngine {
 }
 
 // newRunEngine resolves the engine that executes self-runs (the playground and
-// the problem page's "run" button).
+// the problem page's "run" button) inside this process.
 //
-// This is a separate decision from newJudgeEngine on purpose. A self-run needs
-// only "compile, execute once with stdin, return raw output" -- no testcases,
-// no comparison -- and the endpoint that can judge testcases is not necessarily
-// the endpoint that can run code. Conflating them is what left self-runs
-// returning system_error against the default agent:// endpoint.
+// A nil engine is a real answer, not a failure: it means runs are enqueued for
+// the judge-agent to execute, which is the production path. Only the agent holds
+// a sandbox, so the API must not run untrusted code -- and now that runs travel
+// the same async pipeline as submissions, it does not have to.
 //
-// local:// is the only endpoint that executes here. It exists for single-node
+// local:// is the one endpoint that executes here. It exists for single-node
 // deployments and local development, and it is deliberately narrow:
 //
 //   - it refuses the docker backend. The judge-agent is the only process meant
@@ -51,11 +50,6 @@ func newJudgeEngine(cfg config.JudgeConfig) judge.JudgeEngine {
 //   - sandbox.SelectBackend already refuses the process backend outside
 //     dev/test/local environments, so a production process cannot quietly end
 //     up running untrusted code without a sandbox.
-//
-// agent:// keeps failing loudly. Routing self-runs through the agent's async
-// pipeline is the production-correct answer, and it is a larger change than a
-// wiring fix: it needs a run task queue, a worker path, and a RunService that
-// no longer executes in-process.
 func newRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine, error) {
 	endpoint := strings.TrimSpace(cfg.Judge.Endpoint)
 	if endpoint == "" {
@@ -67,7 +61,7 @@ func newRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine, erro
 	case strings.HasPrefix(endpoint, judge.LocalEndpointPrefix):
 		return newLocalRunEngine(cfg, logger)
 	case strings.HasPrefix(endpoint, judge.AgentEndpointPrefix):
-		return judge.NewUnavailableEngine(endpoint), nil
+		return nil, nil
 	default:
 		return unsupportedJudgeEndpoint(endpoint), nil
 	}

@@ -656,12 +656,17 @@ WHERE id = sqlc.arg('id')
 RETURNING *;
 
 -- name: CreateJudgeTask :one
+-- Exactly one subject per task; the table CHECK enforces it. A run task and a
+-- submission task share the whole lifecycle, which is why they share the table.
 INSERT INTO judge_tasks (
     submission_id,
+    run_id,
     status,
     next_run_at
 ) VALUES (
-    $1, $2, $3
+    sqlc.narg('submission_id'),
+    sqlc.narg('run_id'),
+    $1, $2
 )
 RETURNING *;
 
@@ -682,11 +687,15 @@ FROM judge_tasks
 WHERE submission_id = $1;
 
 -- name: ClaimPendingJudgeTasks :many
+-- Submission tasks only. Runs are claimed by ClaimPendingRunTasks so they can
+-- be published to their own stream: playground traffic must not sit in front of
+-- formal submissions.
 WITH claimed AS (
     SELECT id
     FROM judge_tasks
     WHERE status = 'pending'
       AND next_run_at <= now()
+      AND submission_id IS NOT NULL
     ORDER BY next_run_at, id
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -698,6 +707,30 @@ FROM claimed
 WHERE judge_tasks.id = claimed.id
   AND judge_tasks.status = 'pending'
 RETURNING judge_tasks.*;
+
+-- name: ClaimPendingRunTasks :many
+WITH claimed AS (
+    SELECT id
+    FROM judge_tasks
+    WHERE status = 'pending'
+      AND next_run_at <= now()
+      AND run_id IS NOT NULL
+    ORDER BY next_run_at, id
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE judge_tasks
+SET status = 'dispatching',
+    updated_at = now()
+FROM claimed
+WHERE judge_tasks.id = claimed.id
+  AND judge_tasks.status = 'pending'
+RETURNING judge_tasks.*;
+
+-- name: GetJudgeTaskByRunID :one
+SELECT *
+FROM judge_tasks
+WHERE run_id = $1;
 
 -- name: UpdateJudgeTaskDispatching :one
 UPDATE judge_tasks
@@ -868,3 +901,33 @@ SET status = sqlc.arg('status'),
 WHERE id = sqlc.arg('id')
   AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING *;
+
+-- name: MarkRunRunning :one
+UPDATE runs
+SET status = 'running',
+    updated_at = now()
+WHERE id = $1
+  AND status = 'queued'
+RETURNING *;
+
+-- name: LockRunByID :one
+SELECT *
+FROM runs
+WHERE id = $1
+FOR UPDATE;
+
+-- name: CountActiveRunsByUser :one
+-- "Active" is what the per-user cap is about: a run the user is still waiting
+-- on. Counted in the database so the cap holds across API replicas, where an
+-- in-process counter would silently be N times the configured value.
+SELECT count(*)::bigint
+FROM runs
+WHERE user_id = $1
+  AND status IN ('queued', 'running');
+
+-- name: LockUserForRunAdmission :one
+-- Serialises run admission per user so the count above cannot race an insert.
+SELECT id
+FROM users
+WHERE id = $1
+FOR UPDATE;

@@ -111,7 +111,7 @@ func TestCompleteSubmissionPersistsJudgeEvidence(t *testing.T) {
 func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched", Attempts: 0}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -149,7 +149,7 @@ func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 func TestWorkerDeadLetterOrderAcksOriginalWhenDeadStreamFails(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched", Attempts: 1}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 1}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -188,7 +188,7 @@ func TestWorkerDeadLetterOrderAcksOriginalWhenDeadStreamFails(t *testing.T) {
 func TestWorkerRejudgesClaimedRunningTaskWhenSubmissionIsNotTerminal(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "running", Attempts: 0}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "running", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusRunning, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -222,7 +222,7 @@ func TestWorkerRejudgesClaimedRunningTaskWhenSubmissionIsNotTerminal(t *testing.
 func TestWorkerRecordsJudgeTaskMetrics(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched"}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -556,8 +556,8 @@ func (e *blockingRunJudge) unblock() {
 func TestReconcilerResetsStaleJudgeTasks(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	repo := newMemoryRepo()
-	repo.tasks[1] = JudgeTaskRecord{ID: 1, SubmissionID: 11, Status: "dispatching"}
-	repo.tasks[2] = JudgeTaskRecord{ID: 2, SubmissionID: 12, Status: "running"}
+	repo.tasks[1] = JudgeTaskRecord{ID: 1, SubmissionID: int64Ptr(11), Status: "dispatching"}
+	repo.tasks[2] = JudgeTaskRecord{ID: 2, SubmissionID: int64Ptr(12), Status: "running"}
 	repo.submissions[12] = SubmissionRecord{ID: 12, Status: StatusRunning}
 	metrics := &recordingReconcilerMetrics{}
 	reconciler := NewReconciler(repo, &memoryQueue{}, taskMessageProcessorStub{}, func() time.Time { return now }, metrics)
@@ -618,7 +618,7 @@ func TestCreateSubmissionRollsBackSubmissionWhenTaskCreationFails(t *testing.T) 
 func TestWorkerDefaultRetryPolicyUsesFiveRetriesAndConfiguredBackoff(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched", Attempts: 4}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 4}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -648,7 +648,7 @@ func TestWorkerDefaultRetryPolicyUsesFiveRetriesAndConfiguredBackoff(t *testing.
 func TestWorkerRetryAndDeadLetterSynchronizeSubmissionStatus(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched", Attempts: 0}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -684,7 +684,7 @@ func TestWorkerRetryAndDeadLetterSynchronizeSubmissionStatus(t *testing.T) {
 func TestWorkerUsesSubmissionTestcaseSetSnapshot(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched"}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -1213,7 +1213,7 @@ func TestHandlerSubmissionDetailIncludesAsyncOTelTraceIDForAdmin(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
 	attempt, err := repo.EnsureJudgeAttempt(context.Background(), EnsureJudgeAttemptInput{
-		SubmissionID:    1,
+		SubmissionID:    int64Ptr(1),
 		TaskID:          7,
 		LanguageID:      71,
 		ProtocolVersion: judgeevents.RequestEventType,

@@ -62,10 +62,16 @@ type JudgeConfig struct {
 	Endpoint       string
 	Timeout        time.Duration
 	CleanupTimeout time.Duration
+	// RunParallelism caps runs executed inside the API process. It only applies
+	// to the local:// endpoint; with agent:// the agent's own parallelism is the
+	// limit, and this process never executes anything.
 	RunParallelism int
-	// RunPerUser caps in-flight self-runs per user. RunParallelism is a global
-	// pool, so without this one caller can drain every slot.
+	// RunPerUser caps in-flight self-runs per user. The agent's capacity is
+	// shared, so without this one caller can drain every slot.
 	RunPerUser int
+	// RunStdinMaxBytes bounds the stdin a run may carry. It is stored in the run
+	// row and placed on the request event, so it cannot be unbounded.
+	RunStdinMaxBytes int
 }
 
 type AuthConfig struct {
@@ -121,11 +127,12 @@ func Load() (Config, error) {
 			SecretKey: env("SOJ_STORAGE_SECRET_KEY", ""),
 		},
 		Judge: JudgeConfig{
-			Endpoint:       env("SOJ_JUDGE_ENDPOINT", "agent://local"),
-			Timeout:        30 * time.Second,
-			CleanupTimeout: sandbox.DefaultCleanupTimeout,
-			RunParallelism: 1,
-			RunPerUser:     2,
+			Endpoint:         env("SOJ_JUDGE_ENDPOINT", "agent://local"),
+			Timeout:          30 * time.Second,
+			CleanupTimeout:   sandbox.DefaultCleanupTimeout,
+			RunParallelism:   1,
+			RunPerUser:       2,
+			RunStdinMaxBytes: 64 << 10,
 		},
 		Auth: AuthConfig{
 			JWTSecret:       env("SOJ_JWT_SECRET", ""),
@@ -180,6 +187,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Judge.RunPerUser, err = envPositiveInt("SOJ_JUDGE_RUN_PER_USER", cfg.Judge.RunPerUser); err != nil {
+		return Config{}, err
+	}
+	if cfg.Judge.RunStdinMaxBytes, err = envPositiveInt("SOJ_JUDGE_RUN_STDIN_MAX_BYTES", cfg.Judge.RunStdinMaxBytes); err != nil {
 		return Config{}, err
 	}
 	if cfg.Auth.AccessTokenTTL, err = envDuration("SOJ_ACCESS_TOKEN_TTL", cfg.Auth.AccessTokenTTL); err != nil {

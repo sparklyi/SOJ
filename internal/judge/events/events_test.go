@@ -199,3 +199,57 @@ func TestNormalizeResultRewritesAggregateAndCaseVerdicts(t *testing.T) {
 		t.Fatalf("case verdicts = %+v", got.Cases)
 	}
 }
+
+// A self-run has nothing to judge, so it carries no testcase set. Accepting that
+// is what lets the agent call Run instead of Judge; requiring a testcase set
+// only of submissions keeps "there is nothing to compare" from being spelled as
+// an empty one.
+func TestRequestEventValidateAcceptsRunWithoutTestcaseSet(t *testing.T) {
+	event := RequestEvent{
+		EventID:        "evt-request-1",
+		AttemptID:      "attempt-1",
+		TraceID:        "trace-1",
+		RunID:          12,
+		LanguageID:     71,
+		SourceArtifact: ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:abc"},
+		Stdin:          "7 8\n",
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	if err := event.Validate(); err != nil {
+		t.Fatalf("Validate returned error for a run without a testcase set: %v", err)
+	}
+}
+
+// The relaxation must be exactly as wide as the run case. A submission with no
+// testcase set would be judged against nothing, which is the failure this
+// validation exists to prevent.
+func TestRequestEventValidateStillRequiresTestcaseSetForSubmissions(t *testing.T) {
+	event := RequestEvent{
+		EventID:        "evt-request-1",
+		AttemptID:      "attempt-1",
+		TraceID:        "trace-1",
+		SubmissionID:   7,
+		LanguageID:     71,
+		SourceArtifact: ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:abc"},
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	if err := event.Validate(); err == nil {
+		t.Fatal("Validate accepted a submission with no testcase set")
+	}
+}
+
+// A run has no submission_id, and a submission has no run_id. One of them must be
+// present or the result cannot be routed back to a row.
+func TestRequestEventValidateRequiresASubject(t *testing.T) {
+	event := RequestEvent{
+		EventID:        "evt-request-1",
+		AttemptID:      "attempt-1",
+		TraceID:        "trace-1",
+		LanguageID:     71,
+		SourceArtifact: ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:abc"},
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	if err := event.Validate(); err == nil {
+		t.Fatal("Validate accepted a request with neither submission_id nor run_id")
+	}
+}

@@ -14,27 +14,36 @@ import (
 type runStore interface {
 	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
 	CreateArtifact(context.Context, ArtifactRecord) (ArtifactRecord, error)
-	CreateRun(context.Context, RunRecord) (RunRecord, error)
+	AdmitRun(context.Context, AdmitRunInput) (RunRecord, error)
 	GetRun(context.Context, int64) (RunRecord, error)
 	UpdateRunStatus(context.Context, int64, judge.Result) (RunRecord, error)
 }
 
-// RunService owns direct run creation, execution, and shutdown.
+// RunService creates self-runs and reports their outcome.
+//
+// There is one run lifecycle and two ways to execute it. An inline service holds
+// an engine and runs the code in this process (the local:// endpoint, for
+// single-node deployments). A queued service holds no engine: AdmitRun writes a
+// judge task in the same transaction as the run, the worker dispatches it, and
+// the judge-agent executes it. Both modes then converge on the same thing -- the
+// run row reaching a terminal status -- which is also what the client polls.
+//
+// The mode is not a flag next to an engine that could disagree with it: the
+// presence of the engine is the decision, and it is read in exactly one place.
 type RunService struct {
 	store       runStore
 	problems    problem.Reader
 	sourceStore sourceWriter
-	runner      runExecutor
-	now         func() time.Time
-	runWait     time.Duration
-	runTimeout  time.Duration
-	runCtx      context.Context
-	runCancel   context.CancelFunc
-	runSlots    chan struct{}
-	// userRuns counts in-flight runs per user. runMu guards it together with
-	// runClosing -- one lock for the admission state, not two.
-	userRuns   map[int64]int
+	// runner is nil in queued mode. See the type comment.
+	runner     runExecutor
+	now        func() time.Time
+	runWait    time.Duration
+	runTimeout time.Duration
+	maxStdin   int
 	maxPerUser int
+	runCtx     context.Context
+	runCancel  context.CancelFunc
+	runSlots   chan struct{}
 	runMu      sync.Mutex
 	runClosing bool
 	runWG      sync.WaitGroup
@@ -46,16 +55,24 @@ type RunServiceOptions struct {
 	Store         runStore
 	ProblemReader problem.Reader
 	SourceStore   sourceWriter
-	Runner        runExecutor
-	Now           func() time.Time
-	Wait          time.Duration
-	Timeout       time.Duration
-	Context       context.Context
-	Parallelism   int
-	// MaxRunsPerUser caps in-flight runs for a single user. It exists because
-	// Parallelism is a global pool: without a per-user gate one caller clicking
-	// repeatedly can drain every slot and stall problem pages too.
+	// Runner executes runs inside this process. Nil means runs are enqueued for
+	// the judge-agent instead, which is the production path: the API process
+	// must not run untrusted code, and only the judge-agent holds a sandbox.
+	Runner  runExecutor
+	Now     func() time.Time
+	Wait    time.Duration
+	Timeout time.Duration
+	Context context.Context
+	// Parallelism caps inline executions in this process. It is irrelevant in
+	// queued mode, where the agent owns capacity.
+	Parallelism int
+	// MaxRunsPerUser caps in-flight runs for a single user, counted in the
+	// database. It exists because the agent's capacity is shared: without a
+	// per-user gate one caller clicking repeatedly can drain every slot and
+	// stall problem pages too.
 	MaxRunsPerUser int
+	// MaxStdinBytes bounds the stdin a run may carry.
+	MaxStdinBytes int
 }
 
 func NewRunService(options RunServiceOptions) *RunService {
@@ -79,6 +96,10 @@ func NewRunService(options RunServiceOptions) *RunService {
 	if maxPerUser <= 0 {
 		maxPerUser = defaultRunPerUser
 	}
+	maxStdin := options.MaxStdinBytes
+	if maxStdin <= 0 {
+		maxStdin = defaultRunStdinMaxBytes
+	}
 	parent := options.Context
 	if parent == nil {
 		parent = context.Background()
@@ -92,11 +113,11 @@ func NewRunService(options RunServiceOptions) *RunService {
 		now:         now,
 		runWait:     wait,
 		runTimeout:  timeout,
+		maxStdin:    maxStdin,
+		maxPerUser:  maxPerUser,
 		runCtx:      runCtx,
 		runCancel:   cancel,
 		runSlots:    make(chan struct{}, parallelism),
-		userRuns:    make(map[int64]int),
-		maxPerUser:  maxPerUser,
 		runDone:     make(chan struct{}),
 	}
 	if done := parent.Done(); done != nil {
@@ -118,6 +139,9 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 	if len(input.Source) == 0 {
 		return CreateRunOutput{}, apperror.BadRequest("source_required", "source is required")
 	}
+	if len(input.Stdin) > s.maxStdin {
+		return CreateRunOutput{}, apperror.Unprocessable("run.stdin_too_large", "stdin exceeds the maximum allowed size")
+	}
 	// A playground run has no problem to validate. Skipping the check here (and
 	// not inside a nil-able reader dependency) keeps problem.Reader a required
 	// constructor dependency -- a nil interface would only fail at call time.
@@ -130,18 +154,25 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 	if err != nil {
 		return CreateRunOutput{}, err
 	}
-	reservedExecution := false
-	if s.runner != nil {
-		if err := s.reserveExecution(actor.UserID); err != nil {
+
+	// Inline mode runs the code here, so it takes a slot of this process's pool
+	// before doing any work. Queued mode hands the run to the agent, whose
+	// capacity is the agent's concern. Either way the per-user cap is enforced
+	// by AdmitRun, which counts rows rather than requests.
+	inline := s.runner != nil
+	reserved := false
+	if inline {
+		if err := s.reserveExecution(); err != nil {
 			return CreateRunOutput{}, err
 		}
-		reservedExecution = true
+		reserved = true
 		defer func() {
-			if reservedExecution {
-				s.releaseExecution(actor.UserID)
+			if reserved {
+				s.releaseExecution()
 			}
 		}()
 	}
+
 	object, err := s.sourceStore.Put(ctx, "run", actor.UserID, input.Source)
 	if err != nil {
 		return CreateRunOutput{}, err
@@ -159,38 +190,31 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 		return CreateRunOutput{}, err
 	}
 	status := StatusQueued
-	if s.runner != nil {
+	if inline {
 		status = StatusRunning
 	}
-	run, err := s.store.CreateRun(ctx, RunRecord{
-		UserID:           actor.UserID,
-		ProblemID:        input.ProblemID,
-		LanguageID:       input.LanguageID,
-		Status:           status,
-		SourceArtifactID: artifact.ID,
-		Stdin:            input.Stdin,
+	run, err := s.store.AdmitRun(ctx, AdmitRunInput{
+		Run: RunRecord{
+			UserID:           actor.UserID,
+			ProblemID:        input.ProblemID,
+			LanguageID:       input.LanguageID,
+			Status:           status,
+			SourceArtifactID: artifact.ID,
+			Stdin:            input.Stdin,
+		},
+		MaxActive: s.maxPerUser,
+		Enqueue:   !inline,
+		NextRunAt: s.now(),
 	})
 	if err != nil {
 		return CreateRunOutput{}, err
 	}
-	if s.runner == nil {
-		return CreateRunOutput{Run: run}, nil
+	if inline {
+		// The slot now belongs to the execution, not to this request.
+		go s.completeRunAsync(run.ID, language, input.Source, input.Stdin)
+		reserved = false
 	}
-
-	done := make(chan RunRecord, 1)
-	go s.completeRunAsync(run.ID, actor.UserID, language, input.Source, input.Stdin, done)
-	reservedExecution = false
-
-	timer := time.NewTimer(s.runWait)
-	defer timer.Stop()
-	select {
-	case completed := <-done:
-		return CreateRunOutput{Run: completed}, nil
-	case <-timer.C:
-		return CreateRunOutput{Run: run}, nil
-	case <-ctx.Done():
-		return CreateRunOutput{}, ctx.Err()
-	}
+	return s.awaitRun(ctx, run)
 }
 
 func (s *RunService) GetRun(ctx context.Context, actor auth.Actor, id int64) (RunRecord, error) {
@@ -215,8 +239,38 @@ func (s *RunService) CompleteRun(ctx context.Context, runID int64, result judge.
 	return s.store.UpdateRunStatus(ctx, runID, result)
 }
 
-func (s *RunService) completeRunAsync(runID, userID int64, language LanguageRecord, source []byte, stdin string, done chan<- RunRecord) {
-	defer s.releaseExecution(userID)
+// awaitRun gives a fast run the chance to finish before the response is written,
+// so the common case answers with the result instead of a 202 the client has to
+// poll for. It waits on the row rather than on a goroutine because the row is
+// where both execution modes report completion -- and where the client polls
+// too, so there is only ever one notion of "finished".
+func (s *RunService) awaitRun(ctx context.Context, run RunRecord) (CreateRunOutput, error) {
+	if terminalStatus(run.Status) {
+		return CreateRunOutput{Run: run}, nil
+	}
+	deadline := time.Now().Add(s.runWait)
+	ticker := time.NewTicker(runAwaitPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return CreateRunOutput{}, ctx.Err()
+		case <-ticker.C:
+		}
+		current, err := s.store.GetRun(ctx, run.ID)
+		if err != nil {
+			return CreateRunOutput{}, err
+		}
+		if terminalStatus(current.Status) || time.Now().After(deadline) {
+			return CreateRunOutput{Run: current}, nil
+		}
+	}
+}
+
+// completeRunAsync executes one admitted run in this process. It only runs in
+// inline mode; the queued mode's executor is the judge-agent.
+func (s *RunService) completeRunAsync(runID int64, language LanguageRecord, source []byte, stdin string) {
+	defer s.releaseExecution()
 
 	ctx, cancel := context.WithTimeout(s.runCtx, s.runTimeout)
 	defer cancel()
@@ -230,19 +284,15 @@ func (s *RunService) completeRunAsync(runID, userID int64, language LanguageReco
 	if err != nil {
 		result = judge.Result{Verdict: judge.VerdictSystemError, ErrorMessage: err.Error(), JudgedAt: s.now()}
 	}
+	// Finalising uses a fresh context: the run context is already canceled when
+	// the run timed out, and a timeout still has a result to record.
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), defaultRunFinalizeTimeout)
 	defer finalizeCancel()
-	run, err := s.store.UpdateRunStatus(finalizeCtx, runID, result)
-	if err != nil {
-		return
-	}
-	select {
-	case done <- run:
-	default:
-	}
+	_, _ = s.store.UpdateRunStatus(finalizeCtx, runID, result)
 }
 
-// Close stops accepting direct run executions and waits for admitted runs to finish.
+// Close stops accepting inline executions and waits for admitted runs to finish.
+// Queued runs need no draining: they are already the agent's work.
 func (s *RunService) Close(ctx context.Context) error {
 	s.beginShutdown()
 	select {
@@ -266,22 +316,17 @@ func (s *RunService) beginShutdown() {
 	})
 }
 
-// reserveExecution admits one execution through two gates: the per-user
-// in-flight cap first, then the global sandbox slot pool. Order matters -- a
-// run rejected by the per-user cap must not consume a global slot it would
-// then have to hand back.
-func (s *RunService) reserveExecution(userID int64) error {
+// reserveExecution admits one inline execution through this process's slot pool.
+// The per-user cap is not checked here: AdmitRun owns it, because an in-process
+// counter cannot see a run that the agent is still executing.
+func (s *RunService) reserveExecution() error {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	if s.runClosing || s.runCtx.Err() != nil {
 		return apperror.ServiceUnavailable("run execution is shutting down")
 	}
-	if s.userRuns[userID] >= s.maxPerUser {
-		return apperror.TooManyRequests("run.user_limit_exceeded", "too many runs in flight for this user")
-	}
 	select {
 	case s.runSlots <- struct{}{}:
-		s.userRuns[userID]++
 		s.runWG.Add(1)
 		return nil
 	default:
@@ -289,16 +334,7 @@ func (s *RunService) reserveExecution(userID int64) error {
 	}
 }
 
-func (s *RunService) releaseExecution(userID int64) {
+func (s *RunService) releaseExecution() {
 	<-s.runSlots
-	s.runMu.Lock()
-	// Delete at zero rather than storing it: leaving zero entries behind would
-	// grow the map once per user, forever.
-	if remaining := s.userRuns[userID] - 1; remaining > 0 {
-		s.userRuns[userID] = remaining
-	} else {
-		delete(s.userRuns, userID)
-	}
-	s.runMu.Unlock()
 	s.runWG.Done()
 }

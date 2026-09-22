@@ -94,11 +94,30 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := resultQueue.Ensure(ctx); err != nil {
 		return err
 	}
+	// Self-runs are published to their own stream. The worker is the only
+	// publisher of both, so the split costs one extra queue and keeps playground
+	// traffic out of the submission backlog.
+	//
+	// Ensure also creates the consumer group the agent will read from, which is
+	// load-bearing rather than incidental: it is what guarantees the group exists
+	// before the first run is published, so no run can be published into a stream
+	// nobody is positioned to read.
+	runQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
+		Stream:     judgeRunStream(cfg),
+		Group:      judgeRunGroup(),
+		Consumer:   workerConsumerName(),
+		MaxLen:     cfg.Redis.StreamMaxLen,
+		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
+	})
+	if err := runQueue.Ensure(ctx); err != nil {
+		return err
+	}
 	judgeEngine := newJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	dispatcher := submission.NewTaskDispatcher(submission.TaskDispatcherOptions{
 		Store:            submissionRepo,
 		Queue:            taskQueue,
+		RunQueue:         runQueue,
 		TestcaseResolver: testcaseResolver,
 		Metrics:          metrics,
 	})
@@ -120,14 +139,14 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	contestReader := contest.NewContestReader(contestRepo, time.Now)
 	scoreboardService := contest.NewScoreboardService(contestReader, contestRepo)
 
-	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)
+	readiness := newWorkerReadiness(pool.Ping, taskQueue, runQueue, resultQueue, objectStore, metrics)
 	router := httpapi.NewRouter(httpapi.RouterOptions{
 		Metrics:        metrics,
 		ReadyCheck:     readiness.Check,
 		TracingEnabled: tracing.Enabled(),
 		TracingService: tracing.ServiceName(),
 	})
-	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"))
+	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "run_stream", judgeRunStream(cfg), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"))
 
 	server := &http.Server{
 		Addr:         cfg.Worker.HealthAddr,

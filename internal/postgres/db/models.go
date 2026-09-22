@@ -175,7 +175,7 @@ type JudgeCaseResult struct {
 
 type JudgeTask struct {
 	ID           int64              `db:"id" json:"id"`
-	SubmissionID int64              `db:"submission_id" json:"submission_id"`
+	SubmissionID pgtype.Int8        `db:"submission_id" json:"submission_id"`
 	StreamID     pgtype.Text        `db:"stream_id" json:"stream_id"`
 	Status       string             `db:"status" json:"status"`
 	Attempts     int32              `db:"attempts" json:"attempts"`
@@ -183,6 +183,7 @@ type JudgeTask struct {
 	LastError    pgtype.Text        `db:"last_error" json:"last_error"`
 	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	RunID        pgtype.Int8        `db:"run_id" json:"run_id"`
 }
 
 type Language struct {

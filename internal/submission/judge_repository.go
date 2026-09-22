@@ -45,7 +45,7 @@ func ensureJudgeAttempt(ctx context.Context, q *db.Queries, input EnsureJudgeAtt
 	if itemErr != nil && !errors.Is(itemErr, pgx.ErrNoRows) {
 		return JudgeAttemptRecord{}, itemErr
 	}
-	latest, err := q.GetLatestJudgeAttemptBySubmissionID(ctx, pgtype.Int8{Int64: input.SubmissionID, Valid: true})
+	latest, err := latestAttemptForSubject(ctx, q, input)
 	attemptNo := int32(1)
 	if err == nil {
 		if latest.TaskID.Valid && latest.TaskID.Int64 == input.TaskID && !terminalStatus(latest.Status) {
@@ -72,7 +72,8 @@ func ensureJudgeAttempt(ctx context.Context, q *db.Queries, input EnsureJudgeAtt
 		startedAt = time.Now().UTC()
 	}
 	row, err := q.CreateJudgeAttempt(ctx, db.CreateJudgeAttemptParams{
-		SubmissionID:     pgtype.Int8{Int64: input.SubmissionID, Valid: true},
+		SubmissionID:     int8Ptr(input.SubmissionID),
+		RunID:            int8Ptr(input.RunID),
 		TaskID:           pgtype.Int8{Int64: input.TaskID, Valid: input.TaskID > 0},
 		RejudgeBatchID:   pgtype.Int8{Int64: item.BatchID, Valid: itemErr == nil},
 		AttemptNo:        attemptNo,
@@ -103,21 +104,16 @@ func ensureJudgeAttempt(ctx context.Context, q *db.Queries, input EnsureJudgeAtt
 	return judgeAttemptRecord(row), nil
 }
 
-func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (SubmissionRecord, bool, error) {
+func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input CompleteJudgeAttemptResultInput) (bool, error) {
 	if r.txRunner == nil {
-		return SubmissionRecord{}, false, errors.New("transaction runner is required to complete judge attempt result")
+		return false, errors.New("transaction runner is required to complete judge attempt result")
 	}
 	attemptID, err := strconv.ParseInt(input.AttemptKey, 10, 64)
 	if err != nil {
-		return SubmissionRecord{}, false, fmt.Errorf("invalid attempt_id %q: %w", input.AttemptKey, err)
-	}
-	score := int32(0)
-	if input.Result.Verdict == judge.VerdictAccepted {
-		score = 100
+		return false, fmt.Errorf("invalid attempt_id %q: %w", input.AttemptKey, err)
 	}
 	status := dbStatus(input.Status)
 
-	var record SubmissionRecord
 	var persisted bool
 	err = postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
 		q := r.q.WithTx(tx)
@@ -134,151 +130,182 @@ func (r *SQLRepository) CompleteJudgeAttemptResult(ctx context.Context, input Co
 		if err != nil {
 			return err
 		}
-		if attempt.SubmissionID.Valid {
-			submissionRow, err := q.LockSubmissionByID(ctx, attempt.SubmissionID.Int64)
-			if err != nil {
-				return err
-			}
-			record = submissionRecord(submissionRow)
-		}
 		if terminalStatus(attempt.Status) {
 			return nil
 		}
-		if !attempt.SubmissionID.Valid {
-			return fmt.Errorf("judge attempt %d is not linked to a submission", attempt.ID)
+		// A run and a submission publish the same result event shape. Which table
+		// receives it follows from the attempt's subject, so the wire protocol
+		// never needs a discriminator.
+		switch {
+		case attempt.RunID.Valid:
+			return completeRunAttempt(ctx, q, attempt, input, status, &persisted)
+		case attempt.SubmissionID.Valid:
+			return completeSubmissionAttempt(ctx, q, attempt, input, status, &persisted)
+		default:
+			return fmt.Errorf("judge attempt %d is linked to neither a submission nor a run", attempt.ID)
 		}
-		if terminalStatus(record.Status) {
-			return nil
-		}
-		projectionLock, err := lockContestProblemProjection(ctx, q, record)
-		if err != nil {
-			return err
-		}
-
-		params := db.UpdateSubmissionStatusParams{
-			Status:       status,
-			TimeMs:       int4(input.Result.TimeMS),
-			MemoryKb:     int4(input.Result.MemoryKB),
-			Score:        pgtype.Int4{Int32: score, Valid: true},
-			ErrorMessage: text(input.Result.ErrorMessage),
-			JudgedAt:     judgedAtParam(input.Result.JudgedAt),
-			ID:           attempt.SubmissionID.Int64,
-		}
-		submissionRow, err := q.UpdateSubmissionStatus(ctx, params)
-		if errors.Is(err, pgx.ErrNoRows) {
-			submissionRow, err = q.GetSubmissionByID(ctx, attempt.SubmissionID.Int64)
-			if err == nil {
-				record = submissionRecord(submissionRow)
-				if terminalStatus(record.Status) {
-					return nil
-				}
-			}
-		}
-		if err != nil {
-			return err
-		}
-		record = submissionRecord(submissionRow)
-
-		summary := judgeSummary(input.Result)
-		manifest, err := judgeManifestJSON(input.Result.Manifest)
-		if err != nil {
-			return err
-		}
-		safeSummary, err := json.Marshal(summary)
-		if err != nil {
-			return err
-		}
-		metrics, err := json.Marshal(map[string]any{})
-		if err != nil {
-			return err
-		}
-		finishedAt := input.Result.JudgedAt
-		if finishedAt.IsZero() {
-			finishedAt = time.Now().UTC()
-		}
-		finished, err := q.MarkJudgeAttemptFinished(ctx, db.MarkJudgeAttemptFinishedParams{
-			ID:                   attempt.ID,
-			Status:               status,
-			Verdict:              text(status),
-			Score:                score,
-			TimeMs:               int4(input.Result.TimeMS),
-			MemoryKb:             int4(input.Result.MemoryKB),
-			FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
-			FirstFailedGroup:     text(summary.FirstFailedGroup),
-			CompileOutputSummary: text(summary.CompileOutputSummary),
-			StderrSummary:        text(summary.StderrSummary),
-			CheckerMessage:       text(summary.CheckerMessage),
-			ErrorClass:           text(summary.ErrorClass),
-			ErrorMessage:         text(input.Result.ErrorMessage),
-			Manifest:             manifest,
-			Metrics:              metrics,
-			TraceID:              text(input.TraceID),
-			FinishedAt:           timestamptz(finishedAt),
-		})
-		if err != nil {
-			return err
-		}
-		for i, item := range input.Result.Cases {
-			index := item.Index
-			if index == 0 {
-				index = i + 1
-			}
-			_, err := q.CreateJudgeCaseResult(ctx, db.CreateJudgeCaseResultParams{
-				AttemptID:         attempt.ID,
-				CaseIndex:         int32(index),
-				GroupName:         text(item.GroupName),
-				TestcaseKey:       text(item.TestcaseKey),
-				Status:            dbStatus(item.Verdict),
-				Score:             item.Score,
-				TimeMs:            int4(item.TimeMS),
-				MemoryKb:          int4(item.MemoryKB),
-				ExitCode:          int32Pg(item.ExitCode),
-				Signal:            text(item.Signal),
-				CheckerMessage:    text(item.CheckerMessage),
-				OutputDiffSummary: text(item.OutputDiffSummary),
-			})
-			if err != nil {
-				return err
-			}
-		}
-		_, err = q.UpsertSubmissionResult(ctx, db.UpsertSubmissionResultParams{
-			SubmissionID:         record.ID,
-			AttemptID:            attempt.ID,
-			Status:               status,
-			Score:                score,
-			TimeMs:               int4(input.Result.TimeMS),
-			MemoryKb:             int4(input.Result.MemoryKB),
-			FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
-			FirstFailedGroup:     text(summary.FirstFailedGroup),
-			ErrorClass:           text(summary.ErrorClass),
-			SafeSummary:          safeSummary,
-		})
-		if err != nil {
-			return err
-		}
-		if err := rebuildContestProblemResult(ctx, q, record, projectionLock); err != nil {
-			return err
-		}
-		if finished.TaskID.Valid {
-			if _, err := q.MarkJudgeTaskDone(ctx, finished.TaskID.Int64); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
-		}
-		if finished.RejudgeBatchID.Valid {
-			item, err := q.FinishRejudgeBatchItem(ctx, db.FinishRejudgeBatchItemParams{
-				Status: RejudgeItemStatusCompleted, ErrorMessage: pgtype.Text{}, AttemptID: pgtype.Int8{Int64: finished.ID, Valid: true},
-			})
-			if err != nil {
-				return err
-			}
-			if _, err := q.RefreshRejudgeBatchProgress(ctx, item.BatchID); err != nil {
-				return err
-			}
-		}
-		persisted = true
-		return nil
 	})
-	return record, persisted, err
+	return persisted, err
+}
+
+// completeSubmissionAttempt writes a judged submission: the submission row, its
+// result projection and the contest projections that depend on it.
+func completeSubmissionAttempt(ctx context.Context, q *db.Queries, attempt db.JudgeAttempt, input CompleteJudgeAttemptResultInput, status string, persisted *bool) error {
+	submissionRow, err := q.LockSubmissionByID(ctx, attempt.SubmissionID.Int64)
+	if err != nil {
+		return err
+	}
+	record := submissionRecord(submissionRow)
+	if terminalStatus(record.Status) {
+		return nil
+	}
+	projectionLock, err := lockContestProblemProjection(ctx, q, record)
+	if err != nil {
+		return err
+	}
+
+	score := int32(0)
+	if input.Result.Verdict == judge.VerdictAccepted {
+		score = 100
+	}
+	params := db.UpdateSubmissionStatusParams{
+		Status:       status,
+		TimeMs:       int4(input.Result.TimeMS),
+		MemoryKb:     int4(input.Result.MemoryKB),
+		Score:        pgtype.Int4{Int32: score, Valid: true},
+		ErrorMessage: text(input.Result.ErrorMessage),
+		JudgedAt:     judgedAtParam(input.Result.JudgedAt),
+		ID:           attempt.SubmissionID.Int64,
+	}
+	submissionRow, err = q.UpdateSubmissionStatus(ctx, params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		submissionRow, err = q.GetSubmissionByID(ctx, attempt.SubmissionID.Int64)
+		if err == nil {
+			record = submissionRecord(submissionRow)
+			if terminalStatus(record.Status) {
+				return nil
+			}
+		}
+	}
+	if err != nil {
+		return err
+	}
+	record = submissionRecord(submissionRow)
+
+	finished, err := finishJudgeAttempt(ctx, q, attempt, input, status)
+	if err != nil {
+		return err
+	}
+	summary := judgeSummary(input.Result)
+	safeSummary, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	_, err = q.UpsertSubmissionResult(ctx, db.UpsertSubmissionResultParams{
+		SubmissionID:         record.ID,
+		AttemptID:            attempt.ID,
+		Status:               status,
+		Score:                score,
+		TimeMs:               int4(input.Result.TimeMS),
+		MemoryKb:             int4(input.Result.MemoryKB),
+		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
+		FirstFailedGroup:     text(summary.FirstFailedGroup),
+		ErrorClass:           text(summary.ErrorClass),
+		SafeSummary:          safeSummary,
+	})
+	if err != nil {
+		return err
+	}
+	if err := rebuildContestProblemResult(ctx, q, record, projectionLock); err != nil {
+		return err
+	}
+	if finished.RejudgeBatchID.Valid {
+		item, err := q.FinishRejudgeBatchItem(ctx, db.FinishRejudgeBatchItemParams{
+			Status: RejudgeItemStatusCompleted, ErrorMessage: pgtype.Text{}, AttemptID: pgtype.Int8{Int64: finished.ID, Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := q.RefreshRejudgeBatchProgress(ctx, item.BatchID); err != nil {
+			return err
+		}
+	}
+	*persisted = true
+	return nil
+}
+
+// finishJudgeAttempt closes the attempt itself: its own row, its per-case rows
+// and the task that produced it. Every subject needs exactly this, so it lives
+// once.
+func finishJudgeAttempt(ctx context.Context, q *db.Queries, attempt db.JudgeAttempt, input CompleteJudgeAttemptResultInput, status string) (db.JudgeAttempt, error) {
+	summary := judgeSummary(input.Result)
+	manifest, err := judgeManifestJSON(input.Result.Manifest)
+	if err != nil {
+		return db.JudgeAttempt{}, err
+	}
+	metrics, err := json.Marshal(map[string]any{})
+	if err != nil {
+		return db.JudgeAttempt{}, err
+	}
+	finishedAt := input.Result.JudgedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	score := int32(0)
+	if input.Result.Verdict == judge.VerdictAccepted {
+		score = 100
+	}
+	finished, err := q.MarkJudgeAttemptFinished(ctx, db.MarkJudgeAttemptFinishedParams{
+		ID:                   attempt.ID,
+		Status:               status,
+		Verdict:              text(status),
+		Score:                score,
+		TimeMs:               int4(input.Result.TimeMS),
+		MemoryKb:             int4(input.Result.MemoryKB),
+		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
+		FirstFailedGroup:     text(summary.FirstFailedGroup),
+		CompileOutputSummary: text(summary.CompileOutputSummary),
+		StderrSummary:        text(summary.StderrSummary),
+		CheckerMessage:       text(summary.CheckerMessage),
+		ErrorClass:           text(summary.ErrorClass),
+		ErrorMessage:         text(input.Result.ErrorMessage),
+		Manifest:             manifest,
+		Metrics:              metrics,
+		TraceID:              text(input.TraceID),
+		FinishedAt:           timestamptz(finishedAt),
+	})
+	if err != nil {
+		return db.JudgeAttempt{}, err
+	}
+	for i, item := range input.Result.Cases {
+		index := item.Index
+		if index == 0 {
+			index = i + 1
+		}
+		_, err := q.CreateJudgeCaseResult(ctx, db.CreateJudgeCaseResultParams{
+			AttemptID:         attempt.ID,
+			CaseIndex:         int32(index),
+			GroupName:         text(item.GroupName),
+			TestcaseKey:       text(item.TestcaseKey),
+			Status:            dbStatus(item.Verdict),
+			Score:             item.Score,
+			TimeMs:            int4(item.TimeMS),
+			MemoryKb:          int4(item.MemoryKB),
+			ExitCode:          int32Pg(item.ExitCode),
+			Signal:            text(item.Signal),
+			CheckerMessage:    text(item.CheckerMessage),
+			OutputDiffSummary: text(item.OutputDiffSummary),
+		})
+		if err != nil {
+			return db.JudgeAttempt{}, err
+		}
+	}
+	if finished.TaskID.Valid {
+		if _, err := q.MarkJudgeTaskDone(ctx, finished.TaskID.Int64); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return db.JudgeAttempt{}, err
+		}
+	}
+	return finished, nil
 }
 
 func persistJudgeResult(ctx context.Context, q *db.Queries, submission SubmissionRecord, result judge.Result, score int32) (db.JudgeAttempt, error) {
@@ -580,5 +607,19 @@ func submissionResultRecord(row db.SubmissionResult) SubmissionResultRecord {
 		SafeSummary:          append([]byte(nil), row.SafeSummary...),
 		CreatedAt:            row.CreatedAt.Time,
 		UpdatedAt:            row.UpdatedAt.Time,
+	}
+}
+
+// latestAttemptForSubject finds the attempt a new one would follow, so attempt
+// numbering and in-flight reuse stay correct. Which column identifies the
+// subject is the only thing that differs between a submission and a run.
+func latestAttemptForSubject(ctx context.Context, q *db.Queries, input EnsureJudgeAttemptInput) (db.JudgeAttempt, error) {
+	switch {
+	case input.SubmissionID != nil:
+		return q.GetLatestJudgeAttemptBySubmissionID(ctx, validInt8(*input.SubmissionID))
+	case input.RunID != nil:
+		return q.GetLatestJudgeAttemptByRunID(ctx, validInt8(*input.RunID))
+	default:
+		return db.JudgeAttempt{}, errors.New("ensure judge attempt requires a submission or a run")
 	}
 }

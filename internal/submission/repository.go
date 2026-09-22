@@ -69,8 +69,13 @@ type RunRecord struct {
 }
 
 type JudgeTaskRecord struct {
-	ID           int64
-	SubmissionID int64
+	ID int64
+	// SubmissionID and RunID are the task's subject: exactly one is non-nil,
+	// which the judge_tasks CHECK constraint enforces. Two optional fields rather
+	// than one id plus a kind flag -- the flag would be a second source of truth
+	// for something the ids already say.
+	SubmissionID *int64
+	RunID        *int64
 	StreamID     string
 	Status       string
 	Attempts     int32
