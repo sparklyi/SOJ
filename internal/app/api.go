@@ -110,6 +110,10 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
 	judgeEngine := newJudgeEngine(cfg.Judge)
+	runEngine, err := newRunEngine(cfg, logger)
+	if err != nil {
+		return err
+	}
 	sourceStore := submission.NewObjectSourceStore(objectStorage)
 	creator := submission.NewSubmissionCreator(submission.SubmissionCreatorOptions{
 		Store:         submissionRepo,
@@ -123,7 +127,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		Store:          submissionRepo,
 		ProblemReader:  problemReader,
 		SourceStore:    sourceStore,
-		Judge:          judgeEngine,
+		Runner:         runEngine,
 		Context:        ctx,
 		Parallelism:    cfg.Judge.RunParallelism,
 		MaxRunsPerUser: cfg.Judge.RunPerUser,

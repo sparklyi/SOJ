@@ -24,7 +24,7 @@ type RunService struct {
 	store       runStore
 	problems    problem.Reader
 	sourceStore sourceWriter
-	judge       judgeRunner
+	runner      runExecutor
 	now         func() time.Time
 	runWait     time.Duration
 	runTimeout  time.Duration
@@ -46,7 +46,7 @@ type RunServiceOptions struct {
 	Store         runStore
 	ProblemReader problem.Reader
 	SourceStore   sourceWriter
-	Judge         judgeRunner
+	Runner        runExecutor
 	Now           func() time.Time
 	Wait          time.Duration
 	Timeout       time.Duration
@@ -88,7 +88,7 @@ func NewRunService(options RunServiceOptions) *RunService {
 		store:       options.Store,
 		problems:    options.ProblemReader,
 		sourceStore: options.SourceStore,
-		judge:       options.Judge,
+		runner:      options.Runner,
 		now:         now,
 		runWait:     wait,
 		runTimeout:  timeout,
@@ -131,7 +131,7 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 		return CreateRunOutput{}, err
 	}
 	reservedExecution := false
-	if s.judge != nil {
+	if s.runner != nil {
 		if err := s.reserveExecution(actor.UserID); err != nil {
 			return CreateRunOutput{}, err
 		}
@@ -159,7 +159,7 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 		return CreateRunOutput{}, err
 	}
 	status := StatusQueued
-	if s.judge != nil {
+	if s.runner != nil {
 		status = StatusRunning
 	}
 	run, err := s.store.CreateRun(ctx, RunRecord{
@@ -173,7 +173,7 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 	if err != nil {
 		return CreateRunOutput{}, err
 	}
-	if s.judge == nil {
+	if s.runner == nil {
 		return CreateRunOutput{Run: run}, nil
 	}
 
@@ -220,11 +220,12 @@ func (s *RunService) completeRunAsync(runID, userID int64, language LanguageReco
 
 	ctx, cancel := context.WithTimeout(s.runCtx, s.runTimeout)
 	defer cancel()
-	result, err := s.judge.Judge(ctx, judge.Request{
+	result, err := s.runner.Run(ctx, judge.RunRequest{
 		LanguageID: language.ID,
 		Source:     source,
 		Stdin:      stdin,
 		Timeout:    language.DefaultTimeLimit,
+		MemoryKB:   language.DefaultMemoryKB,
 	})
 	if err != nil {
 		result = judge.Result{Verdict: judge.VerdictSystemError, ErrorMessage: err.Error(), JudgedAt: s.now()}

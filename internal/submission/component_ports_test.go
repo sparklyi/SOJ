@@ -49,6 +49,14 @@ func (judgeRunnerStub) Judge(context.Context, judge.Request) (judge.Result, erro
 	return judge.Result{Verdict: judge.VerdictAccepted}, nil
 }
 
+// runExecutorStub implements Run and nothing else, which is the point of
+// TestRunServiceUsesOnlyRunStore: a run engine must not have to be a judge.
+type runExecutorStub struct{}
+
+func (runExecutorStub) Run(context.Context, judge.RunRequest) (judge.Result, error) {
+	return judge.Result{Verdict: judge.VerdictAccepted}, nil
+}
+
 type languageProviderStub struct{}
 
 func (languageProviderStub) Languages(context.Context) ([]judge.Language, error) {
@@ -169,7 +177,7 @@ func TestRunServiceUsesOnlyRunStore(t *testing.T) {
 		Store:         runStoreStub{},
 		ProblemReader: submissionCreatorProblemReaderStub{},
 		SourceStore:   sourceWriterStub{},
-		Judge:         judgeRunnerStub{},
+		Runner:        runExecutorStub{},
 	})
 
 	run, err := service.GetRun(t.Context(), auth.Actor{UserID: 7, Role: auth.RoleUser}, 1)

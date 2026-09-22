@@ -95,3 +95,74 @@ func TestNewJudgeAgentSandboxAllowsDockerBackend(t *testing.T) {
 		t.Fatalf("backend = %q, want docker", got.Name())
 	}
 }
+
+func TestNewRunEngineFakeEndpointRuns(t *testing.T) {
+	engine, err := newRunEngine(config.Config{Judge: config.JudgeConfig{Endpoint: "fake://accepted"}}, nil)
+	if err != nil {
+		t.Fatalf("newRunEngine returned error: %v", err)
+	}
+	if _, err := engine.Run(context.Background(), judge.RunRequest{LanguageID: 71, Source: []byte("package main")}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+}
+
+// TestNewRunEngineAgentEndpointFailsLoudly 钉住现状而不是假装它能跑：
+// 走 agent 时 API 进程没有执行能力，必须报出一个指名端点的错误。
+// 静默返回一个空的 accepted 才是真正危险的——那正是修复前的行为。
+func TestNewRunEngineAgentEndpointFailsLoudly(t *testing.T) {
+	engine, err := newRunEngine(config.Config{Judge: config.JudgeConfig{Endpoint: "agent://local"}}, nil)
+	if err != nil {
+		t.Fatalf("newRunEngine returned error: %v", err)
+	}
+	_, runErr := engine.Run(context.Background(), judge.RunRequest{LanguageID: 71, Source: []byte("package main")})
+	if runErr == nil {
+		t.Fatal("Run returned nil error, want the endpoint named in the failure")
+	}
+	if !strings.Contains(runErr.Error(), "agent://local") {
+		t.Fatalf("error = %q, want it to name the endpoint", runErr)
+	}
+}
+
+func TestNewRunEngineLocalEndpointUsesProcessSandboxInDevelopment(t *testing.T) {
+	engine, err := newRunEngine(config.Config{Env: "local", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil)
+	if err != nil {
+		t.Fatalf("newRunEngine returned error: %v", err)
+	}
+	if engine == nil {
+		t.Fatal("engine is nil")
+	}
+}
+
+// TestNewRunEngineLocalRefusesDockerBackend 是这条边界的关键断言：
+// judge-agent 是唯一允许持有 Docker socket 的进程。为了一个练习场把 socket
+// 交给 API，等于把这条边界拆掉。
+func TestNewRunEngineLocalRefusesDockerBackend(t *testing.T) {
+	t.Setenv("SOJ_JUDGE_SANDBOX_BACKEND", sandbox.BackendDocker)
+
+	_, err := newRunEngine(config.Config{Env: "prod", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil)
+	if err == nil {
+		t.Fatal("newRunEngine returned nil error, want the docker backend refused")
+	}
+	if !strings.Contains(err.Error(), "only soj-judge-agent may hold a Docker socket") {
+		t.Fatalf("error = %q, want it to explain the boundary", err)
+	}
+}
+
+func TestNewRunEngineLocalRejectsProcessSandboxOutsideDevelopment(t *testing.T) {
+	t.Setenv("SOJ_JUDGE_SANDBOX_BACKEND", sandbox.BackendProcess)
+
+	// SelectBackend 自己就会拦住「生产环境用 process 沙箱」，这里确认这条
+	// 保护在 local:// 这条新路径上依然生效。
+	if _, err := newRunEngine(config.Config{Env: "prod", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil); err == nil {
+		t.Fatal("newRunEngine returned nil error, want the process backend refused in prod")
+	}
+}
+
+func TestNewJudgeEngineAcceptsLocalEndpointForLanguages(t *testing.T) {
+	// local:// 不做判题，但必须能回答 Languages（空目录），否则语言目录同步
+	// 会从一个可恢复的空状态变成一次失败。
+	engine := newJudgeEngine(config.JudgeConfig{Endpoint: "local://"})
+	if _, err := engine.Languages(context.Background()); err != nil {
+		t.Fatalf("Languages returned error: %v", err)
+	}
+}

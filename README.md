@@ -102,6 +102,14 @@ SMOKE_REAL_JUDGE=1 make smoke
 
 The process backend is useful for local validation, but it is not a production sandbox.
 
+To make **self-runs** actually execute locally (the problem page's run button and the playground), point the endpoint at `local://`:
+
+```bash
+SOJ_ENV=local SOJ_JUDGE_ENDPOINT=local:// SOJ_JUDGE_SANDBOX_BACKEND=process make up
+```
+
+`local://` has the API process compile and execute the source itself, so it only suits single-node deployments and local development. It **refuses the `docker` backend**: only `soj-judge-agent` may hold a Docker socket. Running self-runs in production needs them routed through the judge-agent's async pipeline, which is separate work.
+
 To run the local real-code smoke path through Docker runner containers:
 
 ```bash
@@ -181,7 +189,7 @@ Important variables:
 | `SOJ_STORAGE_ACCESS_KEY` | Object storage access key. |
 | `SOJ_STORAGE_SECRET_KEY` | Object storage secret key. |
 | `SOJ_JWT_SECRET` | JWT signing secret. Must be changed for real deployments. |
-| `SOJ_JUDGE_ENDPOINT` | Judge endpoint, such as `fake://accepted` or `agent://local`. |
+| `SOJ_JUDGE_ENDPOINT` | Judge endpoint. `fake://accepted` returns canned results; `agent://local` delegates judging to the judge-agent, in which case **self-runs are unavailable**; `local://` executes self-runs in this process (single-node/local only, refuses the `docker` backend). |
 | `SOJ_JUDGE_TIMEOUT` | Judge timeout, defaults to `30s`. |
 | `SOJ_JUDGE_RUN_PARALLELISM` | Global self-run slots on the API side, default `1`. |
 | `SOJ_JUDGE_RUN_PER_USER` | In-flight self-run cap per user, default `2`. Shared by the problem page and the playground. |
