@@ -469,3 +469,38 @@ func TestLockUserForRunAdmissionLocksTheRow(t *testing.T) {
 		t.Fatalf("LockUserForRunAdmission does not lock the row:\n%s", lockUserForRunAdmission)
 	}
 }
+
+// Retention deletes data, so its selection has to be narrow in two ways: only
+// finished runs, and only runs with an object to remove in the same row.
+func TestListExpiredRunsOnlySelectsFinishedRuns(t *testing.T) {
+	for _, want := range []string{
+		"WHERE runs.status NOT IN ('queued', 'running')",
+		"runs.created_at <",
+		// An inner join would hide exactly the runs that most need removing:
+		// those whose artifact is already gone. Anchored on FROM so a LEFT JOIN
+		// is what is actually asserted, not just the presence of the words.
+		"FROM runs\nLEFT JOIN artifacts ON artifacts.id = runs.source_artifact_id",
+		"ORDER BY runs.created_at, runs.id",
+	} {
+		if !strings.Contains(listExpiredRuns, want) {
+			t.Fatalf("ListExpiredRuns missing %q:\n%s", want, listExpiredRuns)
+		}
+	}
+}
+
+// The orphan sweep deletes objects nothing points at. Two guards keep it away
+// from data that does have an owner: it only ever looks at run source objects
+// (a submission's source is kept for rejudge), and it only takes artifacts no
+// run references.
+func TestListOrphanedRunArtifactsIsScopedToUnreferencedRunSources(t *testing.T) {
+	for _, want := range []string{
+		"artifacts.owner_type = 'run'",
+		"artifacts.kind = 'source'",
+		"runs.id IS NULL",
+		"artifacts.created_at <",
+	} {
+		if !strings.Contains(listOrphanedRunArtifacts, want) {
+			t.Fatalf("ListOrphanedRunArtifacts missing %q:\n%s", want, listOrphanedRunArtifacts)
+		}
+	}
+}

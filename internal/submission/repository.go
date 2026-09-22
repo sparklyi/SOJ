@@ -24,6 +24,11 @@ type ArtifactRecord struct {
 	ChecksumSHA256 string
 	SizeBytes      int64
 	ContentType    string
+	// CreatedAt is when the row was written, and is what the orphan sweep
+	// compares against the retention window. It matters: an artifact is written
+	// just before the run that will reference it, so for a moment every run
+	// artifact is an orphan, and only age distinguishes that from a real one.
+	CreatedAt time.Time
 }
 
 type SubmissionRecord struct {
@@ -264,7 +269,7 @@ func (r *SQLRepository) UpdateLanguage(ctx context.Context, id int64, arg Update
 }
 
 func artifactRecord(row db.Artifact) ArtifactRecord {
-	return ArtifactRecord{ID: row.ID, OwnerType: row.OwnerType, OwnerID: row.OwnerID, Kind: row.Kind, StorageKey: row.StorageKey, ChecksumSHA256: row.ChecksumSha256, SizeBytes: row.SizeBytes, ContentType: row.ContentType}
+	return ArtifactRecord{ID: row.ID, OwnerType: row.OwnerType, OwnerID: row.OwnerID, Kind: row.Kind, StorageKey: row.StorageKey, ChecksumSHA256: row.ChecksumSha256, SizeBytes: row.SizeBytes, ContentType: row.ContentType, CreatedAt: row.CreatedAt.Time}
 }
 
 func languageRecord(row db.Language) LanguageRecord {

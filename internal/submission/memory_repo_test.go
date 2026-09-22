@@ -59,6 +59,9 @@ func (r *memoryRepo) id() int64 {
 
 func (r *memoryRepo) CreateArtifact(ctx context.Context, arg ArtifactRecord) (ArtifactRecord, error) {
 	arg.ID = r.id()
+	if arg.CreatedAt.IsZero() {
+		arg.CreatedAt = time.Now().UTC()
+	}
 	r.artifacts[arg.ID] = arg
 	return arg, nil
 }
@@ -603,6 +606,32 @@ func (r *memoryRepo) DeleteArtifact(ctx context.Context, id int64) error {
 	delete(r.artifacts, id)
 	r.events = append(r.events, "delete_artifact")
 	return nil
+}
+func (r *memoryRepo) ListOrphanedRunArtifacts(ctx context.Context, input ListOrphanedArtifactsInput) ([]OrphanedArtifactRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []OrphanedArtifactRecord
+	for id, artifact := range r.artifacts {
+		if artifact.OwnerType != "run" || artifact.Kind != "source" {
+			continue
+		}
+		if !artifact.CreatedAt.Before(input.CreatedBefore) {
+			continue
+		}
+		referenced := false
+		for _, run := range r.runs {
+			if run.SourceArtifactID == id {
+				referenced = true
+				break
+			}
+		}
+		if referenced {
+			continue
+		}
+		out = append(out, OrphanedArtifactRecord{ID: id, StorageKey: artifact.StorageKey})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 func (r *memoryRepo) MarkRunRunning(ctx context.Context, id int64) (RunRecord, error) {
 	r.mu.Lock()

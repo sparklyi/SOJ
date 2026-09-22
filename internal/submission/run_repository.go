@@ -130,6 +130,21 @@ func (r *SQLRepository) MarkStaleRunsSystemError(ctx context.Context, staleBefor
 	return out, nil
 }
 
+func (r *SQLRepository) ListOrphanedRunArtifacts(ctx context.Context, input ListOrphanedArtifactsInput) ([]OrphanedArtifactRecord, error) {
+	rows, err := r.q.ListOrphanedRunArtifacts(ctx, db.ListOrphanedRunArtifactsParams{
+		CreatedBefore: timestamptz(input.CreatedBefore),
+		Limit:         input.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OrphanedArtifactRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, OrphanedArtifactRecord{ID: row.ID, StorageKey: row.StorageKey})
+	}
+	return out, nil
+}
+
 // DeleteArtifact removes a source object row on its own. It is only for artifacts
 // that no run references -- DeleteExpiredRun owns the pair when there is a run.
 func (r *SQLRepository) DeleteArtifact(ctx context.Context, id int64) error {
@@ -138,4 +153,48 @@ func (r *SQLRepository) DeleteArtifact(ctx context.Context, id int64) error {
 
 func runRecord(row db.Run) RunRecord {
 	return RunRecord{ID: row.ID, UserID: row.UserID, ProblemID: int8Value(row.ProblemID), LanguageID: row.LanguageID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, Stdin: row.Stdin.String, Stdout: row.Stdout.String, Stderr: row.Stderr.String, CompileOutput: row.CompileOutput.String, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), ErrorMessage: textValue(row.ErrorMessage), CreatedAt: row.CreatedAt.Time, FinishedAt: timeValue(row.FinishedAt), UpdatedAt: row.UpdatedAt.Time}
+}
+
+func (r *SQLRepository) ListExpiredRuns(ctx context.Context, input ListExpiredRunsInput) ([]ExpiredRunRecord, error) {
+	rows, err := r.q.ListExpiredRuns(ctx, db.ListExpiredRunsParams{
+		CreatedBefore: timestamptz(input.CreatedBefore),
+		Limit:         input.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ExpiredRunRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ExpiredRunRecord{
+			ID:               row.ID,
+			SourceArtifactID: int8Value(row.SourceArtifactID),
+			StorageKey:       row.StorageKey.String,
+		})
+	}
+	return out, nil
+}
+
+// DeleteExpiredRun removes a run and its source artifact in one transaction.
+//
+// The order matters and is not interchangeable: runs.source_artifact_id
+// references artifacts, so the artifact cannot go first. They are deleted
+// together because a run row that outlives its artifact becomes invisible to the
+// sweep -- the artifact would then never be found again.
+func (r *SQLRepository) DeleteExpiredRun(ctx context.Context, input DeleteExpiredRunInput) error {
+	if r.txRunner == nil {
+		return errors.New("transaction runner is required to delete an expired run")
+	}
+	return postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		if err := q.DeleteRunByID(ctx, input.RunID); err != nil {
+			return err
+		}
+		if input.ArtifactID == nil {
+			return nil
+		}
+		// No owner_type guard on purpose: if an artifact were ever shared, the
+		// foreign key refuses this and the whole transaction rolls back loudly,
+		// which is what should happen. A guard would silently leak instead.
+		return q.DeleteArtifactByID(ctx, *input.ArtifactID)
+	})
 }

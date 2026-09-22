@@ -135,6 +135,14 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	worker := submission.NewWorker(dispatcher, processor, taskQueue)
 	resultConsumer := submission.NewResultConsumer(submissionRepo)
 	reconciler := submission.NewReconciler(submissionRepo, taskQueue, worker, nil, metrics)
+	retention := submission.NewRunRetention(submission.RunRetentionOptions{
+		Store:    submissionRepo,
+		Objects:  objectStore,
+		Age:      time.Duration(cfg.Retention.RunDays) * 24 * time.Hour,
+		Interval: cfg.Retention.RunInterval,
+		Batch:    cfg.Retention.RunBatch,
+		Metrics:  metrics,
+	})
 	contestRepo := contest.NewPostgresRepository(pool)
 	contestReader := contest.NewContestReader(contestRepo, time.Now)
 	scoreboardService := contest.NewScoreboardService(contestReader, contestRepo)
@@ -146,7 +154,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		TracingEnabled: tracing.Enabled(),
 		TracingService: tracing.ServiceName(),
 	})
-	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "run_stream", judgeRunStream(cfg), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"))
+	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "run_stream", judgeRunStream(cfg), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"), "run_retention_days", cfg.Retention.RunDays, "run_retention_interval", cfg.Retention.RunInterval)
 
 	server := &http.Server{
 		Addr:         cfg.Worker.HealthAddr,
@@ -161,7 +169,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block)
+		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, retention, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block)
 	}()
 
 	err = <-errCh
@@ -185,8 +193,16 @@ type scoreSnapshotGenerator interface {
 	GenerateDueScoreSnapshots(context.Context, int32) (contest.ScoreSnapshotGenerationResult, error)
 }
 
-func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration) error {
-	errCh := make(chan error, 3)
+// runRetentionSweeper is the destructive maintenance half of the worker: it
+// removes finished self-runs and the objects they left behind.
+type runRetentionSweeper interface {
+	Enabled() bool
+	Interval() time.Duration
+	Sweep(context.Context) (submission.RunRetentionResult, error)
+}
+
+func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, retention runRetentionSweeper, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration) error {
+	errCh := make(chan error, 4)
 	go func() {
 		errCh <- runDispatchLoop(ctx, worker, requestQueue, batchSize, dispatchInterval(block), metrics)
 	}()
@@ -196,6 +212,11 @@ func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsum
 	go func() {
 		errCh <- runReconcilerLoop(ctx, reconciler, snapshots)
 	}()
+	if retention != nil && retention.Enabled() {
+		go func() {
+			errCh <- runRunRetentionLoop(ctx, retention, metrics)
+		}()
+	}
 	err := <-errCh
 	if err == context.Canceled || err == context.DeadlineExceeded {
 		return nil
@@ -328,6 +349,36 @@ func runReconcilerLoop(ctx context.Context, reconciler workerReconciler, snapsho
 				return err
 			}
 		}
+		span.End()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// runRunRetentionLoop sweeps expired self-runs on its own cadence.
+//
+// It is separate from the reconciler loop on purpose. That loop runs every 30
+// seconds and only ever moves state forward; this one deletes data, so its
+// cadence should be a deliberate choice and it should be switchable off without
+// touching anything else.
+func runRunRetentionLoop(ctx context.Context, retention runRetentionSweeper, metrics workerLoopMetrics) error {
+	ticker := time.NewTicker(retention.Interval())
+	defer ticker.Stop()
+	for {
+		loopCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.run_retention")
+		result, err := retention.Sweep(loopCtx)
+		if err != nil {
+			span.SetStatus(codes.Error, "run_retention_error")
+			span.End()
+			return err
+		}
+		span.SetAttributes(
+			attribute.Int("soj.run_retention.deleted", result.Deleted),
+			attribute.Int("soj.run_retention.failed", result.Failed),
+		)
 		span.End()
 		select {
 		case <-ctx.Done():

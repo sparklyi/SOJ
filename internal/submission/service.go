@@ -38,6 +38,12 @@ const (
 	// runAwaitPollInterval is how often CreateRun re-reads the run row while
 	// waiting for it to finish. The row is small and read by primary key.
 	runAwaitPollInterval = 25 * time.Millisecond
+	// defaultRunRetentionBatch bounds how many runs one sweep removes, so a large
+	// backlog drains over several sweeps instead of one long transaction.
+	defaultRunRetentionBatch = 200
+	// defaultRunRetentionInterval is how often expired runs are swept when the
+	// deployment does not say otherwise.
+	defaultRunRetentionInterval = 10 * time.Minute
 )
 
 type SourceObject struct {

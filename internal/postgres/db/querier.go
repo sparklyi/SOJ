@@ -68,10 +68,9 @@ type Querier interface {
 	CreateTestcaseSet(ctx context.Context, arg CreateTestcaseSetParams) (TestcaseSet, error)
 	// Owner: WP2 Auth/User
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
-	// Removing a source object row. Used when a run's upload has to be undone: the
-	// object goes first, so a failure leaves this row for the sweep to find.
 	DeleteArtifactByID(ctx context.Context, id int64) error
 	DeleteContestProblems(ctx context.Context, contestID int64) error
+	DeleteRunByID(ctx context.Context, id int64) error
 	EnsureContestProblemResultProjection(ctx context.Context, arg EnsureContestProblemResultProjectionParams) error
 	FailActiveRejudgeBatchItemByTaskID(ctx context.Context, arg FailActiveRejudgeBatchItemByTaskIDParams) (RejudgeBatchItem, error)
 	FailProblemCheckRun(ctx context.Context, arg FailProblemCheckRunParams) (ProblemCheckRun, error)
@@ -120,11 +119,33 @@ type Querier interface {
 	ListContests(ctx context.Context, arg ListContestsParams) ([]Contest, error)
 	ListEligibleContestSubmissionsForRejudge(ctx context.Context, contestID pgtype.Int8) ([]Submission, error)
 	ListEligibleProblemSubmissionsForRejudge(ctx context.Context, problemID int64) ([]Submission, error)
+	// Self-runs past the retention window, with the storage key of the object that
+	// has to be removed before the row.
+	//
+	// Terminal status only. A run that never finished is MarkStaleRunsSystemError's
+	// business; deleting something that might still be executing would be
+	// indefensible, and that sweep has already terminated anything older than half
+	// an hour anyway.
+	//
+	// LEFT JOIN so a run whose artifact is already gone is still deleted. An inner
+	// join would hide exactly the rows that most need removing.
+	ListExpiredRuns(ctx context.Context, arg ListExpiredRunsParams) ([]ListExpiredRunsRow, error)
 	ListJudgeAttemptsByRejudgeBatch(ctx context.Context, rejudgeBatchID pgtype.Int8) ([]JudgeAttempt, error)
 	ListJudgeAttemptsBySubmissionID(ctx context.Context, submissionID pgtype.Int8) ([]JudgeAttempt, error)
 	ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID int64) ([]JudgeCaseResult, error)
 	ListLanguages(ctx context.Context, arg ListLanguagesParams) ([]Language, error)
 	ListLatestJudgeAttemptsBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]JudgeAttempt, error)
+	// Run source objects that no run points at.
+	//
+	// These are left by a run whose source was uploaded and whose admission was then
+	// refused, or whose process died in between: the object is written before the
+	// decision is made, so the decision is the only place that can undo it, and a
+	// crash has no place at all. Without this sweep such an object is invisible to
+	// every other query in the system and stays forever.
+	//
+	// Scoped to owner_type = 'run' and kind = 'source' so a submission's source,
+	// which is kept for rejudge, can never be picked up.
+	ListOrphanedRunArtifacts(ctx context.Context, arg ListOrphanedRunArtifactsParams) ([]ListOrphanedRunArtifactsRow, error)
 	ListProblemCheckFindingsByRunID(ctx context.Context, runID int64) ([]ProblemCheckFinding, error)
 	ListProblemCheckRunsByProblemID(ctx context.Context, arg ListProblemCheckRunsByProblemIDParams) ([]ProblemCheckRun, error)
 	ListProblemReviewEvents(ctx context.Context, problemID int64) ([]ProblemReviewEvent, error)

@@ -125,6 +125,15 @@ It **refuses the `docker` backend**: only `soj-judge-agent` may hold a Docker
 socket. Use it when you want a run to work without a worker and an agent running;
 otherwise prefer the async path.
 
+### Self-run retention
+
+A self-run is scratch work, so nothing about it has to survive -- but every one of
+them writes a source object to storage. The worker therefore sweeps finished
+self-runs past `SOJ_RUN_RETENTION_DAYS` and removes the object before the row, so
+a failure leaves the row for the next sweep instead of orphaning an object that
+nothing could ever find again. Submissions are untouched: their source is needed
+for rejudge.
+
 To run the local real-code smoke path through Docker runner containers:
 
 ```bash

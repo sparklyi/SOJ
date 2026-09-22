@@ -18,6 +18,7 @@ type Config struct {
 	Redis      RedisConfig
 	Storage    StorageConfig
 	Judge      JudgeConfig
+	Retention  RetentionConfig
 	Auth       AuthConfig
 	Log        LogConfig
 	Migrations MigrationsConfig
@@ -72,6 +73,23 @@ type JudgeConfig struct {
 	// RunStdinMaxBytes bounds the stdin a run may carry. It is stored in the run
 	// row and placed on the request event, so it cannot be unbounded.
 	RunStdinMaxBytes int
+}
+
+// RetentionConfig bounds how long the data a self-run leaves behind is kept.
+//
+// Self-runs are scratch work, so unlike a submission nothing about them has to
+// survive -- but every one of them writes a source object to storage, and
+// nothing else would ever remove it.
+type RetentionConfig struct {
+	// RunDays is how long a finished self-run and its source object are kept.
+	// Zero disables the sweep; it is the default an operator should reach for
+	// when they want retention off, so it must not read as "keep nothing".
+	RunDays int
+	// RunInterval is how often the worker sweeps.
+	RunInterval time.Duration
+	// RunBatch bounds how many runs one sweep removes, so a backlog drains over
+	// several sweeps instead of one long transaction.
+	RunBatch int
 }
 
 type AuthConfig struct {
@@ -134,6 +152,11 @@ func Load() (Config, error) {
 			RunPerUser:       2,
 			RunStdinMaxBytes: 64 << 10,
 		},
+		Retention: RetentionConfig{
+			RunDays:     7,
+			RunInterval: 10 * time.Minute,
+			RunBatch:    200,
+		},
 		Auth: AuthConfig{
 			JWTSecret:       env("SOJ_JWT_SECRET", ""),
 			AccessTokenTTL:  15 * time.Minute,
@@ -190,6 +213,15 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Judge.RunStdinMaxBytes, err = envPositiveInt("SOJ_JUDGE_RUN_STDIN_MAX_BYTES", cfg.Judge.RunStdinMaxBytes); err != nil {
+		return Config{}, err
+	}
+	if cfg.Retention.RunDays, err = envNonNegativeInt("SOJ_RUN_RETENTION_DAYS", cfg.Retention.RunDays); err != nil {
+		return Config{}, err
+	}
+	if cfg.Retention.RunInterval, err = envDuration("SOJ_RUN_RETENTION_INTERVAL", cfg.Retention.RunInterval); err != nil {
+		return Config{}, err
+	}
+	if cfg.Retention.RunBatch, err = envPositiveInt("SOJ_RUN_RETENTION_BATCH", cfg.Retention.RunBatch); err != nil {
 		return Config{}, err
 	}
 	if cfg.Auth.AccessTokenTTL, err = envDuration("SOJ_ACCESS_TOKEN_TTL", cfg.Auth.AccessTokenTTL); err != nil {
@@ -254,6 +286,23 @@ func envPositiveInt64(key string, fallback int64) (int64, error) {
 	}
 	if parsed <= 0 {
 		return 0, fmt.Errorf("%s: must be greater than zero", key)
+	}
+	return parsed, nil
+}
+
+// envNonNegativeInt parses a value where zero is meaningful, unlike
+// envPositiveInt. Retention uses it: zero has to mean "off", not "keep nothing".
+func envNonNegativeInt(key string, fallback int) (int, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("%s: must not be negative", key)
 	}
 	return parsed, nil
 }

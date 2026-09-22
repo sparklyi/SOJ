@@ -119,6 +119,13 @@ SOJ_ENV=local SOJ_JUDGE_ENDPOINT=local:// SOJ_JUDGE_SANDBOX_BACKEND=process make
 它**拒绝 `docker` 后端**：只有 `soj-judge-agent` 允许持有 Docker socket。
 适合不想同时起 worker 和 agent 的场景；否则优先用异步链路。
 
+### 自测运行的保留策略
+
+自测运行是草稿，本来就不需要长期保留——但每次运行都会往对象存储写一个源码对象。
+因此 worker 会定期清理超过 `SOJ_RUN_RETENTION_DAYS` 的已完成自测运行，并**先删对象、
+后删行**：这样失败时留下的是行，下一轮会重试；反过来则会留下一个再也找不到的对象。
+正式提交不受影响，它们的源码在重测时还要用。
+
 如需通过 Docker runner 容器跑本地真实代码 smoke：
 
 ```bash
@@ -206,6 +213,9 @@ Docker smoke test 会验证注册、创建题目、上传题面、上传测试�
 | `SOJ_JUDGE_RUN_PER_USER` | 单用户同时在途的 self-run 上限，默认 `2`。在数据库中计数，跨 API 副本精确。练习场与题目页共用该上限。 |
 | `SOJ_JUDGE_RUN_STDIN_MAX_BYTES` | 单次自测运行允许的 stdin 上限，默认 `65536`，超限返回 `422 run.stdin_too_large`。 |
 | `SOJ_JUDGE_RUN_PARALLELISM` | API 侧 self-run 的全局并发槽位，默认 `1`。仅 `local://` 生效；`agent://` 下容量属于 agent 自身。 |
+| `SOJ_RUN_RETENTION_DAYS` | 已完成的自测运行及其源码对象的保留天数，默认 `7`。`0` 表示关闭清理。由 worker 执行。 |
+| `SOJ_RUN_RETENTION_INTERVAL` | worker 清理的间隔，默认 `10m`。 |
+| `SOJ_RUN_RETENTION_BATCH` | 单次清理删除的运行数上限，默认 `200`。积压会分多轮清完，而不是一个长事务。 |
 | `SOJ_JUDGE_CLEANUP_TIMEOUT` | 判题 workspace 和容器清理的独立超时时间，默认 `5s`。 |
 | `SOJ_JUDGE_SANDBOX_BACKEND` | Judge-agent sandbox backend：`fake`、`process` 或 `docker`。 |
 | `SOJ_JUDGE_PARALLELISM` | Judge-agent 全局 sandbox slot 数。 |
