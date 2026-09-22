@@ -13,7 +13,7 @@ import (
 
 func (r *SQLRepository) CreateJudgeTask(ctx context.Context, submissionID int64, nextRunAt time.Time) (JudgeTaskRecord, error) {
 	row, err := r.q.CreateJudgeTask(ctx, db.CreateJudgeTaskParams{
-		SubmissionID: submissionID,
+		SubmissionID: validInt8(submissionID),
 		Status:       "pending",
 		NextRunAt:    timestamptz(nextRunAt),
 	})
@@ -27,6 +27,18 @@ func (r *SQLRepository) GetJudgeTask(ctx context.Context, id int64) (JudgeTaskRe
 
 func (r *SQLRepository) ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]JudgeTaskRecord, error) {
 	rows, err := r.q.ClaimPendingJudgeTasks(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]JudgeTaskRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, judgeTaskRecord(row))
+	}
+	return out, nil
+}
+
+func (r *SQLRepository) ClaimPendingRunTasks(ctx context.Context, limit int32) ([]JudgeTaskRecord, error) {
+	rows, err := r.q.ClaimPendingRunTasks(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +86,13 @@ func (r *SQLRepository) MarkJudgeTaskDead(ctx context.Context, id int64, reason 
 			return err
 		}
 		task = judgeTaskRecord(row)
-		if _, err := markSubmissionSystemError(ctx, q, task.SubmissionID, reason); err != nil {
+		// Submission-only: failing a task fails its submission. Run tasks never
+		// reach here, because TaskFailureHandler only serves the submission
+		// path; a run that gets stuck is terminated by MarkStaleRuns instead.
+		if task.SubmissionID == nil {
+			return errJudgeTaskIsNotASubmission
+		}
+		if _, err := markSubmissionSystemError(ctx, q, *task.SubmissionID, reason); err != nil {
 			return err
 		}
 		item, err := q.FailActiveRejudgeBatchItemByTaskID(ctx, db.FailActiveRejudgeBatchItemByTaskIDParams{ErrorMessage: text(reason), TaskID: id})
@@ -101,7 +119,10 @@ func (r *SQLRepository) RecoverDeadJudgeTask(ctx context.Context, id int64, next
 		if err != nil {
 			return err
 		}
-		submissionRow, err := q.LockSubmissionByID(ctx, currentTask.SubmissionID)
+		if currentTask.SubmissionID.Valid == false {
+			return errJudgeTaskIsNotASubmission
+		}
+		submissionRow, err := q.LockSubmissionByID(ctx, currentTask.SubmissionID.Int64)
 		if err != nil {
 			return err
 		}
@@ -117,7 +138,7 @@ func (r *SQLRepository) RecoverDeadJudgeTask(ctx context.Context, id int64, next
 		if !projectionLock.enabled {
 			return nil
 		}
-		updated, err := q.GetSubmissionByID(ctx, currentTask.SubmissionID)
+		updated, err := q.GetSubmissionByID(ctx, currentTask.SubmissionID.Int64)
 		if err != nil {
 			return err
 		}
@@ -139,13 +160,23 @@ func (r *SQLRepository) ResetStaleJudgeTasks(ctx context.Context, staleBefore ti
 }
 
 func judgeTaskRecord(row db.JudgeTask) JudgeTaskRecord {
-	return JudgeTaskRecord{ID: row.ID, SubmissionID: row.SubmissionID, StreamID: row.StreamID.String, Status: row.Status, Attempts: row.Attempts, NextRunAt: row.NextRunAt.Time, LastError: row.LastError.String}
+	return JudgeTaskRecord{ID: row.ID, SubmissionID: int8Value(row.SubmissionID), RunID: int8Value(row.RunID), StreamID: row.StreamID.String, Status: row.Status, Attempts: row.Attempts, NextRunAt: row.NextRunAt.Time, LastError: row.LastError.String}
 }
 
 func resetJudgeTaskRecord(row db.ResetStaleJudgeTasksRow) JudgeTaskRecord {
-	return JudgeTaskRecord{ID: row.ID, SubmissionID: row.SubmissionID, StreamID: row.StreamID.String, Status: row.Status, Attempts: row.Attempts, NextRunAt: row.NextRunAt.Time, LastError: row.LastError.String}
+	return JudgeTaskRecord{ID: row.ID, SubmissionID: int8Value(row.SubmissionID), RunID: int8Value(row.RunID), StreamID: row.StreamID.String, Status: row.Status, Attempts: row.Attempts, NextRunAt: row.NextRunAt.Time, LastError: row.LastError.String}
 }
 
 func recoverDeadJudgeTaskRecord(row db.RecoverDeadJudgeTaskRow) JudgeTaskRecord {
-	return JudgeTaskRecord{ID: row.ID, SubmissionID: row.SubmissionID, StreamID: row.StreamID.String, Status: row.Status, Attempts: row.Attempts, NextRunAt: row.NextRunAt.Time, LastError: row.LastError.String}
+	return JudgeTaskRecord{ID: row.ID, SubmissionID: int8Value(row.SubmissionID), RunID: int8Value(row.RunID), StreamID: row.StreamID.String, Status: row.Status, Attempts: row.Attempts, NextRunAt: row.NextRunAt.Time, LastError: row.LastError.String}
 }
+
+// errJudgeTaskIsNotASubmission marks the operations that only make sense for a
+// task judging a submission. Runs share the task table and lifecycle but not
+// these transitions, and a bare zero id would otherwise fail much later with a
+// confusing "submission 0 not found".
+var errJudgeTaskIsNotASubmission = errors.New("judge task is not linked to a submission")
+
+// errJudgeTaskIsNotARun is the mirror of errJudgeTaskIsNotASubmission: it guards
+// the run-only transitions.
+var errJudgeTaskIsNotARun = errors.New("judge task is not linked to a run")

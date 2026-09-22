@@ -17,9 +17,11 @@ func TestWorkerReadinessChecksRuntimeDependencies(t *testing.T) {
 	requestQueue := &readyQueue{}
 	resultQueue := &readyQueue{}
 	store := &readyObjectStore{}
+	runQueue := &readyQueue{}
 	readiness := newWorkerReadiness(
 		func(context.Context) error { return nil },
 		requestQueue,
+		runQueue,
 		resultQueue,
 		store,
 		nil,
@@ -28,15 +30,15 @@ func TestWorkerReadinessChecksRuntimeDependencies(t *testing.T) {
 	if err := readiness.Check(context.Background()); err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
-	if !requestQueue.called || !resultQueue.called || !store.called {
-		t.Fatalf("readiness did not check all dependencies: request=%v result=%v storage=%v", requestQueue.called, resultQueue.called, store.called)
+	if !requestQueue.called || !runQueue.called || !resultQueue.called || !store.called {
+		t.Fatalf("readiness did not check all dependencies: request=%v run=%v result=%v storage=%v", requestQueue.called, runQueue.called, resultQueue.called, store.called)
 	}
 }
 
 func TestJudgeAgentReadinessReportsSandboxProbeFailure(t *testing.T) {
 	wantErr := errors.New("runsc unavailable")
 	readiness := newJudgeAgentReadiness(
-		&readyQueue{},
+		[]judgeRequestStream{{Name: "submissions", Queue: &readyQueue{}}},
 		&readyQueue{},
 		&readyObjectStore{},
 		func(context.Context) error { return wantErr },

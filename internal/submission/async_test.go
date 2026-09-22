@@ -20,7 +20,7 @@ import (
 func TestDispatcherPublishesRequestEventWithoutCallingJudgeEngine(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "pending"}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "pending"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source/key", ChecksumSHA256: "sha256:source", SizeBytes: 12}
 	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -95,7 +95,7 @@ func TestDispatcherPublishesW3CTraceContextFromActiveSpan(t *testing.T) {
 		TraceFlags: trace.FlagsSampled,
 	}))
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "pending"}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "pending"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source/key", ChecksumSHA256: "sha256:source", SizeBytes: 12}
 	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -319,7 +319,7 @@ func TestResultConsumerIsIdempotentAndAcksAfterPersist(t *testing.T) {
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusRunning, TestcaseSetID: 3}
 	attempt, err := repo.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
 		AttemptID:       "attempt-1",
-		SubmissionID:    9,
+		SubmissionID:    int64Ptr(9),
 		TaskID:          7,
 		LanguageID:      71,
 		ProtocolVersion: judgeevents.RequestEventType,
@@ -370,7 +370,7 @@ func TestRecoverDeadJudgeTaskResetsRetryBudgetAndQueuesSubmission(t *testing.T) 
 	repo := newMemoryRepo()
 	repo.tasks[7] = JudgeTaskRecord{
 		ID:           7,
-		SubmissionID: 9,
+		SubmissionID: int64Ptr(9),
 		Status:       "dead",
 		Attempts:     5,
 		LastError:    "runner image missing",
@@ -426,4 +426,330 @@ func (p *recordingResultPublisher) PublishResult(ctx context.Context, event judg
 		*p.events = append(*p.events, "publish_result")
 	}
 	return "result-1-0", nil
+}
+
+// A run goes to its own stream, so playground traffic can never queue in front
+// of a formal submission. This pins both halves: the event lands on the run
+// queue, and the submission queue stays empty.
+func TestDispatcherPublishesRunRequestToRunStream(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	runID := int64(12)
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, RunID: &runID, Status: "pending"}
+	repo.runs[runID] = RunRecord{ID: runID, UserID: 5, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, Stdin: "7 8\n"}
+	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source/key", ChecksumSHA256: "sha256:source", SizeBytes: 12}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	submissionQueue := &memoryQueue{}
+	runQueue := &memoryQueue{}
+	worker := newWorkerForTest(workerTestOptions{
+		Repository:       repo,
+		Queue:            submissionQueue,
+		RunQueue:         runQueue,
+		Judge:            judge.NewFakeEngine(),
+		ProblemReader:    fakeProblemReader{},
+		TestcaseResolver: fakeTestcaseResolver{},
+		SourceStore:      NewMemorySourceStore(),
+		Now:              func() time.Time { return time.Unix(100, 0).UTC() },
+	})
+
+	count, err := worker.DispatchPending(ctx, 1)
+	if err != nil {
+		t.Fatalf("DispatchPending returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	if len(submissionQueue.payloads) != 0 {
+		t.Fatalf("submission queue received %d payloads, want 0: a run must not share the submission stream", len(submissionQueue.payloads))
+	}
+	if len(runQueue.payloads) != 1 {
+		t.Fatalf("run queue payloads = %d, want 1", len(runQueue.payloads))
+	}
+	var event judgeevents.RequestEvent
+	if err := json.Unmarshal(runQueue.payloads[0], &event); err != nil {
+		t.Fatalf("decode request event: %v", err)
+	}
+	if event.RunID != runID || event.SubmissionID != 0 {
+		t.Fatalf("event subject run_id=%d submission_id=%d, want run_id=%d", event.RunID, event.SubmissionID, runID)
+	}
+	if event.Stdin != "7 8\n" {
+		t.Fatalf("event stdin = %q, want the run's stdin", event.Stdin)
+	}
+	if event.TestcaseSet.ID != 0 {
+		t.Fatalf("event testcase_set.id = %d, want 0: a run has nothing to compare", event.TestcaseSet.ID)
+	}
+	if event.Priority != judgeevents.PriorityScratch {
+		t.Fatalf("event priority = %q, want %q", event.Priority, judgeevents.PriorityScratch)
+	}
+	attempt, err := repo.GetLatestJudgeAttemptByRunID(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetLatestJudgeAttemptByRunID returned error: %v", err)
+	}
+	if attempt.RunID == nil || *attempt.RunID != runID {
+		t.Fatalf("attempt run_id = %v, want %d", attempt.RunID, runID)
+	}
+	if attempt.TestcaseSetID != nil {
+		t.Fatalf("attempt testcase_set_id = %v, want nil", attempt.TestcaseSetID)
+	}
+}
+
+// A worker with no run stream must still dispatch submissions. Requiring a run
+// queue would make the split mandatory for every deployment, including ones that
+// do not run a playground.
+func TestDispatcherWithoutRunStreamStillDispatchesSubmissions(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "pending"}
+	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
+	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source/key", ChecksumSHA256: "sha256:source", SizeBytes: 12}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	q := &memoryQueue{}
+	worker := newWorkerForTest(workerTestOptions{
+		Repository:       repo,
+		Queue:            q,
+		Judge:            judge.NewFakeEngine(),
+		ProblemReader:    fakeProblemReader{},
+		TestcaseResolver: fakeTestcaseResolver{},
+		SourceStore:      NewMemorySourceStore(),
+		Now:              func() time.Time { return time.Unix(100, 0).UTC() },
+	})
+
+	count, err := worker.DispatchPending(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("DispatchPending returned error: %v", err)
+	}
+	if count != 1 || len(q.payloads) != 1 {
+		t.Fatalf("count=%d payloads=%d, want 1 and 1", count, len(q.payloads))
+	}
+}
+
+// failingTestcaseLoader fails the test if it is asked for anything. A run has no
+// testcase set, so reaching the loader at all is the bug -- and a loader that
+// returns an empty set would hide it behind a silently-accepted run.
+type failingTestcaseLoader struct {
+	t *testing.T
+}
+
+func (l failingTestcaseLoader) Load(context.Context, judgeevents.TestcaseSetRef) ([]problem.Testcase, error) {
+	l.t.Helper()
+	l.t.Fatal("the testcase loader was called for a run request")
+	return nil, nil
+}
+
+// recordingCore records which judgecore operation the agent chose.
+type recordingCore struct {
+	judgeCalls int
+	runCalls   int
+	runRequest judge.RunRequest
+	result     judge.Result
+}
+
+func (c *recordingCore) Judge(context.Context, judgecore.Request) (judge.Result, error) {
+	c.judgeCalls++
+	return c.result, nil
+}
+
+func (c *recordingCore) Run(_ context.Context, request judge.RunRequest) (judge.Result, error) {
+	c.runCalls++
+	c.runRequest = request
+	return c.result, nil
+}
+
+// A run must reach Core.Run with the run's stdin, and must never touch the
+// testcase loader. Asserting both directions is the point: "we call Run" alone
+// would still pass if we loaded testcases first and threw them away.
+func TestCoreAsyncAgentRunsWithoutLoadingTestcases(t *testing.T) {
+	store := NewMemorySourceStore()
+	store.objects["source/key"] = []byte("package main")
+	request := judgeevents.RequestEvent{
+		EventID:        "evt-request-run",
+		AttemptID:      "attempt-run",
+		TraceID:        "trace-run",
+		RunID:          12,
+		LanguageID:     71,
+		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
+		Stdin:          "7 8\n",
+		TimeoutMS:      5000,
+		MemoryKB:       262144,
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	core := &recordingCore{result: judge.Result{Verdict: judge.VerdictAccepted, Stdout: "15\n"}}
+	resultQueue := &recordingResultPublisher{}
+	agent := NewCoreAsyncAgent(CoreAsyncAgentOptions{
+		Core:            core,
+		SourceStore:     store,
+		TestcaseLoader:  failingTestcaseLoader{t: t},
+		ResultPublisher: resultQueue,
+		Now:             func() time.Time { return time.Unix(101, 0).UTC() },
+	})
+	requestQueue := &memoryQueue{}
+
+	if err := agent.ProcessRequestMessage(context.Background(), queue.Message{ID: "1-0", TaskID: 7, Payload: payload}, requestQueue); err != nil {
+		t.Fatalf("ProcessRequestMessage returned error: %v", err)
+	}
+	if core.judgeCalls != 0 {
+		t.Fatalf("Core.Judge calls = %d, want 0: a run judges nothing", core.judgeCalls)
+	}
+	if core.runCalls != 1 {
+		t.Fatalf("Core.Run calls = %d, want 1", core.runCalls)
+	}
+	if core.runRequest.Stdin != "7 8\n" || string(core.runRequest.Source) != "package main" {
+		t.Fatalf("run request = %+v, want the source and stdin from the event", core.runRequest)
+	}
+	var result judgeevents.ResultEvent
+	if err := json.Unmarshal(resultQueue.eventsPayloads[0], &result); err != nil {
+		t.Fatalf("decode result event: %v", err)
+	}
+	if result.Status != judge.VerdictAccepted || result.Result.Stdout != "15\n" {
+		t.Fatalf("result = %+v, want the run's stdout", result)
+	}
+	if result.Result.Manifest.TestcaseSetHash != "" {
+		t.Fatalf("manifest testcase_set_hash = %q, want empty for a run", result.Result.Manifest.TestcaseSetHash)
+	}
+}
+
+// The fake agent backs the fake:// deployment, so it needs the same split.
+func TestFakeAsyncAgentRunsWithoutJudging(t *testing.T) {
+	store := NewMemorySourceStore()
+	store.objects["source/key"] = []byte("package main")
+	request := judgeevents.RequestEvent{
+		EventID:        "evt-request-run",
+		AttemptID:      "attempt-run",
+		TraceID:        "trace-run",
+		RunID:          12,
+		LanguageID:     71,
+		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
+		Stdin:          "hello",
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "got:hello\n", JudgedAt: time.Unix(101, 0).UTC()})
+	resultQueue := &recordingResultPublisher{}
+	agent := NewFakeAsyncAgent(FakeAsyncAgentOptions{
+		Judge:           engine,
+		Run:             engine,
+		SourceStore:     store,
+		ResultPublisher: resultQueue,
+	})
+
+	if err := agent.ProcessRequestMessage(context.Background(), queue.Message{ID: "1-0", TaskID: 7, Payload: payload}, &memoryQueue{}); err != nil {
+		t.Fatalf("ProcessRequestMessage returned error: %v", err)
+	}
+	if len(engine.Requests()) != 0 {
+		t.Fatalf("Judge calls = %d, want 0: a run is executed, not judged", len(engine.Requests()))
+	}
+	runRequests := engine.RunRequests()
+	if len(runRequests) != 1 {
+		t.Fatalf("Run calls = %d, want 1", len(runRequests))
+	}
+	if runRequests[0].Stdin != "hello" {
+		t.Fatalf("run stdin = %q, want %q", runRequests[0].Stdin, "hello")
+	}
+}
+
+// A run result lands on the run row. The result event carries no run id -- the
+// attempt already knows its subject -- so this is the routing that has to work.
+func TestResultConsumerWritesRunResult(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	runID := int64(12)
+	repo.runs[runID] = RunRecord{ID: runID, UserID: 5, LanguageID: 71, Status: StatusRunning}
+	attempt, err := repo.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
+		AttemptID:       "attempt-run",
+		RunID:           &runID,
+		TaskID:          7,
+		LanguageID:      71,
+		ProtocolVersion: judgeevents.RequestEventType,
+		JudgeEngine:     judge.EngineSOJAgent,
+	})
+	if err != nil {
+		t.Fatalf("EnsureJudgeAttempt returned error: %v", err)
+	}
+	payload, err := json.Marshal(judgeevents.ResultEvent{
+		EventID:        "evt-result-run",
+		RequestEventID: "evt-request-run",
+		AttemptID:      strconv.FormatInt(attempt.ID, 10),
+		TraceID:        "trace-run",
+		Status:         judge.VerdictAccepted,
+		Result: judge.Result{
+			Verdict:       judge.VerdictAccepted,
+			Stdout:        "15\n",
+			Stderr:        "",
+			CompileOutput: "warnings",
+			TimeMS:        361,
+			JudgedAt:      time.Unix(102, 0).UTC(),
+		},
+		JudgedAt: time.Unix(102, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("marshal result event: %v", err)
+	}
+	resultQueue := &messageAckerStub{}
+
+	if err := NewResultConsumer(repo).ProcessResultMessage(ctx, queue.Message{ID: "1-0", Payload: payload}, resultQueue); err != nil {
+		t.Fatalf("ProcessResultMessage returned error: %v", err)
+	}
+	if len(resultQueue.acked) != 1 {
+		t.Fatal("result message was not acked after persisting")
+	}
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetRun returned error: %v", err)
+	}
+	if run.Status != StatusAccepted || run.Stdout != "15\n" || run.CompileOutput != "warnings" {
+		t.Fatalf("run = %+v, want the executed result", run)
+	}
+	if run.TimeMS == nil || *run.TimeMS != 361 {
+		t.Fatalf("run time_ms = %v, want 361", run.TimeMS)
+	}
+}
+
+// The result stream is at-least-once, so a redelivered result must not rewrite a
+// finished run. Without the terminal guard a stale retry could overwrite a real
+// verdict with an older one.
+func TestResultConsumerDoesNotRewriteAFinishedRun(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	runID := int64(12)
+	repo.runs[runID] = RunRecord{ID: runID, UserID: 5, LanguageID: 71, Status: StatusAccepted, Stdout: "15\n"}
+	attempt, err := repo.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
+		AttemptID:       "attempt-run",
+		RunID:           &runID,
+		TaskID:          7,
+		LanguageID:      71,
+		ProtocolVersion: judgeevents.RequestEventType,
+		JudgeEngine:     judge.EngineSOJAgent,
+	})
+	if err != nil {
+		t.Fatalf("EnsureJudgeAttempt returned error: %v", err)
+	}
+	payload, err := json.Marshal(judgeevents.ResultEvent{
+		EventID:        "evt-result-run-late",
+		RequestEventID: "evt-request-run",
+		AttemptID:      strconv.FormatInt(attempt.ID, 10),
+		TraceID:        "trace-run",
+		Status:         judge.VerdictRuntimeError,
+		Result:         judge.Result{Verdict: judge.VerdictRuntimeError, Stderr: "boom", JudgedAt: time.Unix(103, 0).UTC()},
+		JudgedAt:       time.Unix(103, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("marshal result event: %v", err)
+	}
+
+	if err := NewResultConsumer(repo).ProcessResultMessage(ctx, queue.Message{ID: "1-1", Payload: payload}, &messageAckerStub{}); err != nil {
+		t.Fatalf("ProcessResultMessage returned error: %v", err)
+	}
+	run, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetRun returned error: %v", err)
+	}
+	if run.Status != StatusAccepted || run.Stdout != "15\n" || run.Stderr != "" {
+		t.Fatalf("run = %+v, want the finished run untouched", run)
+	}
 }

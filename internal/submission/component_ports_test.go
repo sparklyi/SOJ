@@ -28,7 +28,7 @@ func (s *submissionCreatorStoreStub) CreateSubmissionWithTask(_ context.Context,
 	s.nextID++
 	submission.ID = s.nextID
 	s.nextID++
-	return submission, JudgeTaskRecord{ID: s.nextID, SubmissionID: submission.ID, Status: "pending"}, nil
+	return submission, JudgeTaskRecord{ID: s.nextID, SubmissionID: int64Ptr(submission.ID), Status: "pending"}, nil
 }
 
 type submissionCreatorProblemReaderStub struct{}
@@ -88,7 +88,7 @@ func TestSubmissionCreatorUsesOnlyCreationStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSubmission() error = %v", err)
 	}
-	if created.Submission.ID == 0 || created.Task.SubmissionID != created.Submission.ID || created.Submission.TestcaseSetID != 3 {
+	if created.Submission.ID == 0 || created.Task.SubmissionID == nil || *created.Task.SubmissionID != created.Submission.ID || created.Submission.TestcaseSetID != 3 {
 		t.Fatalf("CreateSubmission() = %+v", created)
 	}
 }
@@ -159,7 +159,8 @@ func (runStoreStub) CreateArtifact(_ context.Context, artifact ArtifactRecord) (
 	return artifact, nil
 }
 
-func (runStoreStub) CreateRun(_ context.Context, run RunRecord) (RunRecord, error) {
+func (runStoreStub) AdmitRun(_ context.Context, input AdmitRunInput) (RunRecord, error) {
+	run := input.Run
 	run.ID = 1
 	return run, nil
 }

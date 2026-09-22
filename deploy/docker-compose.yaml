@@ -190,6 +190,7 @@ services:
       SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
       SOJ_JUDGE_RUN_PARALLELISM: ${SOJ_JUDGE_RUN_PARALLELISM:-1}
       SOJ_JUDGE_RUN_PER_USER: ${SOJ_JUDGE_RUN_PER_USER:-2}
+      SOJ_JUDGE_RUN_STDIN_MAX_BYTES: ${SOJ_JUDGE_RUN_STDIN_MAX_BYTES:-65536}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -222,6 +223,8 @@ services:
       SOJ_REDIS_GROUP: judge-workers
       SOJ_REDIS_STREAM_MAX_LEN: ${SOJ_REDIS_STREAM_MAX_LEN:-100000}
       SOJ_REDIS_DEAD_STREAM_MAX_LEN: ${SOJ_REDIS_DEAD_STREAM_MAX_LEN:-10000}
+      SOJ_JUDGE_RUN_STREAM: soj:judge:runs
+      SOJ_JUDGE_RUN_GROUP: judge-run-agents
       SOJ_JUDGE_RESULT_STREAM: soj:judge:results
       SOJ_JUDGE_RESULT_GROUP: judge-result-consumers
       SOJ_STORAGE_ENDPOINT: http://minio:9000
@@ -274,6 +277,11 @@ services:
       SOJ_JUDGE_SANDBOX_BACKEND: ${SOJ_JUDGE_SANDBOX_BACKEND:-fake}
       SOJ_JUDGE_REQUEST_STREAM: soj:judge:tasks
       SOJ_JUDGE_AGENT_GROUP: judge-agents
+      SOJ_JUDGE_RUN_STREAM: soj:judge:runs
+      SOJ_JUDGE_RUN_GROUP: judge-run-agents
+      # all 时同一个 agent 消费两个流并共享沙箱槽；runs 可以单跑一个只服务
+      # 自测运行的 agent，从而与正式提交互不影响。
+      SOJ_JUDGE_AGENT_STREAMS: ${SOJ_JUDGE_AGENT_STREAMS:-all}
       SOJ_JUDGE_RESULT_STREAM: soj:judge:results
       SOJ_JUDGE_RESULT_GROUP: judge-result-consumers
       SOJ_JUDGE_PARALLELISM: ${SOJ_JUDGE_PARALLELISM:-1}

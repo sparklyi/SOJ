@@ -102,15 +102,22 @@ SMOKE_REAL_JUDGE=1 make smoke
 
 process backend 适合本地验证，但不是生产 sandbox。
 
-如需在本地真正跑通**自测运行**（题目页的「运行测试」与练习场），把 endpoint 切到 `local://`：
+**自测运行**（题目页的「运行测试」与练习场）走的是和正式提交完全相同的异步链路：
+API 写入 judge task，worker 发布到 run 流，judge-agent 执行。所以默认的
+`agent://local` 就够了，这也是生产路径——API 进程不执行任何不可信代码。
+
+自测运行有独立的 request stream（`SOJ_JUDGE_RUN_STREAM`），练习场流量不会排在正式提交前面。
+默认一个 agent 同时消费两个流并共享沙箱槽；在第二个 agent 上设置
+`SOJ_JUDGE_AGENT_STREAMS=runs`，就能给练习场独立的容量。
+
+单机部署与本地开发还可以用 `local://`，由 API 进程自己编译执行：
 
 ```bash
 SOJ_ENV=local SOJ_JUDGE_ENDPOINT=local:// SOJ_JUDGE_SANDBOX_BACKEND=process make up
 ```
 
-`local://` 让 API 进程自己编译执行源码，只适合单机部署与本地开发。它**拒绝 `docker` 后端**：
-只有 `soj-judge-agent` 允许持有 Docker socket。生产环境要跑自测运行，需要把 self-run 接入
-judge-agent 的异步链路，那是独立的一项工作。
+它**拒绝 `docker` 后端**：只有 `soj-judge-agent` 允许持有 Docker socket。
+适合不想同时起 worker 和 agent 的场景；否则优先用异步链路。
 
 如需通过 Docker runner 容器跑本地真实代码 smoke：
 
@@ -191,10 +198,14 @@ Docker smoke test 会验证注册、创建题目、上传题面、上传测试�
 | `SOJ_STORAGE_ACCESS_KEY` | 对象存储 access key。 |
 | `SOJ_STORAGE_SECRET_KEY` | 对象存储 secret key。 |
 | `SOJ_JWT_SECRET` | JWT 签名密钥。真实部署必须替换。 |
-| `SOJ_JUDGE_ENDPOINT` | 评测 endpoint。`fake://accepted` 返回预设结果；`agent://local` 表示评测交给 judge-agent，此时**自测运行不可用**；`local://` 表示自测运行在本进程内执行（仅限单机/本地，拒绝 `docker` 后端）。 |
+| `SOJ_JUDGE_ENDPOINT` | 评测 endpoint。`fake://accepted` 返回预设结果；`agent://local` 表示评测**与自测运行**都交给 judge-agent（生产路径）；`local://` 表示自测运行改为在本进程内执行（仅限单机/本地，拒绝 `docker` 后端）。 |
 | `SOJ_JUDGE_TIMEOUT` | 评测超时时间，默认 `30s`。 |
-| `SOJ_JUDGE_RUN_PARALLELISM` | API 侧 self-run 的全局并发槽位，默认 `1`。 |
-| `SOJ_JUDGE_RUN_PER_USER` | 单用户同时在途的 self-run 上限，默认 `2`。练习场与题目页共用该上限。 |
+| `SOJ_JUDGE_RUN_STREAM` | 自测运行的 request stream，默认 `<SOJ_REDIS_STREAM>:runs`。独立成流，练习场流量不会挤占正式提交。 |
+| `SOJ_JUDGE_RUN_GROUP` | run 流上的消费组，默认 `judge-run-agents`。 |
+| `SOJ_JUDGE_AGENT_STREAMS` | judge-agent 消费哪些 request stream：`all`（默认）、`submissions` 或 `runs`。设为 `runs` 可让一个进程专供自测运行。 |
+| `SOJ_JUDGE_RUN_PER_USER` | 单用户同时在途的 self-run 上限，默认 `2`。在数据库中计数，跨 API 副本精确。练习场与题目页共用该上限。 |
+| `SOJ_JUDGE_RUN_STDIN_MAX_BYTES` | 单次自测运行允许的 stdin 上限，默认 `65536`，超限返回 `422 run.stdin_too_large`。 |
+| `SOJ_JUDGE_RUN_PARALLELISM` | API 侧 self-run 的全局并发槽位，默认 `1`。仅 `local://` 生效；`agent://` 下容量属于 agent 自身。 |
 | `SOJ_JUDGE_CLEANUP_TIMEOUT` | 判题 workspace 和容器清理的独立超时时间，默认 `5s`。 |
 | `SOJ_JUDGE_SANDBOX_BACKEND` | Judge-agent sandbox backend：`fake`、`process` 或 `docker`。 |
 | `SOJ_JUDGE_PARALLELISM` | Judge-agent 全局 sandbox slot 数。 |
