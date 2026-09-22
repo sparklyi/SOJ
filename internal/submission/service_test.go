@@ -111,7 +111,7 @@ func TestCompleteSubmissionPersistsJudgeEvidence(t *testing.T) {
 func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched", Attempts: 0}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -149,7 +149,7 @@ func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 func TestWorkerDeadLetterOrderAcksOriginalWhenDeadStreamFails(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched", Attempts: 1}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 1}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -188,7 +188,7 @@ func TestWorkerDeadLetterOrderAcksOriginalWhenDeadStreamFails(t *testing.T) {
 func TestWorkerRejudgesClaimedRunningTaskWhenSubmissionIsNotTerminal(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "running", Attempts: 0}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "running", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusRunning, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -222,7 +222,7 @@ func TestWorkerRejudgesClaimedRunningTaskWhenSubmissionIsNotTerminal(t *testing.
 func TestWorkerRecordsJudgeTaskMetrics(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched"}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -250,7 +250,12 @@ func TestWorkerRecordsJudgeTaskMetrics(t *testing.T) {
 	}
 }
 
-func TestCreateRunJudgesCustomStdinImmediately(t *testing.T) {
+// TestCreateRunExecutesThroughRunNotJudge 钉住本模块最关键的一条界线：
+//
+// 一次 self-run 走的是 Run，不是 Judge。走 Judge 的话，判题引擎会把这次运行
+// 当成「用零个测试点判题」——而真实判题核正是因此从来不执行程序，只回一个
+// 空的 accepted。这个 bug 在线上活了很久，因为它看起来「成功」了。
+func TestCreateRunExecutesThroughRunNotJudge(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "42\n", TimeMS: 12, MemoryKB: 256})
@@ -261,19 +266,27 @@ func TestCreateRunJudgesCustomStdinImmediately(t *testing.T) {
 		Judge:         engine,
 	})
 
-	out, err := service.CreateRun(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main"), Stdin: "21 21\n"})
+	out, err := service.CreateRun(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main"), Stdin: "21 21\n"})
 	if err != nil {
 		t.Fatalf("CreateRun returned error: %v", err)
 	}
 	if out.Run.Status != StatusAccepted || out.Run.Stdout != "42\n" {
 		t.Fatalf("run = %+v", out.Run)
 	}
-	requests := engine.Requests()
-	if len(requests) != 1 {
-		t.Fatalf("judge request count = %d", len(requests))
+	if judging := engine.Requests(); len(judging) != 0 {
+		t.Fatalf("run produced %d judging requests, want 0: a self-run must not be judged", len(judging))
 	}
-	if requests[0].Stdin != "21 21\n" || len(requests[0].Testcases) != 0 {
-		t.Fatalf("request = %+v", requests[0])
+
+	runs := engine.RunRequests()
+	if len(runs) != 1 {
+		t.Fatalf("run request count = %d, want 1", len(runs))
+	}
+	if runs[0].Stdin != "21 21\n" {
+		t.Fatalf("run stdin = %q, want %q", runs[0].Stdin, "21 21\n")
+	}
+	// 语言默认内存上限必须传下去，否则沙箱拿不到限制。
+	if runs[0].MemoryKB != 262144 {
+		t.Fatalf("run memory limit = %d, want the language default 262144", runs[0].MemoryKB)
 	}
 }
 
@@ -311,7 +324,7 @@ func TestCreateRunReturnsRunningWhenShortWaitExpiresAndCompletesAsync(t *testing
 		RunTimeout:    time.Second,
 	})
 
-	out, err := service.CreateRun(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main"), Stdin: "21 21\n"})
+	out, err := service.CreateRun(context.Background(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main"), Stdin: "21 21\n"})
 	if err != nil {
 		t.Fatalf("CreateRun returned error: %v", err)
 	}
@@ -339,7 +352,7 @@ func TestCreateRunRejectsWhenExecutionCapacityIsExhausted(t *testing.T) {
 		RunTimeout:    time.Second,
 	})
 
-	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	if err != nil {
 		t.Fatalf("first CreateRun returned error: %v", err)
 	}
@@ -348,7 +361,7 @@ func TestCreateRunRejectsWhenExecutionCapacityIsExhausted(t *testing.T) {
 	}
 	engine.waitStarted(t)
 
-	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
 		t.Fatalf("second CreateRun error=%v, want service unavailable", err)
@@ -375,7 +388,7 @@ func TestHandlerCreateRunReturnsServiceUnavailableWhenExecutionCapacityIsExhaust
 		RunWait:       time.Millisecond,
 		RunTimeout:    time.Second,
 	})
-	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	if err != nil {
 		t.Fatalf("first CreateRun returned error: %v", err)
 	}
@@ -415,7 +428,7 @@ func TestServiceCloseCancelsActiveRunAndRejectsNewRuns(t *testing.T) {
 		RunTimeout:    time.Minute,
 	})
 
-	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	first, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	if err != nil {
 		t.Fatalf("first CreateRun returned error: %v", err)
 	}
@@ -431,7 +444,7 @@ func TestServiceCloseCancelsActiveRunAndRejectsNewRuns(t *testing.T) {
 	if completed.ErrorMessage == nil || *completed.ErrorMessage != context.Canceled.Error() {
 		t.Fatalf("completed error message=%v, want %q", completed.ErrorMessage, context.Canceled.Error())
 	}
-	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	_, err = service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
 		t.Fatalf("CreateRun after Close error=%v, want service unavailable", err)
@@ -455,7 +468,7 @@ func TestCreateRunRejectsWhenRunContextIsCanceled(t *testing.T) {
 	})
 
 	cancelRun()
-	_, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: 1, LanguageID: 71, Source: []byte("package main")})
+	_, err := service.CreateRun(t.Context(), auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{ProblemID: int64Ptr(1), LanguageID: 71, Source: []byte("package main")})
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.HTTPStatus != http.StatusServiceUnavailable {
 		t.Fatalf("CreateRun after run context cancellation error=%v, want service unavailable", err)
@@ -501,6 +514,16 @@ func newBlockingRunJudge() *blockingRunJudge {
 }
 
 func (e *blockingRunJudge) Judge(ctx context.Context, request judge.Request) (judge.Result, error) {
+	return e.block(ctx)
+}
+
+// Run blocks exactly like Judge: RunService drives runs through Run now, and the
+// capacity tests need the run to stay in flight.
+func (e *blockingRunJudge) Run(ctx context.Context, request judge.RunRequest) (judge.Result, error) {
+	return e.block(ctx)
+}
+
+func (e *blockingRunJudge) block(ctx context.Context) (judge.Result, error) {
 	select {
 	case e.started <- struct{}{}:
 	default:
@@ -533,8 +556,8 @@ func (e *blockingRunJudge) unblock() {
 func TestReconcilerResetsStaleJudgeTasks(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	repo := newMemoryRepo()
-	repo.tasks[1] = JudgeTaskRecord{ID: 1, SubmissionID: 11, Status: "dispatching"}
-	repo.tasks[2] = JudgeTaskRecord{ID: 2, SubmissionID: 12, Status: "running"}
+	repo.tasks[1] = JudgeTaskRecord{ID: 1, SubmissionID: int64Ptr(11), Status: "dispatching"}
+	repo.tasks[2] = JudgeTaskRecord{ID: 2, SubmissionID: int64Ptr(12), Status: "running"}
 	repo.submissions[12] = SubmissionRecord{ID: 12, Status: StatusRunning}
 	metrics := &recordingReconcilerMetrics{}
 	reconciler := NewReconciler(repo, &memoryQueue{}, taskMessageProcessorStub{}, func() time.Time { return now }, metrics)
@@ -595,7 +618,7 @@ func TestCreateSubmissionRollsBackSubmissionWhenTaskCreationFails(t *testing.T) 
 func TestWorkerDefaultRetryPolicyUsesFiveRetriesAndConfiguredBackoff(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched", Attempts: 4}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 4}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -625,7 +648,7 @@ func TestWorkerDefaultRetryPolicyUsesFiveRetriesAndConfiguredBackoff(t *testing.
 func TestWorkerRetryAndDeadLetterSynchronizeSubmissionStatus(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched", Attempts: 0}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -661,7 +684,7 @@ func TestWorkerRetryAndDeadLetterSynchronizeSubmissionStatus(t *testing.T) {
 func TestWorkerUsesSubmissionTestcaseSetSnapshot(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryRepo()
-	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: 9, Status: "dispatched"}
+	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
 	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
@@ -1190,7 +1213,7 @@ func TestHandlerSubmissionDetailIncludesAsyncOTelTraceIDForAdmin(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, LanguageID: 71, TestcaseSetID: 3, Status: StatusRunning}
 	attempt, err := repo.EnsureJudgeAttempt(context.Background(), EnsureJudgeAttemptInput{
-		SubmissionID:    1,
+		SubmissionID:    int64Ptr(1),
 		TaskID:          7,
 		LanguageID:      71,
 		ProtocolVersion: judgeevents.RequestEventType,

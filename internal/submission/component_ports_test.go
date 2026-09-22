@@ -28,7 +28,7 @@ func (s *submissionCreatorStoreStub) CreateSubmissionWithTask(_ context.Context,
 	s.nextID++
 	submission.ID = s.nextID
 	s.nextID++
-	return submission, JudgeTaskRecord{ID: s.nextID, SubmissionID: submission.ID, Status: "pending"}, nil
+	return submission, JudgeTaskRecord{ID: s.nextID, SubmissionID: int64Ptr(submission.ID), Status: "pending"}, nil
 }
 
 type submissionCreatorProblemReaderStub struct{}
@@ -43,9 +43,21 @@ func (sourceWriterStub) Put(context.Context, string, int64, []byte) (SourceObjec
 	return SourceObject{StorageKey: "source", ChecksumSHA256: "checksum", ContentType: "text/plain"}, nil
 }
 
+func (sourceWriterStub) Delete(context.Context, string) error {
+	return nil
+}
+
 type judgeRunnerStub struct{}
 
 func (judgeRunnerStub) Judge(context.Context, judge.Request) (judge.Result, error) {
+	return judge.Result{Verdict: judge.VerdictAccepted}, nil
+}
+
+// runExecutorStub implements Run and nothing else, which is the point of
+// TestRunServiceUsesOnlyRunStore: a run engine must not have to be a judge.
+type runExecutorStub struct{}
+
+func (runExecutorStub) Run(context.Context, judge.RunRequest) (judge.Result, error) {
 	return judge.Result{Verdict: judge.VerdictAccepted}, nil
 }
 
@@ -80,7 +92,7 @@ func TestSubmissionCreatorUsesOnlyCreationStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSubmission() error = %v", err)
 	}
-	if created.Submission.ID == 0 || created.Task.SubmissionID != created.Submission.ID || created.Submission.TestcaseSetID != 3 {
+	if created.Submission.ID == 0 || created.Task.SubmissionID == nil || *created.Task.SubmissionID != created.Submission.ID || created.Submission.TestcaseSetID != 3 {
 		t.Fatalf("CreateSubmission() = %+v", created)
 	}
 }
@@ -151,7 +163,8 @@ func (runStoreStub) CreateArtifact(_ context.Context, artifact ArtifactRecord) (
 	return artifact, nil
 }
 
-func (runStoreStub) CreateRun(_ context.Context, run RunRecord) (RunRecord, error) {
+func (runStoreStub) AdmitRun(_ context.Context, input AdmitRunInput) (RunRecord, error) {
+	run := input.Run
 	run.ID = 1
 	return run, nil
 }
@@ -164,12 +177,16 @@ func (runStoreStub) UpdateRunStatus(_ context.Context, id int64, _ judge.Result)
 	return RunRecord{ID: id}, nil
 }
 
+func (runStoreStub) DeleteArtifact(_ context.Context, _ int64) error {
+	return nil
+}
+
 func TestRunServiceUsesOnlyRunStore(t *testing.T) {
 	service := NewRunService(RunServiceOptions{
 		Store:         runStoreStub{},
 		ProblemReader: submissionCreatorProblemReaderStub{},
 		SourceStore:   sourceWriterStub{},
-		Judge:         judgeRunnerStub{},
+		Runner:        runExecutorStub{},
 	})
 
 	run, err := service.GetRun(t.Context(), auth.Actor{UserID: 7, Role: auth.RoleUser}, 1)

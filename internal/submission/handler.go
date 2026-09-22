@@ -267,7 +267,9 @@ func (h *Handler) GetSubmission(c *gin.Context) {
 }
 
 type createRunRequest struct {
-	ProblemID  int64  `json:"problem_id" binding:"required"`
+	// ProblemID is optional. Omitted means a playground run: source plus stdin,
+	// no problem attached. A pointer so "absent" is distinguishable from zero.
+	ProblemID  *int64 `json:"problem_id"`
 	LanguageID int64  `json:"language_id" binding:"required"`
 	SourceCode string `json:"source_code" binding:"required"`
 	Stdin      string `json:"stdin"`
@@ -515,9 +517,11 @@ func submissionResponses(views []SubmissionView) []submissionJSON {
 }
 
 type runJSON struct {
-	ID            int64      `json:"id"`
-	UserID        int64      `json:"user_id"`
-	ProblemID     int64      `json:"problem_id"`
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+	// Null for a playground run. Serialised explicitly (no omitempty) so the
+	// contract says "no problem" rather than leaving clients to infer it.
+	ProblemID     *int64     `json:"problem_id"`
 	LanguageID    int64      `json:"language_id"`
 	Status        string     `json:"status"`
 	Stdout        string     `json:"stdout,omitempty"`

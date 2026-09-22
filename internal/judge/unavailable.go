@@ -18,6 +18,14 @@ func (e *UnavailableEngine) Judge(ctx context.Context, request Request) (Result,
 	return Result{}, e.err()
 }
 
+// Run fails for the same reason Judge does: this endpoint does not execute
+// anything in this process. It is explicit rather than omitted so that a
+// misconfigured self-run surfaces as a system error naming the endpoint,
+// instead of silently returning an empty successful result.
+func (e *UnavailableEngine) Run(ctx context.Context, request RunRequest) (Result, error) {
+	return Result{}, e.err()
+}
+
 func (e *UnavailableEngine) Languages(ctx context.Context) ([]Language, error) {
 	return []Language{}, nil
 }

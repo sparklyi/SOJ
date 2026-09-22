@@ -14,6 +14,13 @@ const (
 	DeadLetterEventType = "judge.dead_letter.v1"
 )
 
+// Request priorities. The agent may use them to serve formal work first; they
+// exist so a playground flood never has to be expressed as a queue change.
+const (
+	PriorityFormal  = "formal"
+	PriorityScratch = "scratch"
+)
+
 type ArtifactRef struct {
 	ID          int64  `json:"id"`
 	StorageKey  string `json:"storage_key"`
@@ -49,11 +56,15 @@ type RequestEvent struct {
 	LanguageID      int64          `json:"language_id"`
 	LanguageSlug    string         `json:"language_slug,omitempty"`
 	SourceArtifact  ArtifactRef    `json:"source_artifact"`
-	TestcaseSet     TestcaseSetRef `json:"testcase_set"`
-	TimeoutMS       int64          `json:"timeout_ms,omitempty"`
-	MemoryKB        int64          `json:"memory_kb,omitempty"`
-	Priority        string         `json:"priority,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
+	TestcaseSet     TestcaseSetRef `json:"testcase_set,omitzero"`
+	// Stdin is the run's input. It is carried in the event rather than stored as
+	// an artifact: it is small, bounded, and the request is meaningless without
+	// it. Only a run sets it.
+	Stdin     string    `json:"stdin,omitempty"`
+	TimeoutMS int64     `json:"timeout_ms,omitempty"`
+	MemoryKB  int64     `json:"memory_kb,omitempty"`
+	Priority  string    `json:"priority,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (e RequestEvent) Validate() error {
@@ -84,17 +95,22 @@ func (e RequestEvent) Validate() error {
 	if e.SourceArtifact.ContentHash == "" {
 		return fmt.Errorf("source_artifact.content_hash is required")
 	}
-	if e.TestcaseSet.ID == 0 {
-		return fmt.Errorf("testcase_set.id is required")
-	}
-	if e.TestcaseSet.ChecksumSHA256 == "" {
-		return fmt.Errorf("testcase_set.checksum_sha256 is required")
-	}
-	if e.TestcaseSet.StorageKey == "" {
-		return fmt.Errorf("testcase_set.storage_key is required")
-	}
-	if e.TestcaseSet.CaseCount <= 0 {
-		return fmt.Errorf("testcase_set.case_count must be positive")
+	// A run executes source against stdin and judges nothing, so it has no
+	// testcase set to describe. Requiring one only of submissions keeps the
+	// "nothing to judge" case from being spelled as a zero-case testcase set.
+	if e.SubmissionID != 0 {
+		if e.TestcaseSet.ID == 0 {
+			return fmt.Errorf("testcase_set.id is required")
+		}
+		if e.TestcaseSet.ChecksumSHA256 == "" {
+			return fmt.Errorf("testcase_set.checksum_sha256 is required")
+		}
+		if e.TestcaseSet.StorageKey == "" {
+			return fmt.Errorf("testcase_set.storage_key is required")
+		}
+		if e.TestcaseSet.CaseCount <= 0 {
+			return fmt.Errorf("testcase_set.case_count must be positive")
+		}
 	}
 	return nil
 }

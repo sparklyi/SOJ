@@ -17,12 +17,20 @@ type Querier interface {
 	CancelPendingJudgeTaskForRejudge(ctx context.Context, arg CancelPendingJudgeTaskForRejudgeParams) (JudgeTask, error)
 	CancelQueuedRejudgeBatchItems(ctx context.Context, arg CancelQueuedRejudgeBatchItemsParams) ([]RejudgeBatchItem, error)
 	CancelRejudgeBatch(ctx context.Context, arg CancelRejudgeBatchParams) (RejudgeBatch, error)
+	// Submission tasks only. Runs are claimed by ClaimPendingRunTasks so they can
+	// be published to their own stream: playground traffic must not sit in front of
+	// formal submissions.
 	ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]JudgeTask, error)
+	ClaimPendingRunTasks(ctx context.Context, limit int32) ([]JudgeTask, error)
 	ClearCurrentProblemStatement(ctx context.Context, problemID int64) error
 	ClearCurrentTestcaseSet(ctx context.Context, problemID int64) error
 	ClearProblemTags(ctx context.Context, problemID int64) error
 	CompleteProblemCheckRun(ctx context.Context, arg CompleteProblemCheckRunParams) (ProblemCheckRun, error)
 	CompleteRejudgeBatch(ctx context.Context, arg CompleteRejudgeBatchParams) (RejudgeBatch, error)
+	// "Active" is what the per-user cap is about: a run the user is still waiting
+	// on. Counted in the database so the cap holds across API replicas, where an
+	// in-process counter would silently be N times the configured value.
+	CountActiveRunsByUser(ctx context.Context, userID int64) (int64, error)
 	CountContests(ctx context.Context, arg CountContestsParams) (int64, error)
 	CountLanguages(ctx context.Context, arg CountLanguagesParams) (int64, error)
 	CountProblems(ctx context.Context, arg CountProblemsParams) (int64, error)
@@ -39,6 +47,8 @@ type Querier interface {
 	CreateContestScoreSnapshotRow(ctx context.Context, arg CreateContestScoreSnapshotRowParams) (ContestScoreSnapshotRow, error)
 	CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttemptParams) (JudgeAttempt, error)
 	CreateJudgeCaseResult(ctx context.Context, arg CreateJudgeCaseResultParams) (JudgeCaseResult, error)
+	// Exactly one subject per task; the table CHECK enforces it. A run task and a
+	// submission task share the whole lifecycle, which is why they share the table.
 	CreateJudgeTask(ctx context.Context, arg CreateJudgeTaskParams) (JudgeTask, error)
 	// Owner: WP3 Problem/Storage
 	CreateProblem(ctx context.Context, arg CreateProblemParams) (Problem, error)
@@ -51,12 +61,16 @@ type Querier interface {
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	CreateRejudgeBatch(ctx context.Context, arg CreateRejudgeBatchParams) (RejudgeBatch, error)
 	CreateRejudgeBatchItem(ctx context.Context, arg CreateRejudgeBatchItemParams) (RejudgeBatchItem, error)
+	// problem_id is optional: a run attached to a problem validates the problem
+	// first, a playground run passes nothing and skips that check entirely.
 	CreateRun(ctx context.Context, arg CreateRunParams) (Run, error)
 	CreateSubmission(ctx context.Context, arg CreateSubmissionParams) (Submission, error)
 	CreateTestcaseSet(ctx context.Context, arg CreateTestcaseSetParams) (TestcaseSet, error)
 	// Owner: WP2 Auth/User
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteArtifactByID(ctx context.Context, id int64) error
 	DeleteContestProblems(ctx context.Context, contestID int64) error
+	DeleteRunByID(ctx context.Context, id int64) error
 	EnsureContestProblemResultProjection(ctx context.Context, arg EnsureContestProblemResultProjectionParams) error
 	FailActiveRejudgeBatchItemByTaskID(ctx context.Context, arg FailActiveRejudgeBatchItemByTaskIDParams) (RejudgeBatchItem, error)
 	FailProblemCheckRun(ctx context.Context, arg FailProblemCheckRunParams) (ProblemCheckRun, error)
@@ -71,7 +85,8 @@ type Querier interface {
 	GetEnabledLanguageByID(ctx context.Context, id int64) (Language, error)
 	GetJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttempt, error)
 	GetJudgeTaskByID(ctx context.Context, id int64) (JudgeTask, error)
-	GetJudgeTaskBySubmissionID(ctx context.Context, submissionID int64) (JudgeTask, error)
+	GetJudgeTaskByRunID(ctx context.Context, runID pgtype.Int8) (JudgeTask, error)
+	GetJudgeTaskBySubmissionID(ctx context.Context, submissionID pgtype.Int8) (JudgeTask, error)
 	GetLanguageByID(ctx context.Context, id int64) (Language, error)
 	GetLatestCompletedProblemCheckRun(ctx context.Context, arg GetLatestCompletedProblemCheckRunParams) (ProblemCheckRun, error)
 	GetLatestContestScoreSnapshot(ctx context.Context, arg GetLatestContestScoreSnapshotParams) (ContestScoreSnapshot, error)
@@ -104,11 +119,33 @@ type Querier interface {
 	ListContests(ctx context.Context, arg ListContestsParams) ([]Contest, error)
 	ListEligibleContestSubmissionsForRejudge(ctx context.Context, contestID pgtype.Int8) ([]Submission, error)
 	ListEligibleProblemSubmissionsForRejudge(ctx context.Context, problemID int64) ([]Submission, error)
+	// Self-runs past the retention window, with the storage key of the object that
+	// has to be removed before the row.
+	//
+	// Terminal status only. A run that never finished is MarkStaleRunsSystemError's
+	// business; deleting something that might still be executing would be
+	// indefensible, and that sweep has already terminated anything older than half
+	// an hour anyway.
+	//
+	// LEFT JOIN so a run whose artifact is already gone is still deleted. An inner
+	// join would hide exactly the rows that most need removing.
+	ListExpiredRuns(ctx context.Context, arg ListExpiredRunsParams) ([]ListExpiredRunsRow, error)
 	ListJudgeAttemptsByRejudgeBatch(ctx context.Context, rejudgeBatchID pgtype.Int8) ([]JudgeAttempt, error)
 	ListJudgeAttemptsBySubmissionID(ctx context.Context, submissionID pgtype.Int8) ([]JudgeAttempt, error)
 	ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID int64) ([]JudgeCaseResult, error)
 	ListLanguages(ctx context.Context, arg ListLanguagesParams) ([]Language, error)
 	ListLatestJudgeAttemptsBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]JudgeAttempt, error)
+	// Run source objects that no run points at.
+	//
+	// These are left by a run whose source was uploaded and whose admission was then
+	// refused, or whose process died in between: the object is written before the
+	// decision is made, so the decision is the only place that can undo it, and a
+	// crash has no place at all. Without this sweep such an object is invisible to
+	// every other query in the system and stays forever.
+	//
+	// Scoped to owner_type = 'run' and kind = 'source' so a submission's source,
+	// which is kept for rejudge, can never be picked up.
+	ListOrphanedRunArtifacts(ctx context.Context, arg ListOrphanedRunArtifactsParams) ([]ListOrphanedRunArtifactsRow, error)
 	ListProblemCheckFindingsByRunID(ctx context.Context, runID int64) ([]ProblemCheckFinding, error)
 	ListProblemCheckRunsByProblemID(ctx context.Context, arg ListProblemCheckRunsByProblemIDParams) ([]ProblemCheckRun, error)
 	ListProblemReviewEvents(ctx context.Context, problemID int64) ([]ProblemReviewEvent, error)
@@ -127,12 +164,16 @@ type Querier interface {
 	LockJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttempt, error)
 	LockJudgeTaskByID(ctx context.Context, id int64) (JudgeTask, error)
 	LockProblemForUpdate(ctx context.Context, id int64) (LockProblemForUpdateRow, error)
+	LockRunByID(ctx context.Context, id int64) (Run, error)
 	LockSubmissionByID(ctx context.Context, id int64) (Submission, error)
+	// Serialises run admission per user so the count above cannot race an insert.
+	LockUserForRunAdmission(ctx context.Context, id int64) (int64, error)
 	MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAttemptFinishedParams) (JudgeAttempt, error)
 	MarkJudgeTaskDead(ctx context.Context, arg MarkJudgeTaskDeadParams) (JudgeTask, error)
 	MarkJudgeTaskDispatched(ctx context.Context, arg MarkJudgeTaskDispatchedParams) (JudgeTask, error)
 	MarkJudgeTaskDone(ctx context.Context, id int64) (JudgeTask, error)
 	MarkJudgeTaskRunning(ctx context.Context, id int64) (JudgeTask, error)
+	MarkRunRunning(ctx context.Context, id int64) (Run, error)
 	MarkStaleRunsSystemError(ctx context.Context, arg MarkStaleRunsSystemErrorParams) ([]Run, error)
 	MarkSubmissionQueued(ctx context.Context, arg MarkSubmissionQueuedParams) (Submission, error)
 	MarkSubmissionRunning(ctx context.Context, id int64) (Submission, error)

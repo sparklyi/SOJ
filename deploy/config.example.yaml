@@ -30,6 +30,7 @@ judge:
   timeout: "30s"
   cleanup_timeout: "5s"
   run_parallelism: 1
+  run_per_user: 2
 
 auth:
   jwt_secret: "replace-with-env-secret"

@@ -29,7 +29,21 @@ const (
 	defaultRunShortWait       = 3 * time.Second
 	defaultRunTimeout         = 2 * time.Minute
 	defaultRunParallelism     = 1
+	defaultRunPerUser         = 2
 	defaultRunFinalizeTimeout = 5 * time.Second
+	// defaultRunStdinMaxBytes bounds the stdin a run may carry. It is stored in
+	// runs.stdin and put on the request event, so an unbounded value is both a
+	// database and a queue-payload problem.
+	defaultRunStdinMaxBytes = 64 << 10
+	// runAwaitPollInterval is how often CreateRun re-reads the run row while
+	// waiting for it to finish. The row is small and read by primary key.
+	runAwaitPollInterval = 25 * time.Millisecond
+	// defaultRunRetentionBatch bounds how many runs one sweep removes, so a large
+	// backlog drains over several sweeps instead of one long transaction.
+	defaultRunRetentionBatch = 200
+	// defaultRunRetentionInterval is how often expired runs are swept when the
+	// deployment does not say otherwise.
+	defaultRunRetentionInterval = 10 * time.Minute
 )
 
 type SourceObject struct {
@@ -56,6 +70,13 @@ func (s *MemorySourceStore) Put(_ context.Context, ownerType string, ownerID int
 	defer s.mu.Unlock()
 	s.objects[key] = append([]byte(nil), source...)
 	return SourceObject{StorageKey: key, ChecksumSHA256: checksum, SizeBytes: int64(len(source)), ContentType: "text/plain; charset=utf-8"}, nil
+}
+
+func (s *MemorySourceStore) Delete(_ context.Context, storageKey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.objects, storageKey)
+	return nil
 }
 
 func (s *MemorySourceStore) Get(_ context.Context, storageKey string) ([]byte, error) {
@@ -130,7 +151,10 @@ type CreateSubmissionOutput struct {
 }
 
 type CreateRunInput struct {
-	ProblemID  int64
+	// ProblemID is nil for a playground run: scratch source plus stdin, with no
+	// problem attached. A non-nil value means the run is attributed to that
+	// problem and the problem must be ready for judging.
+	ProblemID  *int64
 	LanguageID int64
 	Source     []byte
 	Stdin      string

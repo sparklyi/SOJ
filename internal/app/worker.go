@@ -94,11 +94,30 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := resultQueue.Ensure(ctx); err != nil {
 		return err
 	}
+	// Self-runs are published to their own stream. The worker is the only
+	// publisher of both, so the split costs one extra queue and keeps playground
+	// traffic out of the submission backlog.
+	//
+	// Ensure also creates the consumer group the agent will read from, which is
+	// load-bearing rather than incidental: it is what guarantees the group exists
+	// before the first run is published, so no run can be published into a stream
+	// nobody is positioned to read.
+	runQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
+		Stream:     judgeRunStream(cfg),
+		Group:      judgeRunGroup(),
+		Consumer:   workerConsumerName(),
+		MaxLen:     cfg.Redis.StreamMaxLen,
+		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
+	})
+	if err := runQueue.Ensure(ctx); err != nil {
+		return err
+	}
 	judgeEngine := newJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	dispatcher := submission.NewTaskDispatcher(submission.TaskDispatcherOptions{
 		Store:            submissionRepo,
 		Queue:            taskQueue,
+		RunQueue:         runQueue,
 		TestcaseResolver: testcaseResolver,
 		Metrics:          metrics,
 	})
@@ -116,18 +135,26 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	worker := submission.NewWorker(dispatcher, processor, taskQueue)
 	resultConsumer := submission.NewResultConsumer(submissionRepo)
 	reconciler := submission.NewReconciler(submissionRepo, taskQueue, worker, nil, metrics)
+	retention := submission.NewRunRetention(submission.RunRetentionOptions{
+		Store:    submissionRepo,
+		Objects:  objectStore,
+		Age:      time.Duration(cfg.Retention.RunDays) * 24 * time.Hour,
+		Interval: cfg.Retention.RunInterval,
+		Batch:    cfg.Retention.RunBatch,
+		Metrics:  metrics,
+	})
 	contestRepo := contest.NewPostgresRepository(pool)
 	contestReader := contest.NewContestReader(contestRepo, time.Now)
 	scoreboardService := contest.NewScoreboardService(contestReader, contestRepo)
 
-	readiness := newWorkerReadiness(pool.Ping, taskQueue, resultQueue, objectStore, metrics)
+	readiness := newWorkerReadiness(pool.Ping, taskQueue, runQueue, resultQueue, objectStore, metrics)
 	router := httpapi.NewRouter(httpapi.RouterOptions{
 		Metrics:        metrics,
 		ReadyCheck:     readiness.Check,
 		TracingEnabled: tracing.Enabled(),
 		TracingService: tracing.ServiceName(),
 	})
-	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"))
+	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "run_stream", judgeRunStream(cfg), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"), "run_retention_days", cfg.Retention.RunDays, "run_retention_interval", cfg.Retention.RunInterval)
 
 	server := &http.Server{
 		Addr:         cfg.Worker.HealthAddr,
@@ -142,7 +169,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block)
+		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, retention, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block)
 	}()
 
 	err = <-errCh
@@ -166,8 +193,16 @@ type scoreSnapshotGenerator interface {
 	GenerateDueScoreSnapshots(context.Context, int32) (contest.ScoreSnapshotGenerationResult, error)
 }
 
-func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration) error {
-	errCh := make(chan error, 3)
+// runRetentionSweeper is the destructive maintenance half of the worker: it
+// removes finished self-runs and the objects they left behind.
+type runRetentionSweeper interface {
+	Enabled() bool
+	Interval() time.Duration
+	Sweep(context.Context) (submission.RunRetentionResult, error)
+}
+
+func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, retention runRetentionSweeper, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration) error {
+	errCh := make(chan error, 4)
 	go func() {
 		errCh <- runDispatchLoop(ctx, worker, requestQueue, batchSize, dispatchInterval(block), metrics)
 	}()
@@ -177,6 +212,11 @@ func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsum
 	go func() {
 		errCh <- runReconcilerLoop(ctx, reconciler, snapshots)
 	}()
+	if retention != nil && retention.Enabled() {
+		go func() {
+			errCh <- runRunRetentionLoop(ctx, retention, metrics)
+		}()
+	}
 	err := <-errCh
 	if err == context.Canceled || err == context.DeadlineExceeded {
 		return nil
@@ -309,6 +349,36 @@ func runReconcilerLoop(ctx context.Context, reconciler workerReconciler, snapsho
 				return err
 			}
 		}
+		span.End()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// runRunRetentionLoop sweeps expired self-runs on its own cadence.
+//
+// It is separate from the reconciler loop on purpose. That loop runs every 30
+// seconds and only ever moves state forward; this one deletes data, so its
+// cadence should be a deliberate choice and it should be switchable off without
+// touching anything else.
+func runRunRetentionLoop(ctx context.Context, retention runRetentionSweeper, metrics workerLoopMetrics) error {
+	ticker := time.NewTicker(retention.Interval())
+	defer ticker.Stop()
+	for {
+		loopCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.run_retention")
+		result, err := retention.Sweep(loopCtx)
+		if err != nil {
+			span.SetStatus(codes.Error, "run_retention_error")
+			span.End()
+			return err
+		}
+		span.SetAttributes(
+			attribute.Int("soj.run_retention.deleted", result.Deleted),
+			attribute.Int("soj.run_retention.failed", result.Failed),
+		)
 		span.End()
 		select {
 		case <-ctx.Done():

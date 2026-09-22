@@ -19,7 +19,7 @@ SET status = 'done',
     updated_at = now()
 WHERE id = $2
   AND status = 'pending'
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 type CancelPendingJudgeTaskForRejudgeParams struct {
@@ -40,6 +40,7 @@ func (q *Queries) CancelPendingJudgeTaskForRejudge(ctx context.Context, arg Canc
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -146,6 +147,7 @@ WITH claimed AS (
     FROM judge_tasks
     WHERE status = 'pending'
       AND next_run_at <= now()
+      AND submission_id IS NOT NULL
     ORDER BY next_run_at, id
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -156,9 +158,12 @@ SET status = 'dispatching',
 FROM claimed
 WHERE judge_tasks.id = claimed.id
   AND judge_tasks.status = 'pending'
-RETURNING judge_tasks.id, judge_tasks.submission_id, judge_tasks.stream_id, judge_tasks.status, judge_tasks.attempts, judge_tasks.next_run_at, judge_tasks.last_error, judge_tasks.created_at, judge_tasks.updated_at
+RETURNING judge_tasks.id, judge_tasks.submission_id, judge_tasks.stream_id, judge_tasks.status, judge_tasks.attempts, judge_tasks.next_run_at, judge_tasks.last_error, judge_tasks.created_at, judge_tasks.updated_at, judge_tasks.run_id
 `
 
+// Submission tasks only. Runs are claimed by ClaimPendingRunTasks so they can
+// be published to their own stream: playground traffic must not sit in front of
+// formal submissions.
 func (q *Queries) ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]JudgeTask, error) {
 	rows, err := q.db.Query(ctx, claimPendingJudgeTasks, limit)
 	if err != nil {
@@ -178,6 +183,58 @@ func (q *Queries) ClaimPendingJudgeTasks(ctx context.Context, limit int32) ([]Ju
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RunID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimPendingRunTasks = `-- name: ClaimPendingRunTasks :many
+WITH claimed AS (
+    SELECT id
+    FROM judge_tasks
+    WHERE status = 'pending'
+      AND next_run_at <= now()
+      AND run_id IS NOT NULL
+    ORDER BY next_run_at, id
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE judge_tasks
+SET status = 'dispatching',
+    updated_at = now()
+FROM claimed
+WHERE judge_tasks.id = claimed.id
+  AND judge_tasks.status = 'pending'
+RETURNING judge_tasks.id, judge_tasks.submission_id, judge_tasks.stream_id, judge_tasks.status, judge_tasks.attempts, judge_tasks.next_run_at, judge_tasks.last_error, judge_tasks.created_at, judge_tasks.updated_at, judge_tasks.run_id
+`
+
+func (q *Queries) ClaimPendingRunTasks(ctx context.Context, limit int32) ([]JudgeTask, error) {
+	rows, err := q.db.Query(ctx, claimPendingRunTasks, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JudgeTask
+	for rows.Next() {
+		var i JudgeTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.SubmissionID,
+			&i.StreamID,
+			&i.Status,
+			&i.Attempts,
+			&i.NextRunAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RunID,
 		); err != nil {
 			return nil, err
 		}
@@ -240,6 +297,23 @@ func (q *Queries) CompleteRejudgeBatch(ctx context.Context, arg CompleteRejudgeB
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const countActiveRunsByUser = `-- name: CountActiveRunsByUser :one
+SELECT count(*)::bigint
+FROM runs
+WHERE user_id = $1
+  AND status IN ('queued', 'running')
+`
+
+// "Active" is what the per-user cap is about: a run the user is still waiting
+// on. Counted in the database so the cap holds across API replicas, where an
+// in-process counter would silently be N times the configured value.
+func (q *Queries) CountActiveRunsByUser(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveRunsByUser, userID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countRejudgeBatches = `-- name: CountRejudgeBatches :one
@@ -641,22 +715,33 @@ func (q *Queries) CreateJudgeCaseResult(ctx context.Context, arg CreateJudgeCase
 const createJudgeTask = `-- name: CreateJudgeTask :one
 INSERT INTO judge_tasks (
     submission_id,
+    run_id,
     status,
     next_run_at
 ) VALUES (
-    $1, $2, $3
+    $3,
+    $4,
+    $1, $2
 )
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 type CreateJudgeTaskParams struct {
-	SubmissionID int64              `db:"submission_id" json:"submission_id"`
 	Status       string             `db:"status" json:"status"`
 	NextRunAt    pgtype.Timestamptz `db:"next_run_at" json:"next_run_at"`
+	SubmissionID pgtype.Int8        `db:"submission_id" json:"submission_id"`
+	RunID        pgtype.Int8        `db:"run_id" json:"run_id"`
 }
 
+// Exactly one subject per task; the table CHECK enforces it. A run task and a
+// submission task share the whole lifecycle, which is why they share the table.
 func (q *Queries) CreateJudgeTask(ctx context.Context, arg CreateJudgeTaskParams) (JudgeTask, error) {
-	row := q.db.QueryRow(ctx, createJudgeTask, arg.SubmissionID, arg.Status, arg.NextRunAt)
+	row := q.db.QueryRow(ctx, createJudgeTask,
+		arg.Status,
+		arg.NextRunAt,
+		arg.SubmissionID,
+		arg.RunID,
+	)
 	var i JudgeTask
 	err := row.Scan(
 		&i.ID,
@@ -668,6 +753,7 @@ func (q *Queries) CreateJudgeTask(ctx context.Context, arg CreateJudgeTaskParams
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -781,20 +867,27 @@ INSERT INTO runs (
     source_artifact_id,
     stdin
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6
 )
 RETURNING id, user_id, problem_id, language_id, status, source_artifact_id, stdin, stdout, stderr, compile_output, time_ms, memory_kb, error_message, created_at, finished_at, updated_at
 `
 
 type CreateRunParams struct {
 	UserID           int64       `db:"user_id" json:"user_id"`
-	ProblemID        int64       `db:"problem_id" json:"problem_id"`
+	ProblemID        pgtype.Int8 `db:"problem_id" json:"problem_id"`
 	LanguageID       int64       `db:"language_id" json:"language_id"`
 	Status           string      `db:"status" json:"status"`
 	SourceArtifactID pgtype.Int8 `db:"source_artifact_id" json:"source_artifact_id"`
 	Stdin            pgtype.Text `db:"stdin" json:"stdin"`
 }
 
+// problem_id is optional: a run attached to a problem validates the problem
+// first, a playground run passes nothing and skips that check entirely.
 func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, error) {
 	row := q.db.QueryRow(ctx, createRun,
 		arg.UserID,
@@ -881,6 +974,26 @@ func (q *Queries) CreateSubmission(ctx context.Context, arg CreateSubmissionPara
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deleteArtifactByID = `-- name: DeleteArtifactByID :exec
+DELETE FROM artifacts
+WHERE id = $1
+`
+
+func (q *Queries) DeleteArtifactByID(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteArtifactByID, id)
+	return err
+}
+
+const deleteRunByID = `-- name: DeleteRunByID :exec
+DELETE FROM runs
+WHERE id = $1
+`
+
+func (q *Queries) DeleteRunByID(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteRunByID, id)
+	return err
 }
 
 const ensureContestProblemResultProjection = `-- name: EnsureContestProblemResultProjection :exec
@@ -1114,7 +1227,7 @@ func (q *Queries) GetJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttem
 }
 
 const getJudgeTaskByID = `-- name: GetJudgeTaskByID :one
-SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 FROM judge_tasks
 WHERE id = $1
 `
@@ -1132,17 +1245,42 @@ func (q *Queries) GetJudgeTaskByID(ctx context.Context, id int64) (JudgeTask, er
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
+	)
+	return i, err
+}
+
+const getJudgeTaskByRunID = `-- name: GetJudgeTaskByRunID :one
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
+FROM judge_tasks
+WHERE run_id = $1
+`
+
+func (q *Queries) GetJudgeTaskByRunID(ctx context.Context, runID pgtype.Int8) (JudgeTask, error) {
+	row := q.db.QueryRow(ctx, getJudgeTaskByRunID, runID)
+	var i JudgeTask
+	err := row.Scan(
+		&i.ID,
+		&i.SubmissionID,
+		&i.StreamID,
+		&i.Status,
+		&i.Attempts,
+		&i.NextRunAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
 
 const getJudgeTaskBySubmissionID = `-- name: GetJudgeTaskBySubmissionID :one
-SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 FROM judge_tasks
 WHERE submission_id = $1
 `
 
-func (q *Queries) GetJudgeTaskBySubmissionID(ctx context.Context, submissionID int64) (JudgeTask, error) {
+func (q *Queries) GetJudgeTaskBySubmissionID(ctx context.Context, submissionID pgtype.Int8) (JudgeTask, error) {
 	row := q.db.QueryRow(ctx, getJudgeTaskBySubmissionID, submissionID)
 	var i JudgeTask
 	err := row.Scan(
@@ -1155,6 +1293,7 @@ func (q *Queries) GetJudgeTaskBySubmissionID(ctx context.Context, submissionID i
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -1585,6 +1724,60 @@ func (q *Queries) ListEligibleProblemSubmissionsForRejudge(ctx context.Context, 
 	return items, nil
 }
 
+const listExpiredRuns = `-- name: ListExpiredRuns :many
+SELECT
+    runs.id,
+    runs.source_artifact_id,
+    artifacts.storage_key
+FROM runs
+LEFT JOIN artifacts ON artifacts.id = runs.source_artifact_id
+WHERE runs.status NOT IN ('queued', 'running')
+  AND runs.created_at < $1
+ORDER BY runs.created_at, runs.id
+LIMIT $2
+`
+
+type ListExpiredRunsParams struct {
+	CreatedBefore pgtype.Timestamptz `db:"created_before" json:"created_before"`
+	Limit         int32              `db:"limit" json:"limit"`
+}
+
+type ListExpiredRunsRow struct {
+	ID               int64       `db:"id" json:"id"`
+	SourceArtifactID pgtype.Int8 `db:"source_artifact_id" json:"source_artifact_id"`
+	StorageKey       pgtype.Text `db:"storage_key" json:"storage_key"`
+}
+
+// Self-runs past the retention window, with the storage key of the object that
+// has to be removed before the row.
+//
+// Terminal status only. A run that never finished is MarkStaleRunsSystemError's
+// business; deleting something that might still be executing would be
+// indefensible, and that sweep has already terminated anything older than half
+// an hour anyway.
+//
+// LEFT JOIN so a run whose artifact is already gone is still deleted. An inner
+// join would hide exactly the rows that most need removing.
+func (q *Queries) ListExpiredRuns(ctx context.Context, arg ListExpiredRunsParams) ([]ListExpiredRunsRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredRuns, arg.CreatedBefore, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredRunsRow
+	for rows.Next() {
+		var i ListExpiredRunsRow
+		if err := rows.Scan(&i.ID, &i.SourceArtifactID, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listJudgeAttemptsByRejudgeBatch = `-- name: ListJudgeAttemptsByRejudgeBatch :many
 SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
@@ -1815,6 +2008,58 @@ func (q *Queries) ListLatestJudgeAttemptsBySubmissionIDs(ctx context.Context, su
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrphanedRunArtifacts = `-- name: ListOrphanedRunArtifacts :many
+SELECT artifacts.id, artifacts.storage_key
+FROM artifacts
+LEFT JOIN runs ON runs.source_artifact_id = artifacts.id
+WHERE artifacts.owner_type = 'run'
+  AND artifacts.kind = 'source'
+  AND artifacts.created_at < $1
+  AND runs.id IS NULL
+ORDER BY artifacts.created_at, artifacts.id
+LIMIT $2
+`
+
+type ListOrphanedRunArtifactsParams struct {
+	CreatedBefore pgtype.Timestamptz `db:"created_before" json:"created_before"`
+	Limit         int32              `db:"limit" json:"limit"`
+}
+
+type ListOrphanedRunArtifactsRow struct {
+	ID         int64  `db:"id" json:"id"`
+	StorageKey string `db:"storage_key" json:"storage_key"`
+}
+
+// Run source objects that no run points at.
+//
+// These are left by a run whose source was uploaded and whose admission was then
+// refused, or whose process died in between: the object is written before the
+// decision is made, so the decision is the only place that can undo it, and a
+// crash has no place at all. Without this sweep such an object is invisible to
+// every other query in the system and stays forever.
+//
+// Scoped to owner_type = 'run' and kind = 'source' so a submission's source,
+// which is kept for rejudge, can never be picked up.
+func (q *Queries) ListOrphanedRunArtifacts(ctx context.Context, arg ListOrphanedRunArtifactsParams) ([]ListOrphanedRunArtifactsRow, error) {
+	rows, err := q.db.Query(ctx, listOrphanedRunArtifacts, arg.CreatedBefore, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrphanedRunArtifactsRow
+	for rows.Next() {
+		var i ListOrphanedRunArtifactsRow
+		if err := rows.Scan(&i.ID, &i.StorageKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2180,7 +2425,7 @@ func (q *Queries) LockJudgeAttemptByID(ctx context.Context, id int64) (JudgeAtte
 }
 
 const lockJudgeTaskByID = `-- name: LockJudgeTaskByID :one
-SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 FROM judge_tasks
 WHERE id = $1
 FOR UPDATE
@@ -2198,6 +2443,38 @@ func (q *Queries) LockJudgeTaskByID(ctx context.Context, id int64) (JudgeTask, e
 		&i.NextRunAt,
 		&i.LastError,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RunID,
+	)
+	return i, err
+}
+
+const lockRunByID = `-- name: LockRunByID :one
+SELECT id, user_id, problem_id, language_id, status, source_artifact_id, stdin, stdout, stderr, compile_output, time_ms, memory_kb, error_message, created_at, finished_at, updated_at
+FROM runs
+WHERE id = $1
+FOR UPDATE
+`
+
+func (q *Queries) LockRunByID(ctx context.Context, id int64) (Run, error) {
+	row := q.db.QueryRow(ctx, lockRunByID, id)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ProblemID,
+		&i.LanguageID,
+		&i.Status,
+		&i.SourceArtifactID,
+		&i.Stdin,
+		&i.Stdout,
+		&i.Stderr,
+		&i.CompileOutput,
+		&i.TimeMs,
+		&i.MemoryKb,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.FinishedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -2232,6 +2509,20 @@ func (q *Queries) LockSubmissionByID(ctx context.Context, id int64) (Submission,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const lockUserForRunAdmission = `-- name: LockUserForRunAdmission :one
+SELECT id
+FROM users
+WHERE id = $1
+FOR UPDATE
+`
+
+// Serialises run admission per user so the count above cannot race an insert.
+func (q *Queries) LockUserForRunAdmission(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, lockUserForRunAdmission, id)
+	err := row.Scan(&id)
+	return id, err
 }
 
 const markJudgeAttemptFinished = `-- name: MarkJudgeAttemptFinished :one
@@ -2347,7 +2638,7 @@ SET status = 'dead',
     updated_at = now()
 WHERE id = $1
   AND status IN ('dispatching', 'dispatched', 'running')
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 type MarkJudgeTaskDeadParams struct {
@@ -2368,6 +2659,7 @@ func (q *Queries) MarkJudgeTaskDead(ctx context.Context, arg MarkJudgeTaskDeadPa
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -2382,7 +2674,7 @@ SET status = CASE
     updated_at = now()
 WHERE id = $1
   AND status IN ('dispatching', 'running', 'done')
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 type MarkJudgeTaskDispatchedParams struct {
@@ -2403,6 +2695,7 @@ func (q *Queries) MarkJudgeTaskDispatched(ctx context.Context, arg MarkJudgeTask
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -2413,7 +2706,7 @@ SET status = 'done',
     updated_at = now()
 WHERE id = $1
   AND status IN ('dispatching', 'dispatched', 'running')
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 func (q *Queries) MarkJudgeTaskDone(ctx context.Context, id int64) (JudgeTask, error) {
@@ -2429,6 +2722,7 @@ func (q *Queries) MarkJudgeTaskDone(ctx context.Context, id int64) (JudgeTask, e
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -2439,7 +2733,7 @@ SET status = 'running',
     updated_at = now()
 WHERE id = $1
   AND status IN ('dispatching', 'dispatched', 'running')
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 func (q *Queries) MarkJudgeTaskRunning(ctx context.Context, id int64) (JudgeTask, error) {
@@ -2454,6 +2748,40 @@ func (q *Queries) MarkJudgeTaskRunning(ctx context.Context, id int64) (JudgeTask
 		&i.NextRunAt,
 		&i.LastError,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RunID,
+	)
+	return i, err
+}
+
+const markRunRunning = `-- name: MarkRunRunning :one
+UPDATE runs
+SET status = 'running',
+    updated_at = now()
+WHERE id = $1
+  AND status = 'queued'
+RETURNING id, user_id, problem_id, language_id, status, source_artifact_id, stdin, stdout, stderr, compile_output, time_ms, memory_kb, error_message, created_at, finished_at, updated_at
+`
+
+func (q *Queries) MarkRunRunning(ctx context.Context, id int64) (Run, error) {
+	row := q.db.QueryRow(ctx, markRunRunning, id)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ProblemID,
+		&i.LanguageID,
+		&i.Status,
+		&i.SourceArtifactID,
+		&i.Stdin,
+		&i.Stdout,
+		&i.Stderr,
+		&i.CompileOutput,
+		&i.TimeMs,
+		&i.MemoryKb,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.FinishedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -2636,13 +2964,13 @@ SET status = 'pending',
 WHERE id = $2
   AND submission_id = $3
   AND status IN ('done', 'dead')
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 type PrepareJudgeTaskForRejudgeParams struct {
 	NextRunAt    pgtype.Timestamptz `db:"next_run_at" json:"next_run_at"`
 	ID           int64              `db:"id" json:"id"`
-	SubmissionID int64              `db:"submission_id" json:"submission_id"`
+	SubmissionID pgtype.Int8        `db:"submission_id" json:"submission_id"`
 }
 
 func (q *Queries) PrepareJudgeTaskForRejudge(ctx context.Context, arg PrepareJudgeTaskForRejudgeParams) (JudgeTask, error) {
@@ -2658,6 +2986,7 @@ func (q *Queries) PrepareJudgeTaskForRejudge(ctx context.Context, arg PrepareJud
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -2716,7 +3045,7 @@ WITH recovered AS (
           WHERE submissions.id = judge_tasks.submission_id
             AND submissions.status = 'system_error'
       )
-    RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+    RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 ), recovered_submissions AS (
     UPDATE submissions
     SET status = 'queued',
@@ -2727,7 +3056,7 @@ WITH recovered AS (
     WHERE submissions.id = recovered.submission_id
     RETURNING submissions.id
 )
-SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 FROM recovered
 `
 
@@ -2739,7 +3068,7 @@ type RecoverDeadJudgeTaskParams struct {
 
 type RecoverDeadJudgeTaskRow struct {
 	ID           int64              `db:"id" json:"id"`
-	SubmissionID int64              `db:"submission_id" json:"submission_id"`
+	SubmissionID pgtype.Int8        `db:"submission_id" json:"submission_id"`
 	StreamID     pgtype.Text        `db:"stream_id" json:"stream_id"`
 	Status       string             `db:"status" json:"status"`
 	Attempts     int32              `db:"attempts" json:"attempts"`
@@ -2747,6 +3076,7 @@ type RecoverDeadJudgeTaskRow struct {
 	LastError    pgtype.Text        `db:"last_error" json:"last_error"`
 	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	RunID        pgtype.Int8        `db:"run_id" json:"run_id"`
 }
 
 func (q *Queries) RecoverDeadJudgeTask(ctx context.Context, arg RecoverDeadJudgeTaskParams) (RecoverDeadJudgeTaskRow, error) {
@@ -2762,6 +3092,7 @@ func (q *Queries) RecoverDeadJudgeTask(ctx context.Context, arg RecoverDeadJudge
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -2836,7 +3167,7 @@ WITH reset_tasks AS (
           WHERE submissions.id = judge_tasks.submission_id
             AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
       )
-    RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+    RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 ), reset_submissions AS (
     UPDATE submissions
     SET status = 'queued',
@@ -2847,7 +3178,7 @@ WITH reset_tasks AS (
       AND submissions.status = 'running'
     RETURNING submissions.id
 )
-SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 FROM reset_tasks
 ORDER BY id
 `
@@ -2859,7 +3190,7 @@ type ResetStaleJudgeTasksParams struct {
 
 type ResetStaleJudgeTasksRow struct {
 	ID           int64              `db:"id" json:"id"`
-	SubmissionID int64              `db:"submission_id" json:"submission_id"`
+	SubmissionID pgtype.Int8        `db:"submission_id" json:"submission_id"`
 	StreamID     pgtype.Text        `db:"stream_id" json:"stream_id"`
 	Status       string             `db:"status" json:"status"`
 	Attempts     int32              `db:"attempts" json:"attempts"`
@@ -2867,6 +3198,7 @@ type ResetStaleJudgeTasksRow struct {
 	LastError    pgtype.Text        `db:"last_error" json:"last_error"`
 	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	RunID        pgtype.Int8        `db:"run_id" json:"run_id"`
 }
 
 func (q *Queries) ResetStaleJudgeTasks(ctx context.Context, arg ResetStaleJudgeTasksParams) ([]ResetStaleJudgeTasksRow, error) {
@@ -2888,6 +3220,7 @@ func (q *Queries) ResetStaleJudgeTasks(ctx context.Context, arg ResetStaleJudgeT
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RunID,
 		); err != nil {
 			return nil, err
 		}
@@ -2948,7 +3281,7 @@ SET status = 'pending',
     updated_at = now()
 WHERE id = $3
   AND status IN ('dispatching', 'dispatched', 'running')
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 type RetryJudgeTaskParams struct {
@@ -2970,6 +3303,7 @@ func (q *Queries) RetryJudgeTask(ctx context.Context, arg RetryJudgeTaskParams) 
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
@@ -3016,7 +3350,7 @@ SET status = 'dispatching',
     updated_at = now()
 WHERE id = $1
   AND status = 'pending'
-RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at
+RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 `
 
 func (q *Queries) UpdateJudgeTaskDispatching(ctx context.Context, id int64) (JudgeTask, error) {
@@ -3032,6 +3366,7 @@ func (q *Queries) UpdateJudgeTaskDispatching(ctx context.Context, id int64) (Jud
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RunID,
 	)
 	return i, err
 }
