@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 部署一个后端 v* 版本：从 GitHub Release 下载 docker save 的镜像包，
-# docker load 后重打 :latest，compose up -d；健康检查失败自动回退到原镜像。
+# 部署一个后端 v* 版本：把 checkout 同步到该 tag（compose 文件跟着走），
+# 从 GitHub Release 下载 docker save 的镜像包，docker load 后重打 :latest，
+# compose up -d；健康检查失败自动回退到原镜像。
 # 服务器上不做任何构建（2G 内存约束）。构建由 SOJ 仓库的 deploy-backend.yml 完成。
 # 用法: api-deploy.sh <tag>   例如 api-deploy.sh v1.3.2
 set -euo pipefail
@@ -13,6 +14,7 @@ esac
 
 REPO="sparklyi/SOJ"
 SVCS="api worker judge-agent migrate"
+BACKEND_DIR="/opt/soj/backend"
 COMPOSE_DIR="/opt/soj/backend/deploy"
 STATE_DIR="/opt/soj/state"
 
@@ -32,6 +34,16 @@ for SVC in $SVCS; do
   [ -n "$ID" ] && echo "$SVC $ID" >> "$TMP/prev-ids"
 done
 
+# 记录当前 checkout 位置，回退时和镜像一起还原
+PREV_REF="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
+
+# compose 文件来自这个 checkout，镜像换版本了它也得跟着换。不同步的话就是
+# 「新镜像配旧 compose」——缺配置时不报错，只是行为不对。
+# 故意不带 --force：checkout 脏了就失败退出，而不是静默丢掉服务器上的手改。
+echo "[api-deploy] syncing $BACKEND_DIR to $TAG"
+git -C "$BACKEND_DIR" fetch --tags --force --quiet origin
+git -C "$BACKEND_DIR" checkout --quiet "$TAG"
+
 for SVC in $SVCS; do
   URL="https://github.com/${REPO}/releases/download/${TAG}/soj-${SVC}-${TAG}.tar.gz"
   echo "[api-deploy] downloading $URL"
@@ -50,10 +62,11 @@ for _ in $(seq 1 90); do
 done
 
 if [ "$ok" != 1 ]; then
-  echo "[api-deploy] health check failed for $TAG, rolling back images" >&2
+  echo "[api-deploy] health check failed for $TAG, rolling back images and $BACKEND_DIR" >&2
   while read -r SVC ID; do
     docker tag "$ID" "soj-$SVC:latest"
   done < "$TMP/prev-ids"
+  git -C "$BACKEND_DIR" checkout --quiet "$PREV_REF"
   compose up -d
   exit 1
 fi
