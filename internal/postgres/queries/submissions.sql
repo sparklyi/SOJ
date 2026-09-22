@@ -925,15 +925,60 @@ FROM runs
 WHERE user_id = $1
   AND status IN ('queued', 'running');
 
--- name: DeleteArtifactByID :exec
--- Removing a source object row. Used when a run's upload has to be undone: the
--- object goes first, so a failure leaves this row for the sweep to find.
-DELETE FROM artifacts
-WHERE id = $1;
-
 -- name: LockUserForRunAdmission :one
 -- Serialises run admission per user so the count above cannot race an insert.
 SELECT id
 FROM users
 WHERE id = $1
 FOR UPDATE;
+
+-- name: ListExpiredRuns :many
+-- Self-runs past the retention window, with the storage key of the object that
+-- has to be removed before the row.
+--
+-- Terminal status only. A run that never finished is MarkStaleRunsSystemError's
+-- business; deleting something that might still be executing would be
+-- indefensible, and that sweep has already terminated anything older than half
+-- an hour anyway.
+--
+-- LEFT JOIN so a run whose artifact is already gone is still deleted. An inner
+-- join would hide exactly the rows that most need removing.
+SELECT
+    runs.id,
+    runs.source_artifact_id,
+    artifacts.storage_key
+FROM runs
+LEFT JOIN artifacts ON artifacts.id = runs.source_artifact_id
+WHERE runs.status NOT IN ('queued', 'running')
+  AND runs.created_at < sqlc.arg('created_before')
+ORDER BY runs.created_at, runs.id
+LIMIT sqlc.arg('limit');
+
+-- name: DeleteRunByID :exec
+DELETE FROM runs
+WHERE id = $1;
+
+-- name: DeleteArtifactByID :exec
+DELETE FROM artifacts
+WHERE id = $1;
+
+-- name: ListOrphanedRunArtifacts :many
+-- Run source objects that no run points at.
+--
+-- These are left by a run whose source was uploaded and whose admission was then
+-- refused, or whose process died in between: the object is written before the
+-- decision is made, so the decision is the only place that can undo it, and a
+-- crash has no place at all. Without this sweep such an object is invisible to
+-- every other query in the system and stays forever.
+--
+-- Scoped to owner_type = 'run' and kind = 'source' so a submission's source,
+-- which is kept for rejudge, can never be picked up.
+SELECT artifacts.id, artifacts.storage_key
+FROM artifacts
+LEFT JOIN runs ON runs.source_artifact_id = artifacts.id
+WHERE artifacts.owner_type = 'run'
+  AND artifacts.kind = 'source'
+  AND artifacts.created_at < sqlc.arg('created_before')
+  AND runs.id IS NULL
+ORDER BY artifacts.created_at, artifacts.id
+LIMIT sqlc.arg('limit');

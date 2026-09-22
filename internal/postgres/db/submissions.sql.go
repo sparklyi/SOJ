@@ -981,10 +981,18 @@ DELETE FROM artifacts
 WHERE id = $1
 `
 
-// Removing a source object row. Used when a run's upload has to be undone: the
-// object goes first, so a failure leaves this row for the sweep to find.
 func (q *Queries) DeleteArtifactByID(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteArtifactByID, id)
+	return err
+}
+
+const deleteRunByID = `-- name: DeleteRunByID :exec
+DELETE FROM runs
+WHERE id = $1
+`
+
+func (q *Queries) DeleteRunByID(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteRunByID, id)
 	return err
 }
 
@@ -1716,6 +1724,60 @@ func (q *Queries) ListEligibleProblemSubmissionsForRejudge(ctx context.Context, 
 	return items, nil
 }
 
+const listExpiredRuns = `-- name: ListExpiredRuns :many
+SELECT
+    runs.id,
+    runs.source_artifact_id,
+    artifacts.storage_key
+FROM runs
+LEFT JOIN artifacts ON artifacts.id = runs.source_artifact_id
+WHERE runs.status NOT IN ('queued', 'running')
+  AND runs.created_at < $1
+ORDER BY runs.created_at, runs.id
+LIMIT $2
+`
+
+type ListExpiredRunsParams struct {
+	CreatedBefore pgtype.Timestamptz `db:"created_before" json:"created_before"`
+	Limit         int32              `db:"limit" json:"limit"`
+}
+
+type ListExpiredRunsRow struct {
+	ID               int64       `db:"id" json:"id"`
+	SourceArtifactID pgtype.Int8 `db:"source_artifact_id" json:"source_artifact_id"`
+	StorageKey       pgtype.Text `db:"storage_key" json:"storage_key"`
+}
+
+// Self-runs past the retention window, with the storage key of the object that
+// has to be removed before the row.
+//
+// Terminal status only. A run that never finished is MarkStaleRunsSystemError's
+// business; deleting something that might still be executing would be
+// indefensible, and that sweep has already terminated anything older than half
+// an hour anyway.
+//
+// LEFT JOIN so a run whose artifact is already gone is still deleted. An inner
+// join would hide exactly the rows that most need removing.
+func (q *Queries) ListExpiredRuns(ctx context.Context, arg ListExpiredRunsParams) ([]ListExpiredRunsRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredRuns, arg.CreatedBefore, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredRunsRow
+	for rows.Next() {
+		var i ListExpiredRunsRow
+		if err := rows.Scan(&i.ID, &i.SourceArtifactID, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listJudgeAttemptsByRejudgeBatch = `-- name: ListJudgeAttemptsByRejudgeBatch :many
 SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
@@ -1946,6 +2008,58 @@ func (q *Queries) ListLatestJudgeAttemptsBySubmissionIDs(ctx context.Context, su
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrphanedRunArtifacts = `-- name: ListOrphanedRunArtifacts :many
+SELECT artifacts.id, artifacts.storage_key
+FROM artifacts
+LEFT JOIN runs ON runs.source_artifact_id = artifacts.id
+WHERE artifacts.owner_type = 'run'
+  AND artifacts.kind = 'source'
+  AND artifacts.created_at < $1
+  AND runs.id IS NULL
+ORDER BY artifacts.created_at, artifacts.id
+LIMIT $2
+`
+
+type ListOrphanedRunArtifactsParams struct {
+	CreatedBefore pgtype.Timestamptz `db:"created_before" json:"created_before"`
+	Limit         int32              `db:"limit" json:"limit"`
+}
+
+type ListOrphanedRunArtifactsRow struct {
+	ID         int64  `db:"id" json:"id"`
+	StorageKey string `db:"storage_key" json:"storage_key"`
+}
+
+// Run source objects that no run points at.
+//
+// These are left by a run whose source was uploaded and whose admission was then
+// refused, or whose process died in between: the object is written before the
+// decision is made, so the decision is the only place that can undo it, and a
+// crash has no place at all. Without this sweep such an object is invisible to
+// every other query in the system and stays forever.
+//
+// Scoped to owner_type = 'run' and kind = 'source' so a submission's source,
+// which is kept for rejudge, can never be picked up.
+func (q *Queries) ListOrphanedRunArtifacts(ctx context.Context, arg ListOrphanedRunArtifactsParams) ([]ListOrphanedRunArtifactsRow, error) {
+	rows, err := q.db.Query(ctx, listOrphanedRunArtifacts, arg.CreatedBefore, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrphanedRunArtifactsRow
+	for rows.Next() {
+		var i ListOrphanedRunArtifactsRow
+		if err := rows.Scan(&i.ID, &i.StorageKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
