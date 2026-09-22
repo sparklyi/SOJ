@@ -22,6 +22,7 @@ type serviceTestOptions struct {
 	RunTimeout              time.Duration
 	RunContext              context.Context
 	RunParallelism          int
+	RunPerUser              int
 }
 
 func newServiceForTest(options serviceTestOptions) *Service {
@@ -46,15 +47,16 @@ func newServiceForTest(options serviceTestOptions) *Service {
 	})
 	reader := NewSubmissionReader(options.Repository, options.ContestVisibilityPolicy)
 	runs := NewRunService(RunServiceOptions{
-		Store:         options.Repository,
-		ProblemReader: problems,
-		SourceStore:   sourceStore,
-		Judge:         judgeEngine,
-		Now:           options.Now,
-		Wait:          options.RunWait,
-		Timeout:       options.RunTimeout,
-		Context:       options.RunContext,
-		Parallelism:   options.RunParallelism,
+		Store:          options.Repository,
+		ProblemReader:  problems,
+		SourceStore:    sourceStore,
+		Judge:          judgeEngine,
+		Now:            options.Now,
+		Wait:           options.RunWait,
+		Timeout:        options.RunTimeout,
+		Context:        options.RunContext,
+		Parallelism:    options.RunParallelism,
+		MaxRunsPerUser: options.RunPerUser,
 	})
 	languages := NewLanguageService(options.Repository, judgeEngine)
 	completer := NewSubmissionCompleter(options.Repository)

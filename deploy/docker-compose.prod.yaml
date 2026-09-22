@@ -55,6 +55,7 @@ services:
       SOJ_JWT_SECRET: ${SOJ_JWT_SECRET:?SOJ_JWT_SECRET is required}
       SOJ_JUDGE_ENDPOINT: agent://local
       SOJ_JUDGE_RUN_PARALLELISM: ${SOJ_JUDGE_RUN_PARALLELISM:-1}
+      SOJ_JUDGE_RUN_PER_USER: ${SOJ_JUDGE_RUN_PER_USER:-2}
     ports: !override
       - "127.0.0.1:8080:8080"
 

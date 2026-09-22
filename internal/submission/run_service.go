@@ -31,11 +31,15 @@ type RunService struct {
 	runCtx      context.Context
 	runCancel   context.CancelFunc
 	runSlots    chan struct{}
-	runMu       sync.Mutex
-	runClosing  bool
-	runWG       sync.WaitGroup
-	runClose    sync.Once
-	runDone     chan struct{}
+	// userRuns counts in-flight runs per user. runMu guards it together with
+	// runClosing -- one lock for the admission state, not two.
+	userRuns   map[int64]int
+	maxPerUser int
+	runMu      sync.Mutex
+	runClosing bool
+	runWG      sync.WaitGroup
+	runClose   sync.Once
+	runDone    chan struct{}
 }
 
 type RunServiceOptions struct {
@@ -48,6 +52,10 @@ type RunServiceOptions struct {
 	Timeout       time.Duration
 	Context       context.Context
 	Parallelism   int
+	// MaxRunsPerUser caps in-flight runs for a single user. It exists because
+	// Parallelism is a global pool: without a per-user gate one caller clicking
+	// repeatedly can drain every slot and stall problem pages too.
+	MaxRunsPerUser int
 }
 
 func NewRunService(options RunServiceOptions) *RunService {
@@ -67,6 +75,10 @@ func NewRunService(options RunServiceOptions) *RunService {
 	if parallelism <= 0 {
 		parallelism = defaultRunParallelism
 	}
+	maxPerUser := options.MaxRunsPerUser
+	if maxPerUser <= 0 {
+		maxPerUser = defaultRunPerUser
+	}
 	parent := options.Context
 	if parent == nil {
 		parent = context.Background()
@@ -83,6 +95,8 @@ func NewRunService(options RunServiceOptions) *RunService {
 		runCtx:      runCtx,
 		runCancel:   cancel,
 		runSlots:    make(chan struct{}, parallelism),
+		userRuns:    make(map[int64]int),
+		maxPerUser:  maxPerUser,
 		runDone:     make(chan struct{}),
 	}
 	if done := parent.Done(); done != nil {
@@ -104,8 +118,13 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 	if len(input.Source) == 0 {
 		return CreateRunOutput{}, apperror.BadRequest("source_required", "source is required")
 	}
-	if _, err := s.problems.GetForJudge(ctx, input.ProblemID); err != nil {
-		return CreateRunOutput{}, err
+	// A playground run has no problem to validate. Skipping the check here (and
+	// not inside a nil-able reader dependency) keeps problem.Reader a required
+	// constructor dependency -- a nil interface would only fail at call time.
+	if input.ProblemID != nil {
+		if _, err := s.problems.GetForJudge(ctx, *input.ProblemID); err != nil {
+			return CreateRunOutput{}, err
+		}
 	}
 	language, err := s.store.GetEnabledLanguage(ctx, input.LanguageID)
 	if err != nil {
@@ -113,13 +132,13 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 	}
 	reservedExecution := false
 	if s.judge != nil {
-		if err := s.reserveExecution(); err != nil {
+		if err := s.reserveExecution(actor.UserID); err != nil {
 			return CreateRunOutput{}, err
 		}
 		reservedExecution = true
 		defer func() {
 			if reservedExecution {
-				s.releaseExecution()
+				s.releaseExecution(actor.UserID)
 			}
 		}()
 	}
@@ -159,7 +178,7 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 	}
 
 	done := make(chan RunRecord, 1)
-	go s.completeRunAsync(run.ID, language, input.Source, input.Stdin, done)
+	go s.completeRunAsync(run.ID, actor.UserID, language, input.Source, input.Stdin, done)
 	reservedExecution = false
 
 	timer := time.NewTimer(s.runWait)
@@ -196,8 +215,8 @@ func (s *RunService) CompleteRun(ctx context.Context, runID int64, result judge.
 	return s.store.UpdateRunStatus(ctx, runID, result)
 }
 
-func (s *RunService) completeRunAsync(runID int64, language LanguageRecord, source []byte, stdin string, done chan<- RunRecord) {
-	defer s.releaseExecution()
+func (s *RunService) completeRunAsync(runID, userID int64, language LanguageRecord, source []byte, stdin string, done chan<- RunRecord) {
+	defer s.releaseExecution(userID)
 
 	ctx, cancel := context.WithTimeout(s.runCtx, s.runTimeout)
 	defer cancel()
@@ -246,14 +265,22 @@ func (s *RunService) beginShutdown() {
 	})
 }
 
-func (s *RunService) reserveExecution() error {
+// reserveExecution admits one execution through two gates: the per-user
+// in-flight cap first, then the global sandbox slot pool. Order matters -- a
+// run rejected by the per-user cap must not consume a global slot it would
+// then have to hand back.
+func (s *RunService) reserveExecution(userID int64) error {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	if s.runClosing || s.runCtx.Err() != nil {
 		return apperror.ServiceUnavailable("run execution is shutting down")
 	}
+	if s.userRuns[userID] >= s.maxPerUser {
+		return apperror.TooManyRequests("run.user_limit_exceeded", "too many runs in flight for this user")
+	}
 	select {
 	case s.runSlots <- struct{}{}:
+		s.userRuns[userID]++
 		s.runWG.Add(1)
 		return nil
 	default:
@@ -261,7 +288,16 @@ func (s *RunService) reserveExecution() error {
 	}
 }
 
-func (s *RunService) releaseExecution() {
+func (s *RunService) releaseExecution(userID int64) {
 	<-s.runSlots
+	s.runMu.Lock()
+	// Delete at zero rather than storing it: leaving zero entries behind would
+	// grow the map once per user, forever.
+	if remaining := s.userRuns[userID] - 1; remaining > 0 {
+		s.userRuns[userID] = remaining
+	} else {
+		delete(s.userRuns, userID)
+	}
+	s.runMu.Unlock()
 	s.runWG.Done()
 }

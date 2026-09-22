@@ -29,6 +29,7 @@ const (
 	defaultRunShortWait       = 3 * time.Second
 	defaultRunTimeout         = 2 * time.Minute
 	defaultRunParallelism     = 1
+	defaultRunPerUser         = 2
 	defaultRunFinalizeTimeout = 5 * time.Second
 )
 
@@ -130,7 +131,10 @@ type CreateSubmissionOutput struct {
 }
 
 type CreateRunInput struct {
-	ProblemID  int64
+	// ProblemID is nil for a playground run: scratch source plus stdin, with no
+	// problem attached. A non-nil value means the run is attributed to that
+	// problem and the problem must be ready for judging.
+	ProblemID  *int64
 	LanguageID int64
 	Source     []byte
 	Stdin      string

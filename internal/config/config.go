@@ -63,6 +63,9 @@ type JudgeConfig struct {
 	Timeout        time.Duration
 	CleanupTimeout time.Duration
 	RunParallelism int
+	// RunPerUser caps in-flight self-runs per user. RunParallelism is a global
+	// pool, so without this one caller can drain every slot.
+	RunPerUser int
 }
 
 type AuthConfig struct {
@@ -122,6 +125,7 @@ func Load() (Config, error) {
 			Timeout:        30 * time.Second,
 			CleanupTimeout: sandbox.DefaultCleanupTimeout,
 			RunParallelism: 1,
+			RunPerUser:     2,
 		},
 		Auth: AuthConfig{
 			JWTSecret:       env("SOJ_JWT_SECRET", ""),
@@ -173,6 +177,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Judge.RunParallelism, err = envPositiveInt("SOJ_JUDGE_RUN_PARALLELISM", cfg.Judge.RunParallelism); err != nil {
+		return Config{}, err
+	}
+	if cfg.Judge.RunPerUser, err = envPositiveInt("SOJ_JUDGE_RUN_PER_USER", cfg.Judge.RunPerUser); err != nil {
 		return Config{}, err
 	}
 	if cfg.Auth.AccessTokenTTL, err = envDuration("SOJ_ACCESS_TOKEN_TTL", cfg.Auth.AccessTokenTTL); err != nil {

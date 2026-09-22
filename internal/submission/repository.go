@@ -50,9 +50,13 @@ type SubmissionRecord struct {
 }
 
 type RunRecord struct {
-	ID               int64
-	UserID           int64
-	ProblemID        int64
+	ID     int64
+	UserID int64
+	// ProblemID is nil for a playground run -- scratch code with no problem
+	// attached. A problem-attached run keeps its problem so the problem page can
+	// still attribute it. Derived from the column, not a separate discriminator:
+	// a `kind` column would be a second source of truth for the same fact.
+	ProblemID        *int64
 	LanguageID       int64
 	Status           string
 	SourceArtifactID int64
@@ -1480,7 +1484,7 @@ func (r *SQLRepository) RecoverDeadJudgeTask(ctx context.Context, id int64, next
 func (r *SQLRepository) CreateRun(ctx context.Context, arg RunRecord) (RunRecord, error) {
 	row, err := r.q.CreateRun(ctx, db.CreateRunParams{
 		UserID:           arg.UserID,
-		ProblemID:        arg.ProblemID,
+		ProblemID:        int8Ptr(arg.ProblemID),
 		LanguageID:       arg.LanguageID,
 		Status:           arg.Status,
 		SourceArtifactID: validInt8(arg.SourceArtifactID),
@@ -1588,7 +1592,7 @@ func submissionRecord(row db.Submission) SubmissionRecord {
 }
 
 func runRecord(row db.Run) RunRecord {
-	return RunRecord{ID: row.ID, UserID: row.UserID, ProblemID: row.ProblemID, LanguageID: row.LanguageID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, Stdin: row.Stdin.String, Stdout: row.Stdout.String, Stderr: row.Stderr.String, CompileOutput: row.CompileOutput.String, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), ErrorMessage: textValue(row.ErrorMessage), CreatedAt: row.CreatedAt.Time, FinishedAt: timeValue(row.FinishedAt), UpdatedAt: row.UpdatedAt.Time}
+	return RunRecord{ID: row.ID, UserID: row.UserID, ProblemID: int8Value(row.ProblemID), LanguageID: row.LanguageID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, Stdin: row.Stdin.String, Stdout: row.Stdout.String, Stderr: row.Stderr.String, CompileOutput: row.CompileOutput.String, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), ErrorMessage: textValue(row.ErrorMessage), CreatedAt: row.CreatedAt.Time, FinishedAt: timeValue(row.FinishedAt), UpdatedAt: row.UpdatedAt.Time}
 }
 
 func judgeTaskRecord(row db.JudgeTask) JudgeTaskRecord {

@@ -120,13 +120,14 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	})
 	reader := submission.NewSubmissionReader(submissionRepo, contestService)
 	runs := submission.NewRunService(submission.RunServiceOptions{
-		Store:         submissionRepo,
-		ProblemReader: problemReader,
-		SourceStore:   sourceStore,
-		Judge:         judgeEngine,
-		Context:       ctx,
-		Parallelism:   cfg.Judge.RunParallelism,
-		Timeout:       cfg.Judge.Timeout,
+		Store:          submissionRepo,
+		ProblemReader:  problemReader,
+		SourceStore:    sourceStore,
+		Judge:          judgeEngine,
+		Context:        ctx,
+		Parallelism:    cfg.Judge.RunParallelism,
+		MaxRunsPerUser: cfg.Judge.RunPerUser,
+		Timeout:        cfg.Judge.Timeout,
 	})
 	languages := submission.NewLanguageService(submissionRepo, judgeEngine, statsService)
 	completer := submission.NewSubmissionCompleter(submissionRepo)

@@ -51,6 +51,8 @@ type Querier interface {
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	CreateRejudgeBatch(ctx context.Context, arg CreateRejudgeBatchParams) (RejudgeBatch, error)
 	CreateRejudgeBatchItem(ctx context.Context, arg CreateRejudgeBatchItemParams) (RejudgeBatchItem, error)
+	// problem_id is optional: a run attached to a problem validates the problem
+	// first, a playground run passes nothing and skips that check entirely.
 	CreateRun(ctx context.Context, arg CreateRunParams) (Run, error)
 	CreateSubmission(ctx context.Context, arg CreateSubmissionParams) (Submission, error)
 	CreateTestcaseSet(ctx context.Context, arg CreateTestcaseSetParams) (TestcaseSet, error)

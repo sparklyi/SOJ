@@ -50,6 +50,14 @@ func ServiceUnavailable(message string) *Error {
 	return New("service_unavailable", message, http.StatusServiceUnavailable)
 }
 
+// TooManyRequests is for per-caller limits -- one caller exhausting its own
+// budget -- as opposed to ServiceUnavailable, which means the service as a
+// whole cannot take the work right now. Clients are expected to tell those
+// apart: "you are running too many things" is not "the site is down".
+func TooManyRequests(code, message string) *Error {
+	return New(code, message, http.StatusTooManyRequests)
+}
+
 func Internal() *Error {
 	return New("internal_error", "internal server error", http.StatusInternalServerError)
 }
