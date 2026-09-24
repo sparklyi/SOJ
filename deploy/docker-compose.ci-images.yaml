@@ -1,0 +1,11 @@
+# CI-only overlay: pin build image names so `docker buildx bake` and
+# `docker compose up` in the smoke job refer to the same tags.
+services:
+  migrate:
+    image: soj-ci-migrate
+  api:
+    image: soj-ci-api
+  worker:
+    image: soj-ci-worker
+  judge-agent:
+    image: soj-ci-judge-agent
