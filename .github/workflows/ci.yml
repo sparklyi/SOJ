@@ -74,8 +74,14 @@ jobs:
           load: true
           provenance: false
           set: |
-            *.cache-from=type=gha,scope=soj-smoke
-            *.cache-to=type=gha,scope=soj-smoke,mode=max
+            api.cache-from=type=gha,scope=soj-smoke-api
+            api.cache-to=type=gha,scope=soj-smoke-api,mode=max
+            worker.cache-from=type=gha,scope=soj-smoke-worker
+            worker.cache-to=type=gha,scope=soj-smoke-worker,mode=max
+            judge-agent.cache-from=type=gha,scope=soj-smoke-judge-agent
+            judge-agent.cache-to=type=gha,scope=soj-smoke-judge-agent,mode=max
+            migrate.cache-from=type=gha,scope=soj-smoke-migrate
+            migrate.cache-to=type=gha,scope=soj-smoke-migrate,mode=max
 
       - name: Start smoke stack
         run: docker compose up -d
