@@ -29,10 +29,10 @@ services:
       - soj-redis-data:/data
 
   minio:
-    # MinIO publishes its images to quay.io. The Docker Hub minio/* repositories
-    # were removed, so these pinned tags only resolve from Quay. Keep the tag
-    # unchanged and do not "simplify" the registry back to Docker Hub.
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # MinIO 已下架 Docker Hub 镜像，quay.io 匿名拉取现在返回 401。
+    # coollabsio/minio 用官方源码构建同样的 RELEASE 版本，并附带签名校验过的 mc。
+    # tag + digest 双重固定，保证内容可复现。
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a4938f37f1be1841b8e7b627ad0207b265345fd0d063e42d7410c78af0e63e68
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -49,7 +49,8 @@ services:
       - soj-minio-data:/data
 
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    # minio 镜像自带 mc，init 任务复用同一镜像，不再依赖单独的 mc 镜像。
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a4938f37f1be1841b8e7b627ad0207b265345fd0d063e42d7410c78af0e63e68
     depends_on:
       minio:
         condition: service_healthy
