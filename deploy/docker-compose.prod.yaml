@@ -34,7 +34,7 @@ services:
     environment:
       PGPASSWORD: ${SOJ_POSTGRES_PASSWORD:?SOJ_POSTGRES_PASSWORD is required}
       # 由 seed 的 entrypoint 在容器「运行时」读取；基础文件里那条守卫必须写成 $$
-      # 才读得到这个值。改动后跑 scripts/deploy/check-prod-compose.sh 验证渲染结果。
+      # 才读得到这个值。改动后跑 scripts/ci/check-prod-compose.sh 验证渲染结果。
       SOJ_SEED_FAKE_LANGUAGE: "false"
 
   migrate:

@@ -48,7 +48,7 @@ jobs:
           export SOJ_DOCKER_RUNNER_IMAGE_CPP17=ghcr.io/sparklyi/soj-runner-cpp17:main
           docker compose -f deploy/docker-compose.yaml -f deploy/docker-compose.prod.yaml config > /dev/null
           # 断言 seed 的 fake 语言守卫在渲染后仍是运行时求值（见脚本内注释）
-          scripts/deploy/check-prod-compose.sh
+          scripts/ci/check-prod-compose.sh
 
       - name: Build API image
         run: docker build -f Dockerfile.v2 --build-arg COMMAND=soj-api -t soj-api:ci .

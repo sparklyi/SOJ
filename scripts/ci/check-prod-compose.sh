@@ -7,7 +7,7 @@
 # 无效（容器 env 是 false，但没人读它）。源文件看起来毫无问题，只有渲染结果暴露它。
 # 2026-09-21 生产库被种上 Fake Accepted 就是这个原因。
 #
-# 用法：scripts/deploy/check-prod-compose.sh
+# 用法：scripts/ci/check-prod-compose.sh
 # 需要 docker compose；未设置的变量会用占位值（仅用于渲染，不连任何服务）。
 set -euo pipefail
 

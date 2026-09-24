@@ -7,7 +7,7 @@
 
 SOJ 是一个使用 Go 编写的开源 Online Judge 后端。当前主线已经切换到 v2 架构：更清晰的 REST API、异步评测流水线、以 PostgreSQL 为事实源的数据模型、Redis Stream 消息投递、兼容 S3 的对象存储，以及独立的 judge-agent 边界，用于承载更安全的代码运行流程。
 
-历史 v1 实现保留在 `archive/v1` 分支。新的后端开发应围绕 v2 的 `cmd/`、`internal/`、`api/`、`docs/` 和 `deploy/` 目录展开。
+新的后端开发应围绕 v2 的 `cmd/`、`internal/`、`api/`、`docs/` 和 `deploy/` 目录展开。
 
 ## 目录
 

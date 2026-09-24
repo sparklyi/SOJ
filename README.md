@@ -7,7 +7,7 @@ English | [简体中文](README.zh-CN.md)
 
 SOJ is an open-source online judge backend written in Go. The active codebase is the v2 architecture: a focused REST API, asynchronous judge pipeline, PostgreSQL-backed domain model, Redis Stream delivery, S3-compatible object storage, and a separate judge-agent boundary for running code safely.
 
-The historical v1 implementation is preserved on the `archive/v1` branch. New development should target the v2 `cmd/`, `internal/`, `api/`, `docs/`, and `deploy/` paths.
+New development should target the v2 `cmd/`, `internal/`, `api/`, `docs/`, and `deploy/` paths.
 
 ## Table of Contents
 

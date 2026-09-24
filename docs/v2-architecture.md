@@ -39,4 +39,4 @@ Distributed tracing uses OpenTelemetry and OTLP/HTTP export when explicitly enab
 
 ## Legacy Boundary
 
-The v1 implementation is archived on the `archive/v1` branch. Main keeps only the v2 backend path and the old root Dockerfile, root Compose file, MySQL/Gorm/Mongo/RabbitMQ modules, and v1 HTTP wiring are removed from the active tree.
+The v1 implementation has been removed from the repository. Main keeps only the v2 backend path and the old root Dockerfile, root Compose file, MySQL/Gorm/Mongo/RabbitMQ modules, and v1 HTTP wiring are removed from the active tree.

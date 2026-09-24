@@ -81,7 +81,7 @@ services:
         # 脚本文本（当时变量没设置 -> 内联成 "true"），之后任何只改 environment 的
         # override（包括生产 compose）都读不到它，测试语言就会一路种进生产库。
         # 注意 compose 会插值整段脚本、连注释也一起，所以注释里同样不能出现插值式。
-        # 改动此块后用 scripts/deploy/check-prod-compose.sh 验证渲染结果。
+        # 改动此块后用 scripts/ci/check-prod-compose.sh 验证渲染结果。
         if [ "$${SOJ_SEED_FAKE_LANGUAGE:-true}" = "true" ]; then
           psql -h postgres -U soj -d soj -v ON_ERROR_STOP=1 -c "
             INSERT INTO languages (
