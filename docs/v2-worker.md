@@ -1,4 +1,4 @@
-# SOJ v2 Worker
+# Sundial Online Judge (SOJ) v2 Worker
 
 The worker has two production responsibilities:
 

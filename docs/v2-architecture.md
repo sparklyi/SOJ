@@ -1,4 +1,4 @@
-# SOJ v2 Architecture
+# Sundial Online Judge (SOJ) v2 Architecture
 
 SOJ v2 targets Go 1.25 and splits the backend into four commands:
 

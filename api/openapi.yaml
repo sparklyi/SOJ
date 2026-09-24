@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: SOJ v2 API
+  title: Sundial Online Judge API
   version: 0.1.0
-  description: SOJ v2 REST contract baseline. All 2xx responses use the response envelope except 204 and explicitly empty 202 responses.
+  description: Sundial Online Judge (SOJ) v2 REST contract baseline. All 2xx responses use the response envelope except 204 and explicitly empty 202 responses.
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT

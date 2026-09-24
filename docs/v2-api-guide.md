@@ -1,4 +1,4 @@
-# SOJ v2 API Guide
+# Sundial Online Judge (SOJ) v2 API Guide
 
 This guide summarizes the WP1 contract baseline in `api/openapi.yaml`.
 

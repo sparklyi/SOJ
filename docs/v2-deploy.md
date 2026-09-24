@@ -1,4 +1,4 @@
-# SOJ v2 Docker Deployment
+# Sundial Online Judge (SOJ) v2 Docker Deployment
 
 The first supported deployment target is Docker Compose. The v2 runtime is built and verified with Go 1.25.
 

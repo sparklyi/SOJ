@@ -1,6 +1,6 @@
 # Judge Runtime Readiness
 
-This document is the operational checklist for running the SOJ judge runtime in a trial deployment. It covers readiness probes, dead-task recovery, runtime metrics, and the local validation environment used for this stage.
+This document is the operational checklist for running the Sundial Online Judge (SOJ) judge runtime in a trial deployment. It covers readiness probes, dead-task recovery, runtime metrics, and the local validation environment used for this stage.
 
 ## Readiness Probes
 

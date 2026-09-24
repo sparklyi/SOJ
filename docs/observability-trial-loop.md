@@ -1,6 +1,6 @@
-# SOJ Observability Trial Loop
+# Sundial Online Judge (SOJ) Observability Trial Loop
 
-This guide is the dashboard-as-document artifact for the SOJ async judge trial deployment. It gives operators PromQL panels, alert interpretation, and the path from an alert to an OpenTelemetry trace or persisted judge attempt.
+This guide is the dashboard-as-document artifact for the Sundial Online Judge async judge trial deployment. It gives operators PromQL panels, alert interpretation, and the path from an alert to an OpenTelemetry trace or persisted judge attempt.
 
 The local Compose stack includes Prometheus and loads `deploy/prometheus-rules/soj-alerts.yml`. It does not add or require Grafana, Alertmanager, Jaeger, Tempo, or an OpenTelemetry collector. Use the queries below in the Prometheus UI or copy them into an external dashboard if your environment already has one.
 
