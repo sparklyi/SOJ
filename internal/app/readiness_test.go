@@ -63,7 +63,7 @@ func TestRunReconcilerLoopGeneratesDueScoreSnapshots(t *testing.T) {
 	reconciler := &recordingWorkerReconciler{}
 	snapshots := &recordingScoreSnapshotGenerator{afterCall: cancel}
 
-	err := runReconcilerLoop(ctx, reconciler, snapshots)
+	err := runReconcilerLoop(ctx, reconciler, snapshots, time.Second)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runReconcilerLoop error = %v, want context canceled", err)
 	}

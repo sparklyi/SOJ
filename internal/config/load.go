@@ -190,6 +190,7 @@ func (c Config) validate(role Role) error {
 		{"http.read_timeout", int64(c.HTTP.ReadTimeout)},
 		{"http.write_timeout", int64(c.HTTP.WriteTimeout)},
 		{"worker.shutdown_timeout", int64(c.Worker.ShutdownTimeout)},
+		{"worker.reconcile_interval", int64(c.Worker.ReconcileInterval)},
 		{"redis.block", int64(c.Redis.Block)},
 		{"judge.timeout", int64(c.Judge.Timeout)},
 		{"judge.cleanup_timeout", int64(c.Judge.CleanupTimeout)},

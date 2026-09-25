@@ -1,11 +1,38 @@
 # CI-only overlay: pin build image names so `docker buildx bake` and
-# `docker compose up` in the smoke job refer to the same tags.
+# `docker compose up` in the smoke job refer to the same tags, and shorten the
+# startup waits the smoke job does not need to exercise at production cadence.
 services:
+  postgres:
+    healthcheck:
+      interval: 2s
+
+  redis:
+    healthcheck:
+      interval: 2s
+
+  minio:
+    healthcheck:
+      interval: 2s
+
   migrate:
     image: soj-ci-migrate
+
   api:
     image: soj-ci-api
+    healthcheck:
+      interval: 2s
+
   worker:
     image: soj-ci-worker
+    environment:
+      # The smoke script polls for scoreboard snapshots, which the reconciler
+      # produces. At the production 30s tick the suite would idle up to a
+      # minute; the smoke stack only needs the loop to run promptly.
+      SOJ_WORKER_RECONCILE_INTERVAL: 1s
+    healthcheck:
+      interval: 2s
+
   judge-agent:
     image: soj-ci-judge-agent
+    healthcheck:
+      interval: 2s

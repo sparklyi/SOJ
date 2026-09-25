@@ -112,7 +112,10 @@ jobs:
             migrate.cache-to=type=gha,scope=soj-smoke-migrate,mode=max
 
       - name: Start smoke stack
-        run: docker compose up -d
+        # Start only what the smoke script touches. Compose still starts the
+        # dependencies (postgres, redis, minio, migrate, seed); prometheus has
+        # no assertions and would cost an image pull on every run.
+        run: docker compose up -d api worker judge-agent
 
       - name: Run smoke test
         run: ./deploy/smoke.sh
@@ -121,7 +124,7 @@ jobs:
         if: failure()
         run: |
           docker compose ps || true
-          docker compose logs --no-color api worker judge-agent migrate seed postgres redis minio prometheus || true
+          docker compose logs --no-color api worker judge-agent migrate seed postgres redis minio || true
 
       - name: Stop smoke stack
         if: always()
