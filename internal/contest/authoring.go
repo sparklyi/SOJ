@@ -73,7 +73,6 @@ func (a *ContestAuthoring) CreateContest(ctx context.Context, actor auth.Actor, 
 		created.Problems = problems
 		return nil
 	})
-	created.ScoringMode = ScoringModeACM
 	return created, err
 }
 
@@ -105,7 +104,6 @@ func (a *ContestAuthoring) UpdateContest(ctx context.Context, actor auth.Actor, 
 				return err
 			}
 			updated.Problems = problems
-			updated.ScoringMode = ScoringModeACM
 			updated.Registered = a.reader.actorRegisteredForContest(ctx, actor, updated.ID)
 			updated.CurrentUserRoles = a.reader.currentUserRoles(ctx, actor, updated.ID)
 			return nil

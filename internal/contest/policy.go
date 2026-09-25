@@ -174,6 +174,25 @@ func (p *ContestPolicy) SubmissionResultVisibilities(ctx context.Context, actor 
 	return visibilities, nil
 }
 
+// CanReadSubmissionSource allows contest staff (owner or judge) to read the
+// source of a submission made in their contest. It reuses the same contest
+// visibility predicate as result reads rather than inventing a second model.
+func (p *ContestPolicy) CanReadSubmissionSource(ctx context.Context, actor auth.Actor, sub submission.ContestSubmissionVisibility) (bool, error) {
+	contest, err := p.reader.getContest(ctx, sub.ContestID)
+	if err != nil {
+		return false, err
+	}
+	actor, err = p.reader.actorWithContestRoles(ctx, actor, sub.ContestID)
+	if err != nil {
+		return false, err
+	}
+	if err := p.reader.canReadContestAs(ctx, actor, contest); err != nil {
+		// Not allowed to read the contest at all: deny without leaking its existence.
+		return false, nil
+	}
+	return canViewContestResults(actor, contest), nil
+}
+
 func submissionResultVisibility(contest ContestRecord, actor auth.Actor, sub submission.ContestSubmissionVisibility, now time.Time) submission.SubmissionResultVisibility {
 	if canViewContestResults(actor, contest) {
 		return submission.SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: true, Visibility: "visible"}
