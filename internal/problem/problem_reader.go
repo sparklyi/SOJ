@@ -2,6 +2,7 @@ package problem
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -208,7 +209,8 @@ func (r *ProblemReader) CurrentReadyTestcaseSet(ctx context.Context, problemID i
 	}
 	data, err := readAllAndClose(body, defaultMaxTestcaseArchiveBytes)
 	if err != nil {
-		if _, ok := err.(*testcaseArchiveResourceError); ok {
+		var resourceErr *testcaseArchiveResourceError
+		if errors.As(err, &resourceErr) {
 			return TestcaseSet{}, testcaseArchiveBadRequest(err)
 		}
 		return TestcaseSet{}, err

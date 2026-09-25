@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -75,13 +76,13 @@ func newLocalRunEngine(cfg config.Config, languages *language.Catalog, logger *s
 		return nil, err
 	}
 	if backend == sandbox.BackendDocker {
-		return nil, errDockerBackendNotAllowedInAPI{}
+		return nil, errDockerBackendNotAllowedInAPI
 	}
 	if backend == sandbox.BackendFake {
 		// fake:// is handled above; reaching here means the endpoint and the
 		// backend disagree, and a fake run engine would silently return
 		// accepted for code that never ran.
-		return nil, errUnsupportedSandboxBackend(backend)
+		return nil, unsupportedSandboxBackendError(backend)
 	}
 
 	runner, err := newJudgeAgentSandbox(backend, cfg.Agent.Runner, "", cfg.Judge.CleanupTimeout, nil, logger)
@@ -119,33 +120,31 @@ func workerJudgeEngine(cfg config.JudgeConfig) inlineJudgeEngine {
 func fakeJudgeEngine(endpoint string) *judge.FakeEngine {
 	engine := judge.NewFakeEngine()
 	if !strings.EqualFold(strings.TrimPrefix(endpoint, "fake://"), "accepted") {
-		engine.SetError(errUnsupportedFakeJudge(endpoint))
+		engine.SetError(unsupportedFakeJudgeError(endpoint))
 	}
 	return engine
 }
 
-type errUnsupportedFakeJudge string
+type unsupportedFakeJudgeError string
 
-func (e errUnsupportedFakeJudge) Error() string {
+func (e unsupportedFakeJudgeError) Error() string {
 	return "unsupported fake judge endpoint " + string(e)
 }
 
-type errDockerBackendNotAllowedInAPI struct{}
-
-func (errDockerBackendNotAllowedInAPI) Error() string {
-	return "the docker sandbox backend cannot be used by the API process: " +
-		"only soj-judge-agent may hold a Docker socket. Set SOJ_JUDGE_SANDBOX_BACKEND=isolate " +
-		"or point SOJ_JUDGE_ENDPOINT at the agent instead"
-}
+// errDockerBackendNotAllowedInAPI keeps the docker socket out of the API
+// process: only soj-judge-agent is allowed to hold it.
+var errDockerBackendNotAllowedInAPI = errors.New("the docker sandbox backend cannot be used by the API process: " +
+	"only soj-judge-agent may hold a Docker socket. Set SOJ_JUDGE_SANDBOX_BACKEND=isolate " +
+	"or point SOJ_JUDGE_ENDPOINT at the agent instead")
 
 func unsupportedJudgeEndpoint(endpoint string) *judge.FakeEngine {
 	engine := judge.NewFakeEngine()
-	engine.SetError(errUnsupportedJudgeEndpoint(endpoint))
+	engine.SetError(unsupportedJudgeEndpointError(endpoint))
 	return engine
 }
 
-type errUnsupportedJudgeEndpoint string
+type unsupportedJudgeEndpointError string
 
-func (e errUnsupportedJudgeEndpoint) Error() string {
+func (e unsupportedJudgeEndpointError) Error() string {
 	return "unsupported judge endpoint " + string(e)
 }

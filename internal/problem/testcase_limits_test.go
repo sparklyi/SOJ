@@ -3,6 +3,7 @@ package problem
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -59,8 +60,8 @@ func TestValidateTestcaseArchiveResourcesRejectsExceededBudgets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateTestcaseArchiveResources(tt.archive, tt.limits)
-			resourceErr, ok := err.(*testcaseArchiveResourceError)
-			if !ok || resourceErr.code != tt.code {
+			var resourceErr *testcaseArchiveResourceError
+			if !errors.As(err, &resourceErr) || resourceErr.code != tt.code {
 				t.Fatalf("error = %T %v, want resource error %q", err, err, tt.code)
 			}
 		})
@@ -87,8 +88,8 @@ func TestValidateTestcaseArchiveResourcesAllowsExactBudgets(t *testing.T) {
 
 func TestReadAllAndCloseRejectsOversizedArchive(t *testing.T) {
 	_, err := readAllAndClose(io.NopCloser(strings.NewReader("12345")), 4)
-	resourceErr, ok := err.(*testcaseArchiveResourceError)
-	if !ok || resourceErr.code != "testcase.archive_too_large" {
+	var resourceErr *testcaseArchiveResourceError
+	if !errors.As(err, &resourceErr) || resourceErr.code != "testcase.archive_too_large" {
 		t.Fatalf("error = %T %v, want testcase.archive_too_large", err, err)
 	}
 }

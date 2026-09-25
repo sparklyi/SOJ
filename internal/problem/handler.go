@@ -23,8 +23,10 @@ type Handler struct {
 func NewHandler(service *Service) *Handler {
 	handler := &Handler{service: service}
 	if service != nil {
-		handler.checkRunner, _ = any(service).(problemCheckRunner)
-		handler.checkGetter, _ = any(service).(problemCheckGetter)
+		// *Service implements both check capabilities. They are held as interfaces so
+		// a caller (or a test) can substitute a stand-in check service.
+		handler.checkRunner = service
+		handler.checkGetter = service
 	}
 	return handler
 }
@@ -366,12 +368,11 @@ func (h *Handler) runProblemCheck(c *gin.Context) {
 	if !ok {
 		return
 	}
-	service, ok := h.problemCheckRunner()
-	if !ok {
+	if h.checkRunner == nil {
 		httpapi.Error(c, apperror.ServiceUnavailable("problem checks are not available"))
 		return
 	}
-	result, err := service.RunProblemCheck(c.Request.Context(), actorFromContext(c), id)
+	result, err := h.checkRunner.RunProblemCheck(c.Request.Context(), actorFromContext(c), id)
 	if err != nil {
 		httpapi.Error(c, err)
 		return
@@ -388,39 +389,16 @@ func (h *Handler) getProblemCheck(c *gin.Context) {
 	if !ok {
 		return
 	}
-	service, ok := h.problemCheckGetter()
-	if !ok {
+	if h.checkGetter == nil {
 		httpapi.Error(c, apperror.ServiceUnavailable("problem checks are not available"))
 		return
 	}
-	result, err := service.GetProblemCheck(c.Request.Context(), actorFromContext(c), id, checkID)
+	result, err := h.checkGetter.GetProblemCheck(c.Request.Context(), actorFromContext(c), id, checkID)
 	if err != nil {
 		httpapi.Error(c, err)
 		return
 	}
 	httpapi.OK(c, problemCheckRunResponse(result))
-}
-
-func (h *Handler) problemCheckRunner() (problemCheckRunner, bool) {
-	if h.checkRunner != nil {
-		return h.checkRunner, true
-	}
-	if h.service == nil {
-		return nil, false
-	}
-	service, ok := any(h.service).(problemCheckRunner)
-	return service, ok
-}
-
-func (h *Handler) problemCheckGetter() (problemCheckGetter, bool) {
-	if h.checkGetter != nil {
-		return h.checkGetter, true
-	}
-	if h.service == nil {
-		return nil, false
-	}
-	service, ok := any(h.service).(problemCheckGetter)
-	return service, ok
 }
 
 func problemCheckRunResponse(result ProblemCheckResult) ProblemCheckRun {

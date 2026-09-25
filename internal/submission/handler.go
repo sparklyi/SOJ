@@ -78,7 +78,7 @@ func (h *Handler) ListRejudgeBatches(c *gin.Context) {
 }
 
 func (h *Handler) GetRejudgeBatch(c *gin.Context) {
-	id, ok := idParam(c, "id", "invalid_rejudge_batch_id")
+	id, ok := idParam(c, "invalid_rejudge_batch_id")
 	if !ok {
 		return
 	}
@@ -91,7 +91,7 @@ func (h *Handler) GetRejudgeBatch(c *gin.Context) {
 }
 
 func (h *Handler) CancelRejudgeBatch(c *gin.Context) {
-	id, ok := idParam(c, "id", "invalid_rejudge_batch_id")
+	id, ok := idParam(c, "invalid_rejudge_batch_id")
 	if !ok {
 		return
 	}
@@ -254,7 +254,7 @@ func (h *Handler) ListOwnSubmissionsByCursor(c *gin.Context) {
 }
 
 func (h *Handler) GetSubmission(c *gin.Context) {
-	id, ok := idParam(c, "id", "invalid_submission_id")
+	id, ok := idParam(c, "invalid_submission_id")
 	if !ok {
 		return
 	}
@@ -294,7 +294,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 }
 
 func (h *Handler) GetRun(c *gin.Context) {
-	id, ok := idParam(c, "id", "invalid_run_id")
+	id, ok := idParam(c, "invalid_run_id")
 	if !ok {
 		return
 	}
@@ -356,7 +356,7 @@ type updateLanguageRequest struct {
 }
 
 func (h *Handler) UpdateLanguage(c *gin.Context) {
-	id, ok := idParam(c, "id", "invalid_language_id")
+	id, ok := idParam(c, "invalid_language_id")
 	if !ok {
 		return
 	}
@@ -575,8 +575,8 @@ func languageResponses(records []LanguageRecord) []languageJSON {
 	return out
 }
 
-func idParam(c *gin.Context, name string, code string) (int64, bool) {
-	id, err := strconv.ParseInt(c.Param(name), 10, 64)
+func idParam(c *gin.Context, code string) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		httpapi.Error(c, apperror.BadRequest(code, "id must be a positive integer"))
 		return 0, false

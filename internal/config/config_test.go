@@ -150,10 +150,8 @@ func TestLoadRequiresRoleSecrets(t *testing.T) {
 
 	if _, err := Load(Options{Role: RoleAPI, File: file}); err == nil {
 		t.Fatal("Load() for api error = nil, want missing dsn and jwt secret")
-	} else {
-		if !strings.Contains(err.Error(), "database.dsn") || !strings.Contains(err.Error(), "auth.jwt_secret") {
-			t.Fatalf("Load() error = %v, want both missing values reported", err)
-		}
+	} else if !strings.Contains(err.Error(), "database.dsn") || !strings.Contains(err.Error(), "auth.jwt_secret") {
+		t.Fatalf("Load() error = %v, want both missing values reported", err)
 	}
 
 	if _, err := Load(Options{Role: RoleWorker, File: file}); err == nil {

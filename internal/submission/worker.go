@@ -473,7 +473,7 @@ func (p *TaskProcessor) processMessage(ctx context.Context, message queue.Messag
 	if err != nil {
 		return p.failures.retryOrDead(ctx, message, task, err)
 	}
-	if _, _, err := completeSubmission(ctx, p.store, submission.ID, result); err != nil {
+	if _, err := completeSubmission(ctx, p.store, submission.ID, result); err != nil {
 		return p.failures.retryOrDead(ctx, message, task, err)
 	}
 	if _, err := p.store.MarkJudgeTaskDone(ctx, task.ID); err != nil {

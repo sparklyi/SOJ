@@ -178,7 +178,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 	err = <-errCh
 	cancel()
-	if err == nil || err == context.Canceled || err == context.DeadlineExceeded {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -218,11 +218,11 @@ func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsum
 	}()
 	if retention != nil && retention.Enabled() {
 		go func() {
-			errCh <- runRunRetentionLoop(ctx, retention, metrics)
+			errCh <- runRunRetentionLoop(ctx, retention)
 		}()
 	}
 	err := <-errCh
-	if err == context.Canceled || err == context.DeadlineExceeded {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return nil
 	}
 	return err
@@ -249,7 +249,7 @@ func runDispatchLoop(ctx context.Context, worker *submission.Worker, requestQueu
 		recordQueueStats(ctx, metrics, "request", requestQueue)
 		loopCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.dispatch", trace.WithAttributes(attribute.Int("soj.worker.batch_size", batchSize)))
 		dispatched, err := worker.DispatchPending(loopCtx, int32(batchSize))
-		span.SetAttributes(attribute.Int("soj.worker.dispatched", int(dispatched)))
+		span.SetAttributes(attribute.Int("soj.worker.dispatched", dispatched))
 		if err != nil {
 			span.SetStatus(codes.Error, "dispatch_error")
 			span.End()
@@ -368,7 +368,7 @@ func runReconcilerLoop(ctx context.Context, reconciler workerReconciler, snapsho
 // seconds and only ever moves state forward; this one deletes data, so its
 // cadence should be a deliberate choice and it should be switchable off without
 // touching anything else.
-func runRunRetentionLoop(ctx context.Context, retention runRetentionSweeper, metrics workerLoopMetrics) error {
+func runRunRetentionLoop(ctx context.Context, retention runRetentionSweeper) error {
 	ticker := time.NewTicker(retention.Interval())
 	defer ticker.Stop()
 	for {

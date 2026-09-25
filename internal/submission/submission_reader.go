@@ -2,6 +2,7 @@ package submission
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -192,7 +193,8 @@ func (s *SubmissionReader) submissionView(ctx context.Context, actor auth.Actor,
 	}
 	result, err := s.store.GetSubmissionResult(ctx, record.ID)
 	if err != nil {
-		if appErr, ok := err.(*apperror.Error); ok && appErr.HTTPStatus == 404 {
+		var appErr *apperror.Error
+		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
 			return view, nil
 		}
 		return SubmissionView{}, err
@@ -201,7 +203,8 @@ func (s *SubmissionReader) submissionView(ctx context.Context, actor auth.Actor,
 
 	attempt, err := s.store.GetLatestJudgeAttemptBySubmissionID(ctx, record.ID)
 	if err != nil {
-		if appErr, ok := err.(*apperror.Error); ok && appErr.HTTPStatus == 404 {
+		var appErr *apperror.Error
+		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
 			return view, nil
 		}
 		return SubmissionView{}, err

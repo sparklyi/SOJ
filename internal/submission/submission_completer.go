@@ -21,28 +21,24 @@ func NewSubmissionCompleter(store submissionCompletionStore) *SubmissionComplete
 }
 
 func (s *SubmissionCompleter) CompleteSubmission(ctx context.Context, submissionID int64, result judge.Result) (SubmissionRecord, error) {
-	updated, _, err := completeSubmission(ctx, s.store, submissionID, result)
+	updated, err := completeSubmission(ctx, s.store, submissionID, result)
 	if err != nil {
 		return SubmissionRecord{}, err
 	}
 	return updated, nil
 }
 
-func completeSubmission(ctx context.Context, store submissionCompletionStore, submissionID int64, result judge.Result) (SubmissionRecord, bool, error) {
+func completeSubmission(ctx context.Context, store submissionCompletionStore, submissionID int64, result judge.Result) (SubmissionRecord, error) {
 	current, err := store.GetSubmission(ctx, submissionID)
 	if err != nil {
-		return SubmissionRecord{}, false, err
+		return SubmissionRecord{}, err
 	}
 	if terminalStatus(current.Status) {
-		return current, false, nil
+		return current, nil
 	}
 	score := int32(0)
 	if result.Verdict == judge.VerdictAccepted {
 		score = 100
 	}
-	updated, err := store.CompleteSubmissionWithResult(ctx, submissionID, result, score)
-	if err != nil {
-		return SubmissionRecord{}, false, err
-	}
-	return updated, true, nil
+	return store.CompleteSubmissionWithResult(ctx, submissionID, result, score)
 }

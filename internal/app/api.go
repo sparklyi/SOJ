@@ -77,7 +77,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	// 站级聚合（首页三数）：PG 是事实源，Redis 缓存 cache-aside；
 	// 各领域服务在自己的 PG 写入成功后调 Refresh，顺序是先 PG 后 Redis。
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr})
-	defer redisClient.Close()
+	defer func() { _ = redisClient.Close() }()
 	statsService := stats.NewService(
 		stats.NewPostgresStore(pool),
 		stats.NewRedisCache(redisClient, time.Hour),
