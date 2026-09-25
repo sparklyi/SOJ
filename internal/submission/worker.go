@@ -176,6 +176,7 @@ func (d *TaskDispatcher) submissionRequestEvent(ctx context.Context, task JudgeT
 	attempt, err := d.store.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
 		SubmissionID:    &submission.ID,
 		TaskID:          task.ID,
+		LanguageID:      language.ID,
 		TestcaseSetID:   testcaseSet.ID,
 		TestcaseSetHash: testcaseSet.ChecksumSHA256,
 		ProtocolVersion: judgeevents.RequestEventType,
@@ -249,6 +250,7 @@ func (d *TaskDispatcher) runRequestEvent(ctx context.Context, task JudgeTaskReco
 	attempt, err := d.store.EnsureJudgeAttempt(ctx, EnsureJudgeAttemptInput{
 		RunID:           &run.ID,
 		TaskID:          task.ID,
+		LanguageID:      language.ID,
 		ProtocolVersion: judgeevents.RequestEventType,
 		JudgeEngine:     judge.EngineSOJAgent,
 		TraceID:         traceID,

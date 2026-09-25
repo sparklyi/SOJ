@@ -46,6 +46,11 @@ func ensureJudgeAttempt(ctx context.Context, q *db.Queries, input EnsureJudgeAtt
 	if itemErr != nil && !errors.Is(itemErr, pgx.ErrNoRows) {
 		return JudgeAttemptRecord{}, itemErr
 	}
+	// An attempt references the language row it ran. Failing here names the
+	// mistake; letting it through surfaces as a foreign key violation.
+	if input.LanguageID == 0 {
+		return JudgeAttemptRecord{}, errors.New("language_id is required to create a judge attempt")
+	}
 	latest, err := latestAttemptForSubject(ctx, q, input)
 	attemptNo := int32(1)
 	if err == nil {
