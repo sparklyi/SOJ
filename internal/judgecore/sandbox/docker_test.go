@@ -262,6 +262,8 @@ func cleanupDockerWorkspace(t *testing.T, s *DockerSandbox, workspace Workspace)
 }
 
 type recordingDockerClient struct {
+	pulls                 []string
+	pullErr               error
 	runs                  []DockerRunSpec
 	runOutput             commandOutput
 	runErr                error
@@ -269,6 +271,11 @@ type recordingDockerClient struct {
 	removeSawDeadline     bool
 	waitForRemoveDeadline bool
 	runtimeAvailable      bool
+}
+
+func (c *recordingDockerClient) Pull(ctx context.Context, image string) error {
+	c.pulls = append(c.pulls, image)
+	return c.pullErr
 }
 
 func (c *recordingDockerClient) Run(ctx context.Context, spec DockerRunSpec) (commandOutput, error) {
