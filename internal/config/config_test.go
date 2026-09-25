@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -8,131 +10,40 @@ import (
 	"SOJ/internal/queue"
 )
 
-func TestLoadUsesEnvironmentOverrides(t *testing.T) {
-	t.Setenv("SOJ_ENV", "test")
-	t.Setenv("SOJ_HTTP_ADDR", ":19090")
-	t.Setenv("SOJ_WORKER_HEALTH_ADDR", ":19091")
-	t.Setenv("SOJ_DATABASE_DSN", "postgres://soj:soj@localhost:5432/soj?sslmode=disable")
-	t.Setenv("SOJ_REDIS_ADDR", "localhost:6380")
-	t.Setenv("SOJ_STORAGE_BUCKET", "soj-test")
-	t.Setenv("SOJ_STORAGE_PATH_STYLE", "true")
-	t.Setenv("SOJ_JUDGE_TIMEOUT", "12s")
-	t.Setenv("SOJ_JUDGE_CLEANUP_TIMEOUT", "7s")
-	t.Setenv("SOJ_JUDGE_RUN_PARALLELISM", "3")
-	t.Setenv("SOJ_JWT_SECRET", "test-secret")
+func writeConfig(t *testing.T, contents string) string {
+	t.Helper()
 
-	cfg, err := Load()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+func loadAgent(t *testing.T, contents string) Config {
+	t.Helper()
+
+	cfg, err := Load(Options{Role: RoleJudgeAgent, File: writeConfig(t, contents)})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	return cfg
+}
+
+func TestLoadDefaultsWithoutFile(t *testing.T) {
+	cfg, err := Load(Options{Role: RoleJudgeAgent})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.Env != "test" {
-		t.Fatalf("Env = %q, want test", cfg.Env)
-	}
-	if cfg.HTTP.Addr != ":19090" {
-		t.Fatalf("HTTP.Addr = %q", cfg.HTTP.Addr)
-	}
-	if cfg.Worker.HealthAddr != ":19091" {
-		t.Fatalf("Worker.HealthAddr = %q", cfg.Worker.HealthAddr)
-	}
-	if cfg.Database.DSN == "" {
-		t.Fatal("Database.DSN was not loaded")
-	}
-	if cfg.Redis.Addr != "localhost:6380" {
-		t.Fatalf("Redis.Addr = %q", cfg.Redis.Addr)
-	}
-	if cfg.Storage.Bucket != "soj-test" || !cfg.Storage.UsePathStyle {
-		t.Fatalf("Storage config = %+v", cfg.Storage)
-	}
-	if cfg.Judge.Timeout != 12*time.Second {
-		t.Fatalf("Judge.Timeout = %v", cfg.Judge.Timeout)
-	}
-	if cfg.Judge.CleanupTimeout != 7*time.Second {
-		t.Fatalf("Judge.CleanupTimeout = %v", cfg.Judge.CleanupTimeout)
-	}
-	if cfg.Judge.RunParallelism != 3 {
-		t.Fatalf("Judge.RunParallelism = %d, want 3", cfg.Judge.RunParallelism)
-	}
-	if cfg.Auth.JWTSecret != "test-secret" {
-		t.Fatal("Auth.JWTSecret was not loaded from env")
-	}
-}
-
-func TestLoadRejectsInvalidDuration(t *testing.T) {
-	t.Setenv("SOJ_JUDGE_TIMEOUT", "not-a-duration")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() error = nil, want invalid duration error")
-	}
-}
-
-func TestLoadRejectsInvalidCleanupDuration(t *testing.T) {
-	t.Setenv("SOJ_JUDGE_CLEANUP_TIMEOUT", "not-a-duration")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() error = nil, want invalid cleanup duration error")
-	}
-}
-
-func TestLoadDefaultsJudgeEndpointToAgentProtocol(t *testing.T) {
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+	if cfg.Env != "dev" {
+		t.Fatalf("Env = %q, want dev", cfg.Env)
 	}
 	if cfg.Judge.Endpoint != "agent://local" {
 		t.Fatalf("Judge.Endpoint = %q, want agent://local", cfg.Judge.Endpoint)
 	}
-}
-
-func TestLoadDefaultsJudgeRunParallelism(t *testing.T) {
-	t.Setenv("SOJ_JUDGE_RUN_PARALLELISM", "")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Judge.RunParallelism != 1 {
-		t.Fatalf("Judge.RunParallelism = %d, want 1", cfg.Judge.RunParallelism)
-	}
-}
-
-func TestLoadDefaultsJudgeRunPerUser(t *testing.T) {
-	t.Setenv("SOJ_JUDGE_RUN_PER_USER", "")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.Judge.RunPerUser != 2 {
-		t.Fatalf("Judge.RunPerUser = %d, want 2", cfg.Judge.RunPerUser)
-	}
-}
-
-func TestLoadRejectsInvalidJudgeRunParallelism(t *testing.T) {
-	for _, value := range []string{"0", "-1", "not-a-number"} {
-		t.Run(value, func(t *testing.T) {
-			t.Setenv("SOJ_JUDGE_RUN_PARALLELISM", value)
-
-			_, err := Load()
-			if err == nil {
-				t.Fatal("Load() error = nil, want invalid parallelism error")
-			}
-			if !strings.HasPrefix(err.Error(), "SOJ_JUDGE_RUN_PARALLELISM") {
-				t.Fatalf("Load() error = %v, want SOJ_JUDGE_RUN_PARALLELISM prefix", err)
-			}
-		})
-	}
-}
-
-func TestLoadDefaultsRedisRetentionLimits(t *testing.T) {
-	t.Setenv("SOJ_REDIS_STREAM_MAX_LEN", "")
-	t.Setenv("SOJ_REDIS_DEAD_STREAM_MAX_LEN", "")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+	if cfg.Judge.RunParallelism != 1 || cfg.Judge.RunPerUser != 2 {
+		t.Fatalf("Judge runs = %+v", cfg.Judge)
 	}
 	if cfg.Redis.StreamMaxLen != queue.DefaultStreamMaxLen {
 		t.Fatalf("Redis.StreamMaxLen = %d, want %d", cfg.Redis.StreamMaxLen, queue.DefaultStreamMaxLen)
@@ -140,100 +51,203 @@ func TestLoadDefaultsRedisRetentionLimits(t *testing.T) {
 	if cfg.Redis.DeadStreamMaxLen != queue.DefaultDeadStreamMaxLen {
 		t.Fatalf("Redis.DeadStreamMaxLen = %d, want %d", cfg.Redis.DeadStreamMaxLen, queue.DefaultDeadStreamMaxLen)
 	}
+	if cfg.Tracing.Enabled {
+		t.Fatal("Tracing.Enabled = true, want default disabled")
+	}
+	if cfg.Redis.RunStream != "soj:judge:tasks:runs" {
+		t.Fatalf("Redis.RunStream = %q, want derived stream", cfg.Redis.RunStream)
+	}
+	if cfg.Redis.ResultStream != "soj:judge:tasks:results" {
+		t.Fatalf("Redis.ResultStream = %q, want derived stream", cfg.Redis.ResultStream)
+	}
 }
 
-func TestLoadParsesRedisRetentionLimits(t *testing.T) {
-	t.Setenv("SOJ_REDIS_STREAM_MAX_LEN", "1234")
-	t.Setenv("SOJ_REDIS_DEAD_STREAM_MAX_LEN", "56")
+func TestLoadFileOverridesDefaults(t *testing.T) {
+	cfg := loadAgent(t, `
+env: docker
+http:
+  addr: ":19090"
+  read_timeout: 3s
+redis:
+  addr: redis:6379
+  run_stream: custom:runs
+judge:
+  timeout: 12s
+  cleanup_timeout: 7s
+  run_parallelism: 3
+  language_slots: go=2
+retention:
+  run_days: 0
+`)
 
-	cfg, err := Load()
+	if cfg.Env != "docker" {
+		t.Fatalf("Env = %q, want docker", cfg.Env)
+	}
+	if cfg.HTTP.Addr != ":19090" || cfg.HTTP.ReadTimeout != 3*time.Second {
+		t.Fatalf("HTTP = %+v", cfg.HTTP)
+	}
+	if cfg.Redis.Addr != "redis:6379" || cfg.Redis.RunStream != "custom:runs" {
+		t.Fatalf("Redis = %+v", cfg.Redis)
+	}
+	if cfg.Judge.Timeout != 12*time.Second || cfg.Judge.CleanupTimeout != 7*time.Second {
+		t.Fatalf("Judge timeouts = %+v", cfg.Judge)
+	}
+	if cfg.Judge.RunParallelism != 3 || cfg.Judge.LanguageSlots != "go=2" {
+		t.Fatalf("Judge runs = %+v", cfg.Judge)
+	}
+	if cfg.Retention.RunDays != 0 {
+		t.Fatalf("Retention.RunDays = %d, want 0", cfg.Retention.RunDays)
+	}
+	if cfg.Judge.MaxBatch != cfg.Redis.BatchSize {
+		t.Fatalf("Judge.MaxBatch = %d, want redis.batch_size %d", cfg.Judge.MaxBatch, cfg.Redis.BatchSize)
+	}
+}
+
+func TestLoadFileRejectsUnknownField(t *testing.T) {
+	_, err := Load(Options{Role: RoleJudgeAgent, File: writeConfig(t, "judge:\n  typo_field: 1\n")})
+	if err == nil {
+		t.Fatal("Load() error = nil, want unknown field error")
+	}
+	if !strings.Contains(err.Error(), "typo_field") {
+		t.Fatalf("Load() error = %v, want the unknown field named", err)
+	}
+}
+
+func TestLoadFileExpandsEnvironment(t *testing.T) {
+	t.Setenv("SOJ_TEST_DSN", "postgres://example")
+
+	cfg, err := Load(Options{Role: RoleAPI, File: writeConfig(t, `
+database:
+  dsn: ${SOJ_TEST_DSN}
+auth:
+  jwt_secret: ${SOJ_TEST_JWT:-dev-secret}
+`)})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Redis.StreamMaxLen != 1234 {
-		t.Fatalf("Redis.StreamMaxLen = %d, want 1234", cfg.Redis.StreamMaxLen)
+
+	if cfg.Database.DSN != "postgres://example" {
+		t.Fatalf("Database.DSN = %q", cfg.Database.DSN)
 	}
-	if cfg.Redis.DeadStreamMaxLen != 56 {
-		t.Fatalf("Redis.DeadStreamMaxLen = %d, want 56", cfg.Redis.DeadStreamMaxLen)
+	if cfg.Auth.JWTSecret != "dev-secret" {
+		t.Fatalf("Auth.JWTSecret = %q, want default", cfg.Auth.JWTSecret)
 	}
 }
 
-func TestLoadRejectsNonPositiveRedisRetentionLimits(t *testing.T) {
+func TestLoadFileReportsMissingEnvironment(t *testing.T) {
+	_, err := Load(Options{Role: RoleJudgeAgent, File: writeConfig(t, "storage:\n  endpoint: ${SOJ_TEST_MISSING}\n")})
+	if err == nil {
+		t.Fatal("Load() error = nil, want missing variable error")
+	}
+	if !strings.Contains(err.Error(), "SOJ_TEST_MISSING") {
+		t.Fatalf("Load() error = %v, want the missing variable named", err)
+	}
+}
+
+func TestLoadRequiresRoleSecrets(t *testing.T) {
+	file := writeConfig(t, "judge:\n  sandbox_backend: fake\n")
+
+	if _, err := Load(Options{Role: RoleAPI, File: file}); err == nil {
+		t.Fatal("Load() for api error = nil, want missing dsn and jwt secret")
+	} else {
+		if !strings.Contains(err.Error(), "database.dsn") || !strings.Contains(err.Error(), "auth.jwt_secret") {
+			t.Fatalf("Load() error = %v, want both missing values reported", err)
+		}
+	}
+
+	if _, err := Load(Options{Role: RoleWorker, File: file}); err == nil {
+		t.Fatal("Load() for worker error = nil, want missing dsn")
+	}
+
+	if _, err := Load(Options{Role: RoleJudgeAgent, File: file}); err != nil {
+		t.Fatalf("Load() for judge agent error = %v, want no database requirement", err)
+	}
+}
+
+func TestLoadRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
-		name  string
-		key   string
-		value string
+		name     string
+		contents string
+		want     string
 	}{
-		{name: "zero stream limit", key: "SOJ_REDIS_STREAM_MAX_LEN", value: "0"},
-		{name: "negative stream limit", key: "SOJ_REDIS_STREAM_MAX_LEN", value: "-1"},
-		{name: "zero dead stream limit", key: "SOJ_REDIS_DEAD_STREAM_MAX_LEN", value: "0"},
-		{name: "negative dead stream limit", key: "SOJ_REDIS_DEAD_STREAM_MAX_LEN", value: "-1"},
+		{"unknown sandbox backend", "judge:\n  sandbox_backend: nonsense\n", "judge.sandbox_backend"},
+		{"unknown agent streams", "redis:\n  agent_streams: sometimes\n", "redis.agent_streams"},
+		{"negative retention", "retention:\n  run_days: -1\n", "retention.run_days"},
+		{"negative batch", "judge:\n  max_batch: -1\n", "judge.max_batch"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("SOJ_REDIS_STREAM_MAX_LEN", "")
-			t.Setenv("SOJ_REDIS_DEAD_STREAM_MAX_LEN", "")
-			t.Setenv(test.key, test.value)
-
-			_, err := Load()
+			_, err := Load(Options{Role: RoleJudgeAgent, File: writeConfig(t, test.contents)})
 			if err == nil {
-				t.Fatalf("Load() error = nil, want non-positive %s rejection", test.key)
+				t.Fatal("Load() error = nil, want validation error")
 			}
-			if !strings.HasPrefix(err.Error(), test.key) {
-				t.Fatalf("Load() error = %v, want %s prefix", err, test.key)
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load() error = %v, want %s", err, test.want)
 			}
 		})
 	}
 }
 
-func TestLoadDefaultsTracingDisabledEvenWithOTELExporterEnv(t *testing.T) {
-	t.Setenv("SOJ_TRACING_ENABLED", "")
-	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-
-	if cfg.Tracing.Enabled {
-		t.Fatal("Tracing.Enabled = true, want default disabled")
-	}
-}
-
-func TestLoadParsesTracingConfiguration(t *testing.T) {
-	t.Setenv("SOJ_TRACING_ENABLED", "true")
-	t.Setenv("OTEL_SERVICE_NAME", "custom-soj")
-	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=test")
-	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://collector:4318/v1/traces")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-
-	if !cfg.Tracing.Enabled {
-		t.Fatal("Tracing.Enabled = false, want true")
-	}
-	if cfg.Tracing.ServiceName != "custom-soj" {
-		t.Fatalf("Tracing.ServiceName = %q, want custom-soj", cfg.Tracing.ServiceName)
-	}
-	if cfg.Tracing.ResourceAttributes != "deployment.environment=test" {
-		t.Fatalf("Tracing.ResourceAttributes = %q", cfg.Tracing.ResourceAttributes)
-	}
-	if cfg.Tracing.ExporterEndpoint != "http://collector:4318/v1/traces" {
-		t.Fatalf("Tracing.ExporterEndpoint = %q", cfg.Tracing.ExporterEndpoint)
-	}
-}
-
-func TestLoadRejectsInvalidTracingEnabled(t *testing.T) {
-	t.Setenv("SOJ_TRACING_ENABLED", "definitely")
-
-	_, err := Load()
+func TestLoadReportsMissingExplicitFile(t *testing.T) {
+	_, err := Load(Options{Role: RoleJudgeAgent, File: filepath.Join(t.TempDir(), "absent.yaml")})
 	if err == nil {
-		t.Fatal("Load() error = nil, want invalid tracing enabled error")
+		t.Fatal("Load() error = nil, want read error")
 	}
-	if got := err.Error(); !strings.HasPrefix(got, "SOJ_TRACING_ENABLED") {
-		t.Fatalf("Load() error = %v, want SOJ_TRACING_ENABLED parse error", err)
+}
+
+func TestPrintMasksSecrets(t *testing.T) {
+	t.Setenv("SOJ_TEST_DSN", "postgres://user:password@db:5432/soj")
+	t.Setenv("SOJ_TEST_JWT", "super-secret")
+
+	file := writeConfig(t, `
+env: prod
+database:
+  dsn: ${SOJ_TEST_DSN}
+auth:
+  jwt_secret: ${SOJ_TEST_JWT}
+storage:
+  access_key: ${SOJ_TEST_ACCESS:-minioadmin}
+  secret_key: ${SOJ_TEST_SECRET:-minioadmin}
+judge:
+  sandbox_backend: docker
+`)
+
+	var out strings.Builder
+	if err := Print(&out, file); err != nil {
+		t.Fatalf("Print() error = %v", err)
+	}
+	printed := out.String()
+
+	for _, secret := range []string{"postgres://user:password@db:5432/soj", "super-secret", "minioadmin"} {
+		if strings.Contains(printed, secret) {
+			t.Fatalf("Print() leaked %q:\n%s", secret, printed)
+		}
+	}
+	if !strings.Contains(printed, masked) {
+		t.Fatalf("Print() did not mask anything:\n%s", printed)
+	}
+	if !strings.Contains(printed, "30s") {
+		t.Fatalf("Print() lost the duration format:\n%s", printed)
+	}
+}
+
+func TestLoadIgnoresPlaceholdersInComments(t *testing.T) {
+	cfg := loadAgent(t, `
+# an example placeholder ${SOJ_TEST_UNSET} must not be resolved
+http:
+  addr: ":8080" # trailing ${SOJ_TEST_ALSO_UNSET}
+`)
+	if cfg.HTTP.Addr != ":8080" {
+		t.Fatalf("HTTP.Addr = %q", cfg.HTTP.Addr)
+	}
+}
+
+func TestLoadExpandsPlaceholdersInsideQuotedValues(t *testing.T) {
+	t.Setenv("SOJ_TEST_HASH", "with#hash")
+
+	cfg := loadAgent(t, "storage:\n  bucket: \"${SOJ_TEST_HASH}\" # comment\n")
+	if cfg.Storage.Bucket != "with#hash" {
+		t.Fatalf("Storage.Bucket = %q", cfg.Storage.Bucket)
 	}
 }

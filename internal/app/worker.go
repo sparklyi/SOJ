@@ -34,12 +34,16 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 
 	fs := flag.NewFlagSet("soj-worker", flag.ContinueOnError)
 	fs.SetOutput(stdout)
+	configFlags := config.RegisterFlags(fs)
 	healthAddr := fs.String("health-addr", "", "worker health HTTP listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if configFlags.Print {
+		return config.Print(stdout, configFlags.File)
+	}
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(config.Options{Role: config.RoleWorker, File: configFlags.File})
 	if err != nil {
 		return err
 	}
@@ -84,8 +88,8 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		return err
 	}
 	resultQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
-		Stream:     envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
-		Group:      envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
+		Stream:     cfg.Redis.ResultStream,
+		Group:      cfg.Redis.ResultGroup,
 		Consumer:   workerConsumerName(),
 		StartID:    "0",
 		MaxLen:     cfg.Redis.StreamMaxLen,
@@ -103,8 +107,8 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	// before the first run is published, so no run can be published into a stream
 	// nobody is positioned to read.
 	runQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
-		Stream:     judgeRunStream(cfg),
-		Group:      judgeRunGroup(),
+		Stream:     cfg.Redis.RunStream,
+		Group:      cfg.Redis.RunGroup,
 		Consumer:   workerConsumerName(),
 		MaxLen:     cfg.Redis.StreamMaxLen,
 		DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
@@ -154,7 +158,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		TracingEnabled: tracing.Enabled(),
 		TracingService: tracing.ServiceName(),
 	})
-	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "run_stream", judgeRunStream(cfg), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "result_group", envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"), "run_retention_days", cfg.Retention.RunDays, "run_retention_interval", cfg.Retention.RunInterval)
+	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "run_stream", cfg.Redis.RunStream, "result_stream", cfg.Redis.ResultStream, "result_group", cfg.Redis.ResultGroup, "run_retention_days", cfg.Retention.RunDays, "run_retention_interval", cfg.Retention.RunInterval)
 
 	server := &http.Server{
 		Addr:         cfg.Worker.HealthAddr,
@@ -409,6 +413,7 @@ func workerConsumerName() string {
 func runWorkerRecoverDeadTask(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("soj-worker recover-dead-task", flag.ContinueOnError)
 	fs.SetOutput(stdout)
+	configFlags := config.RegisterFlags(fs)
 	taskID := fs.Int64("task-id", 0, "dead judge task id to recover")
 	reason := fs.String("reason", "manual dead task recovery", "operator-visible recovery reason")
 	if err := fs.Parse(args); err != nil {
@@ -418,7 +423,7 @@ func runWorkerRecoverDeadTask(ctx context.Context, args []string, stdout io.Writ
 		return errors.New("task-id is required")
 	}
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(config.Options{Role: config.RoleWorker, File: configFlags.File})
 	if err != nil {
 		return err
 	}

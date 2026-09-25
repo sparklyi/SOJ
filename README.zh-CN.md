@@ -106,7 +106,7 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 | MinIO console | `http://localhost:9001` |
 | Prometheus | `http://localhost:9090` |
 
-默认栈使用 `SOJ_JUDGE_SANDBOX_BACKEND=fake` 和 `fake://accepted`，因此在具备特权 sandbox
+默认栈使用 `judge.sandbox_backend: fake` 和 `fake://accepted`，因此在具备特权 sandbox
 运行时之前，也能跑通完整异步评测流程。
 
 ### 后端：直接运行进程
@@ -168,9 +168,9 @@ SMOKE_REAL_JUDGE=1 make smoke
 judge task，worker 发布到 run 流，judge-agent 执行。所以默认的 `agent://local` 就够了，
 这也是生产路径——API 进程不执行任何不可信代码。
 
-自测运行有独立的 request stream（`SOJ_JUDGE_RUN_STREAM`），练习场流量不会排在正式提交前面。
+自测运行有独立的 request stream（`redis.run_stream`），练习场流量不会排在正式提交前面。
 默认一个 agent 同时消费两个流并共享沙箱槽；在第二个 agent 上设置
-`SOJ_JUDGE_AGENT_STREAMS=runs`，就能给练习场独立的容量。
+`redis.agent_streams: runs`，就能给练习场独立的容量。
 
 单机部署与本地开发还可以用 `local://`，由 API 进程自己编译执行：
 
@@ -184,7 +184,7 @@ SOJ_ENV=local SOJ_JUDGE_ENDPOINT=local:// SOJ_JUDGE_SANDBOX_BACKEND=process make
 ### 自测运行的保留策略
 
 自测运行是草稿，本来就不需要长期保留——但每次运行都会往对象存储写一个源码对象。因此
-worker 会定期清理超过 `SOJ_RUN_RETENTION_DAYS` 的已完成自测运行，并**先删对象、后删行**：
+worker 会定期清理超过 `retention.run_days` 的已完成自测运行，并**先删对象、后删行**：
 这样失败时留下的是行，下一轮会重试；反过来则会留下一个再也找不到的对象。正式提交不受
 影响，它们的源码在重测时还要用。
 
@@ -222,68 +222,44 @@ Alertmanager、Jaeger、Tempo 或 OpenTelemetry collector。
 
 ## 配置
 
-运行时通过 `SOJ_*` 环境变量配置。完整示例见
-[deploy/env/api.env.example](deploy/env/api.env.example) 和
-[deploy/config.example.yaml](deploy/config.example.yaml)。
+[deploy/config.yaml](deploy/config.yaml) 就是配置本身：完整 schema 与 Compose 栈
+使用的取值都在这里，每个键的默认值定义在 [internal/config](internal/config)，
+部署需要改的就是这个文件。
 
-运行时和数据存储：
+写成占位符（`${NAME}` 或 `${NAME:-default}`）的值在读取文件时从环境解析。这就是
+全部的环境变量接口：密钥与按部署变化的旋钮都在文件里声明，加载器除文件路径之外
+不再读任何环境变量。
 
-| 变量 | 作用 |
+每个命令都支持：
+
+| 参数 | 作用 |
 | --- | --- |
-| `SOJ_ENV` | 运行环境名称，默认 `dev`。 |
-| `SOJ_HTTP_ADDR` | API 监听地址，默认 `:8080`。 |
-| `SOJ_WORKER_HEALTH_ADDR` | Worker 健康检查服务地址，默认 `:8081`。 |
-| `SOJ_DATABASE_DSN` | PostgreSQL 连接字符串。真实运行环境必须配置。 |
-| `SOJ_REDIS_ADDR` | Redis 地址。 |
-| `SOJ_REDIS_STREAM` | 评测请求流，默认 `soj:judge:tasks`。 |
-| `SOJ_REDIS_GROUP` | Worker consumer group，默认 `judge-workers`。 |
-| `SOJ_REDIS_STREAM_MAX_LEN` | 每个请求或结果流保留消息数的近似上限，默认 `100000`。 |
-| `SOJ_REDIS_DEAD_STREAM_MAX_LEN` | 每个 dead-letter 流保留消息数的近似上限，默认 `10000`。 |
-| `SOJ_STORAGE_ENDPOINT` | 兼容 S3 的对象存储 endpoint。 |
-| `SOJ_STORAGE_BUCKET` | 对象存储 bucket。 |
+| `--config <file>` | 指定配置文件；默认取 `$SOJ_CONFIG_FILE`，再退到存在的 `./config.yaml`。 |
+| `--print-config` | 打印脱敏后的生效配置并退出。 |
+
+```bash
+go run ./cmd/soj-api --config deploy/config.yaml --print-config
+```
+
+随仓库提供的文件引用这些变量（`grep -o '\${[A-Z_]*' deploy/config.yaml` 可直接列出）：
+
+| 占位符 | 作用 |
+| --- | --- |
+| `SOJ_DATABASE_DSN` | PostgreSQL 连接串；api、worker、migrate 需要。 |
+| `SOJ_JWT_SECRET` | JWT 签名密钥；api 需要。 |
 | `SOJ_STORAGE_ACCESS_KEY` / `SOJ_STORAGE_SECRET_KEY` | 对象存储凭据。 |
-| `SOJ_JWT_SECRET` | JWT 签名密钥。真实部署必须替换。 |
+| `SOJ_ENV` | 环境名，默认 `docker`。 |
+| `SOJ_JUDGE_ENDPOINT` / `SOJ_JUDGE_SANDBOX_BACKEND` | 评测路由与 sandbox backend。 |
+| `SOJ_JUDGE_AGENT_STREAMS` | judge-agent 消费哪些流：`all`（默认）、`submissions` 或 `runs`。 |
+| `SOJ_JUDGE_PARALLELISM` / `SOJ_JUDGE_LANGUAGE_SLOTS` / `SOJ_JUDGE_MAX_BATCH` | judge-agent 容量。 |
+| `SOJ_JUDGE_RUN_PARALLELISM` / `SOJ_JUDGE_RUN_PER_USER` / `SOJ_JUDGE_RUN_STDIN_MAX_BYTES` | 自测运行限制。 |
+| `SOJ_RUN_RETENTION_DAYS` / `SOJ_RUN_RETENTION_INTERVAL` / `SOJ_RUN_RETENTION_BATCH` | 自测运行保留清理。 |
+| `SOJ_DOCKER_RUNNER_*` | docker sandbox 的 runtime、workdir 与镜像。 |
+| `OTEL_*` | OpenTelemetry service name、resource attributes 与 trace endpoint。 |
 
-评测与 sandbox：
-
-| 变量 | 作用 |
-| --- | --- |
-| `SOJ_JUDGE_ENDPOINT` | `fake://accepted` 返回预设结果；`agent://local` 表示评测**与自测运行**都交给 judge-agent（生产路径）；`local://` 表示自测运行改为在 API 进程内执行（仅限单机/本地，拒绝 `docker` 后端）。 |
-| `SOJ_JUDGE_TIMEOUT` | 评测超时时间，默认 `30s`。 |
-| `SOJ_JUDGE_SANDBOX_BACKEND` | Judge-agent sandbox backend：`fake`、`process` 或 `docker`。 |
-| `SOJ_JUDGE_PARALLELISM` | Judge-agent 全局 sandbox slot 数。 |
-| `SOJ_JUDGE_LANGUAGE_SLOTS` | 按语言限制 slot，例如 `go=4,cpp17=4`。 |
-| `SOJ_JUDGE_CLEANUP_TIMEOUT` | 判题 workspace 和容器清理的独立超时时间，默认 `5s`。 |
-
-自测运行：
-
-| 变量 | 作用 |
-| --- | --- |
-| `SOJ_JUDGE_RUN_STREAM` | 自测运行的 request stream，默认 `<SOJ_REDIS_STREAM>:runs`。 |
-| `SOJ_JUDGE_RUN_GROUP` | run 流上的消费组，默认 `judge-run-agents`。 |
-| `SOJ_JUDGE_AGENT_STREAMS` | judge-agent 消费哪些 request stream：`all`（默认）、`submissions` 或 `runs`。 |
-| `SOJ_JUDGE_RUN_PER_USER` | 单用户同时在途的 self-run 上限，默认 `2`。在数据库中计数，跨 API 副本精确。 |
-| `SOJ_JUDGE_RUN_STDIN_MAX_BYTES` | 单次自测运行允许的 stdin 上限，默认 `65536`，超限返回 `422 run.stdin_too_large`。 |
-| `SOJ_JUDGE_RUN_PARALLELISM` | API 侧 self-run 的全局并发槽位，默认 `1`。仅 `local://` 生效。 |
-| `SOJ_RUN_RETENTION_DAYS` | 已完成自测运行及其源码对象的保留天数，默认 `7`。`0` 表示关闭清理。 |
-| `SOJ_RUN_RETENTION_INTERVAL` / `SOJ_RUN_RETENTION_BATCH` | 清理间隔（`10m`）和单轮删除上限（`200`）。 |
-
-Docker runner：
-
-| 变量 | 作用 |
-| --- | --- |
-| `SOJ_DOCKER_RUNNER_RUNTIME` | runner 容器使用的 Docker runtime；生产应使用 `runsc`。 |
-| `SOJ_DOCKER_RUNNER_IMAGE_GO` | Go runner image，本地 smoke 默认 `ghcr.io/sparklyi/soj-runner-go:main`。 |
-| `SOJ_DOCKER_RUNNER_IMAGE_CPP17` | C++17 runner image，本地 smoke 默认 `ghcr.io/sparklyi/soj-runner-cpp17:main`。 |
-
-Tracing（默认关闭）：
-
-| 变量 | 作用 |
-| --- | --- |
-| `SOJ_TRACING_ENABLED` | 设置为 `true` 时启用 OpenTelemetry tracing。 |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | OTLP/HTTP trace endpoint，例如 `http://collector:4318/v1/traces`。 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | 未设置 traces endpoint 时使用的通用 OTLP endpoint。 |
-| `OTEL_SERVICE_NAME` / `OTEL_RESOURCE_ATTRIBUTES` | 可选的 service name 覆盖值和 resource attributes。 |
+把 [deploy/env/api.env.example](deploy/env/api.env.example) 复制成部署环境的
+env 即可提供这些值；生产 overlay 与必填变量见
+[docs/v2-deploy.md](docs/v2-deploy.md)。
 
 ## API
 
@@ -350,13 +326,13 @@ gh pr list
 - 使用生产 PostgreSQL、Redis 和兼容 S3 的对象存储凭据。
 - 将 `/metrics` 保持在私有网络中，或在入口层加保护。
 - 将 tracing backend 和 collector 保持在私有网络中；tracing 默认关闭，必须通过
-  `SOJ_TRACING_ENABLED=true` 显式启用。
+  `tracing.enabled: true` 显式启用。
 - 运行 `soj-judge-agent` 时不要提供业务数据库凭据。
-- `SOJ_JUDGE_SANDBOX_BACKEND=docker` 搭配 Docker runtime `runsc`/gVisor 是生产 sandbox 目标。
-- 生产 judge 节点设置 `SOJ_ENV=prod` 和 `SOJ_DOCKER_RUNNER_RUNTIME=runsc`；如果 runsc 或
+- `judge.sandbox_backend: docker` 搭配 `runsc`/gVisor 是生产 sandbox 目标。
+- 生产 judge 节点设置 `env: prod` 和 `agent.runner.runtime: runsc`；如果 runsc 或
   no-op runner probe 不可用，启动会失败。
-- 生产环境将 `SOJ_DOCKER_RUNNER_IMAGE_GO` 和 `SOJ_DOCKER_RUNNER_IMAGE_CPP17` 固定到 release
-  或 `sha-*` runner image tag。
+- 生产环境将 runner 镜像（`agent.runner.go_image`、`agent.runner.cpp17_image`）固定到
+  release 或 `sha-*` tag。
 - 将 GHCR runner packages 设为 public，或在私有 judge 节点提前登录 `ghcr.io` 后再拉取镜像。
 - 不要在开发、测试和本地真实代码 smoke 之外使用 `process` sandbox backend。
 - 不要把本地 fake language seed 当作生产语言数据使用。

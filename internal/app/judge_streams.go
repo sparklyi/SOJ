@@ -19,15 +19,9 @@ import (
 // what makes it possible to run a second agent dedicated to runs, with its own
 // parallelism, without changing any code.
 //
-// The names are defined once, here, because the worker publishes to them and the
-// agent consumes them -- two independent literals would be a silent split.
-func judgeRunStream(cfg config.Config) string {
-	return envOr("SOJ_JUDGE_RUN_STREAM", cfg.Redis.Stream+":runs")
-}
-
-func judgeRunGroup() string {
-	return envOr("SOJ_JUDGE_RUN_GROUP", "judge-run-agents")
-}
+// The stream names live in the configuration (redis.run_stream and friends),
+// which derives them from redis.stream when they are left empty. The worker
+// publishes to them and the agent consumes them, so there is one definition.
 
 // judgeAgentStreams selects which request streams an agent consumes.
 type judgeAgentStreams struct {
@@ -35,26 +29,21 @@ type judgeAgentStreams struct {
 	runs        bool
 }
 
-const (
-	judgeAgentStreamsAll         = "all"
-	judgeAgentStreamsSubmissions = "submissions"
-	judgeAgentStreamsRuns        = "runs"
-)
-
-// parseJudgeAgentStreams reads SOJ_JUDGE_AGENT_STREAMS. "all" (the default)
-// keeps one agent on both streams and sharing its sandbox slots; "runs" lets an
+// parseJudgeAgentStreams reads redis.agent_streams. "all" (the default) keeps
+// one agent on both streams and sharing its sandbox slots; "runs" lets an
 // operator dedicate a process to the playground so it cannot touch submission
 // latency.
 func parseJudgeAgentStreams(value string) (judgeAgentStreams, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", judgeAgentStreamsAll:
+	case "", config.AgentStreamsAll:
 		return judgeAgentStreams{submissions: true, runs: true}, nil
-	case judgeAgentStreamsSubmissions:
+	case config.AgentStreamsSubmissions:
 		return judgeAgentStreams{submissions: true}, nil
-	case judgeAgentStreamsRuns:
+	case config.AgentStreamsRuns:
 		return judgeAgentStreams{runs: true}, nil
 	default:
-		return judgeAgentStreams{}, fmt.Errorf("SOJ_JUDGE_AGENT_STREAMS must be %q, %q or %q, got %q", judgeAgentStreamsAll, judgeAgentStreamsSubmissions, judgeAgentStreamsRuns, value)
+		return judgeAgentStreams{}, fmt.Errorf("redis.agent_streams must be %q, %q or %q, got %q",
+			config.AgentStreamsAll, config.AgentStreamsSubmissions, config.AgentStreamsRuns, value)
 	}
 }
 
@@ -73,8 +62,8 @@ func judgeAgentRequestQueues(client *redis.Client, cfg config.Config, streams ju
 		queues = append(queues, judgeRequestStream{
 			Name: "submissions",
 			Queue: queue.NewRedisStreamQueue(client, queue.RedisStreamConfig{
-				Stream:     envOr("SOJ_JUDGE_REQUEST_STREAM", cfg.Redis.Stream),
-				Group:      envOr("SOJ_JUDGE_AGENT_GROUP", "judge-agents"),
+				Stream:     cfg.Redis.Stream,
+				Group:      cfg.Redis.AgentGroup,
 				Consumer:   judgeAgentConsumerName(),
 				MaxLen:     cfg.Redis.StreamMaxLen,
 				DeadMaxLen: cfg.Redis.DeadStreamMaxLen,
@@ -85,8 +74,8 @@ func judgeAgentRequestQueues(client *redis.Client, cfg config.Config, streams ju
 		queues = append(queues, judgeRequestStream{
 			Name: "runs",
 			Queue: queue.NewRedisStreamQueue(client, queue.RedisStreamConfig{
-				Stream:     judgeRunStream(cfg),
-				Group:      judgeRunGroup(),
+				Stream:     cfg.Redis.RunStream,
+				Group:      cfg.Redis.RunGroup,
 				Consumer:   judgeAgentConsumerName(),
 				MaxLen:     cfg.Redis.StreamMaxLen,
 				DeadMaxLen: cfg.Redis.DeadStreamMaxLen,

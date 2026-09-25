@@ -272,16 +272,17 @@ The checked-in alert rules live in `deploy/prometheus-rules/soj-alerts.yml` and 
 
 ## Tracing Enablement
 
-Tracing is disabled by default. Generic `OTEL_*` variables alone do not enable SOJ tracing. Set the SOJ gate explicitly:
+Tracing is disabled by default. Generic `OTEL_*` variables alone do not enable SOJ tracing. Enable it in the configuration file:
 
-```bash
-SOJ_TRACING_ENABLED=true
-OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://collector:4318/v1/traces
-OTEL_SERVICE_NAME=soj-api
-OTEL_RESOURCE_ATTRIBUTES=deployment.environment=trial
+```yaml
+tracing:
+  enabled: true
+  exporter_endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://collector:4318/v1/traces}
+  service_name: ${OTEL_SERVICE_NAME:-soj-api}
+  resource_attributes: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=trial}
 ```
 
-Repeat the setting for each process that should export spans. If `OTEL_SERVICE_NAME` is omitted, SOJ uses process-specific names such as `soj-api`, `soj-worker`, and `soj-judge-agent`. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`.
+Repeat the setting for each process that should export spans. If the service name is omitted, SOJ uses process-specific names such as `soj-api`, `soj-worker`, and `soj-judge-agent`.
 
 SOJ currently uses OTLP/HTTP exporter configuration. The deployment must provide any collector or tracing backend outside the default Compose stack. Exporter setup errors can fail startup only when tracing is explicitly enabled and misconfigured; transient export failures should not change normal API, worker, or judge execution behavior.
 

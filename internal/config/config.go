@@ -1,78 +1,124 @@
 package config
 
 import (
-	"fmt"
-	"os"
-	"strconv"
 	"time"
 
 	"SOJ/internal/judgecore/sandbox"
 	"SOJ/internal/queue"
 )
 
+// Config is the runtime configuration.
+//
+// Defaults live in defaults. An optional YAML file overrides them, and ${VAR}
+// references inside that file are filled from the environment, so values that
+// must not be committed (secrets) or must differ per deployment can stay
+// outside the file. The only environment variable the loader itself reads is
+// SOJ_CONFIG_FILE, which names the file.
 type Config struct {
-	Env        string
-	HTTP       HTTPConfig
-	Worker     WorkerConfig
-	Database   DatabaseConfig
-	Redis      RedisConfig
-	Storage    StorageConfig
-	Judge      JudgeConfig
-	Retention  RetentionConfig
-	Auth       AuthConfig
-	Log        LogConfig
-	Migrations MigrationsConfig
-	Tracing    TracingConfig
+	Env        string           `yaml:"env"`
+	HTTP       HTTPConfig       `yaml:"http"`
+	Worker     WorkerConfig     `yaml:"worker"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Redis      RedisConfig      `yaml:"redis"`
+	Storage    StorageConfig    `yaml:"storage"`
+	Judge      JudgeConfig      `yaml:"judge"`
+	Agent      AgentConfig      `yaml:"agent"`
+	Retention  RetentionConfig  `yaml:"retention"`
+	Auth       AuthConfig       `yaml:"auth"`
+	Log        LogConfig        `yaml:"log"`
+	Migrations MigrationsConfig `yaml:"migrations"`
+	Tracing    TracingConfig    `yaml:"tracing"`
 }
 
 type HTTPConfig struct {
-	Addr         string
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
+	Addr         string        `yaml:"addr"`
+	ReadTimeout  time.Duration `yaml:"read_timeout"`
+	WriteTimeout time.Duration `yaml:"write_timeout"`
 }
 
 type WorkerConfig struct {
-	HealthAddr      string
-	ShutdownTimeout time.Duration
+	HealthAddr      string        `yaml:"health_addr"`
+	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 }
 
 type DatabaseConfig struct {
-	DSN string
+	// DSN carries credentials, so it usually comes from the environment.
+	DSN string `yaml:"dsn" secret:"true"`
 }
 
 type RedisConfig struct {
-	Addr             string
-	Stream           string
-	Group            string
-	BatchSize        int
-	Block            time.Duration
-	StreamMaxLen     int64
-	DeadStreamMaxLen int64
+	Addr             string        `yaml:"addr"`
+	Stream           string        `yaml:"stream"`
+	Group            string        `yaml:"group"`
+	BatchSize        int           `yaml:"batch_size"`
+	Block            time.Duration `yaml:"block"`
+	StreamMaxLen     int64         `yaml:"stream_max_len"`
+	DeadStreamMaxLen int64         `yaml:"dead_stream_max_len"`
+
+	// Self-runs travel on their own request stream so playground traffic
+	// cannot queue in front of a formal submission. Empty values derive from
+	// Stream at load time.
+	RunStream    string `yaml:"run_stream"`
+	RunGroup     string `yaml:"run_group"`
+	ResultStream string `yaml:"result_stream"`
+	ResultGroup  string `yaml:"result_group"`
+
+	// AgentStreams selects which request streams a judge agent consumes:
+	// "all", "submissions", or "runs". A second agent set to "runs" gets its
+	// own capacity without touching submission latency.
+	AgentStreams string `yaml:"agent_streams"`
+	AgentGroup   string `yaml:"agent_group"`
 }
 
 type StorageConfig struct {
-	Endpoint     string
-	Bucket       string
-	Region       string
-	AccessKey    string
-	SecretKey    string
-	UsePathStyle bool
+	Endpoint     string `yaml:"endpoint"`
+	Bucket       string `yaml:"bucket"`
+	Region       string `yaml:"region"`
+	AccessKey    string `yaml:"access_key" secret:"true"`
+	SecretKey    string `yaml:"secret_key" secret:"true"`
+	UsePathStyle bool   `yaml:"path_style"`
 }
 
 type JudgeConfig struct {
-	Endpoint       string
-	Timeout        time.Duration
-	CleanupTimeout time.Duration
-	// RunParallelism caps runs executed inside the API process. It only applies
-	// to the local:// endpoint; with agent:// the agent's own parallelism is the
-	// limit, and this process never executes anything.
-	RunParallelism int
+	Endpoint string `yaml:"endpoint"`
+	// SandboxBackend is fake, process, or docker. Only the judge agent may
+	// select docker; the sandbox package rejects the combination otherwise.
+	SandboxBackend string        `yaml:"sandbox_backend"`
+	Timeout        time.Duration `yaml:"timeout"`
+	CleanupTimeout time.Duration `yaml:"cleanup_timeout"`
+
+	// Parallelism and LanguageSlots bound the sandbox slots of one judge
+	// agent. MaxBatch bounds how many requests one loop iteration takes.
+	Parallelism   int    `yaml:"parallelism"`
+	LanguageSlots string `yaml:"language_slots"`
+	MaxBatch      int    `yaml:"max_batch"`
+
+	// RunParallelism caps runs executed inside the API process. It only
+	// applies to the local:// endpoint; with agent:// the agent's own
+	// parallelism is the limit and this process never executes anything.
+	RunParallelism int `yaml:"run_parallelism"`
 	// RunPerUser caps in-flight self-runs per user. The agent's capacity is
 	// shared, so without this one caller can drain every slot.
-	RunPerUser int
-	// RunStdinMaxBytes bounds the stdin a run may carry. It is stored in the run
-	// row and placed on the request event, so it cannot be unbounded.
-	RunStdinMaxBytes int
+	RunPerUser int `yaml:"run_per_user"`
+	// RunStdinMaxBytes bounds the stdin a run may carry. It is stored in the
+	// run row and placed on the request event, so it cannot be unbounded.
+	RunStdinMaxBytes int `yaml:"run_stdin_max_bytes"`
+}
+
+// AgentConfig configures the judge agent process. The API, worker, and
+// migration commands ignore it.
+type AgentConfig struct {
+	HealthAddr string       `yaml:"health_addr"`
+	Runner     RunnerConfig `yaml:"runner"`
+}
+
+// RunnerConfig points the docker sandbox at its runner containers.
+type RunnerConfig struct {
+	Runtime    string `yaml:"runtime"`
+	Workdir    string `yaml:"workdir"`
+	User       string `yaml:"user"`
+	ImageGo    string `yaml:"go_image"`
+	ImageCpp17 string `yaml:"cpp17_image"`
 }
 
 // RetentionConfig bounds how long the data a self-run leaves behind is kept.
@@ -84,73 +130,81 @@ type RetentionConfig struct {
 	// RunDays is how long a finished self-run and its source object are kept.
 	// Zero disables the sweep; it is the default an operator should reach for
 	// when they want retention off, so it must not read as "keep nothing".
-	RunDays int
+	RunDays int `yaml:"run_days"`
 	// RunInterval is how often the worker sweeps.
-	RunInterval time.Duration
-	// RunBatch bounds how many runs one sweep removes, so a backlog drains over
-	// several sweeps instead of one long transaction.
-	RunBatch int
+	RunInterval time.Duration `yaml:"run_interval"`
+	// RunBatch bounds how many runs one sweep removes, so a backlog drains
+	// over several sweeps instead of one long transaction.
+	RunBatch int `yaml:"run_batch"`
 }
 
 type AuthConfig struct {
-	JWTSecret       string
-	AccessTokenTTL  time.Duration
-	RefreshTokenTTL time.Duration
+	JWTSecret       string        `yaml:"jwt_secret" secret:"true"`
+	AccessTokenTTL  time.Duration `yaml:"access_token_ttl"`
+	RefreshTokenTTL time.Duration `yaml:"refresh_token_ttl"`
 }
 
 type LogConfig struct {
-	Level string
+	Level string `yaml:"level"`
 }
 
 type MigrationsConfig struct {
-	Dir string
+	Dir string `yaml:"dir"`
 }
 
 type TracingConfig struct {
-	Enabled            bool
-	ServiceName        string
-	ResourceAttributes string
-	ExporterEndpoint   string
+	Enabled            bool   `yaml:"enabled"`
+	ServiceName        string `yaml:"service_name"`
+	ResourceAttributes string `yaml:"resource_attributes"`
+	ExporterEndpoint   string `yaml:"exporter_endpoint"`
 }
 
-func Load() (Config, error) {
-	cfg := Config{
-		Env: env("SOJ_ENV", "dev"),
+// defaults returns the configuration before any file or environment input.
+func defaults() Config {
+	return Config{
+		Env: "dev",
 		HTTP: HTTPConfig{
-			Addr:         env("SOJ_HTTP_ADDR", ":8080"),
+			Addr:         ":8080",
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
 		},
 		Worker: WorkerConfig{
-			HealthAddr:      env("SOJ_WORKER_HEALTH_ADDR", ":8081"),
+			HealthAddr:      ":8081",
 			ShutdownTimeout: 10 * time.Second,
 		},
-		Database: DatabaseConfig{
-			DSN: env("SOJ_DATABASE_DSN", ""),
-		},
 		Redis: RedisConfig{
-			Addr:             env("SOJ_REDIS_ADDR", "localhost:6379"),
-			Stream:           env("SOJ_REDIS_STREAM", "soj:judge:tasks"),
-			Group:            env("SOJ_REDIS_GROUP", "judge-workers"),
+			Addr:             "localhost:6379",
+			Stream:           "soj:judge:tasks",
+			Group:            "judge-workers",
 			BatchSize:        16,
 			Block:            5 * time.Second,
 			StreamMaxLen:     queue.DefaultStreamMaxLen,
 			DeadStreamMaxLen: queue.DefaultDeadStreamMaxLen,
+			RunGroup:         "judge-run-agents",
+			ResultGroup:      "judge-result-consumers",
+			AgentStreams:     AgentStreamsAll,
+			AgentGroup:       "judge-agents",
 		},
 		Storage: StorageConfig{
-			Endpoint:  env("SOJ_STORAGE_ENDPOINT", "http://localhost:9000"),
-			Bucket:    env("SOJ_STORAGE_BUCKET", "soj"),
-			Region:    env("SOJ_STORAGE_REGION", "us-east-1"),
-			AccessKey: env("SOJ_STORAGE_ACCESS_KEY", ""),
-			SecretKey: env("SOJ_STORAGE_SECRET_KEY", ""),
+			Endpoint: "http://localhost:9000",
+			Bucket:   "soj",
+			Region:   "us-east-1",
 		},
 		Judge: JudgeConfig{
-			Endpoint:         env("SOJ_JUDGE_ENDPOINT", "agent://local"),
+			Endpoint:         "agent://local",
 			Timeout:          30 * time.Second,
 			CleanupTimeout:   sandbox.DefaultCleanupTimeout,
+			Parallelism:      1,
 			RunParallelism:   1,
 			RunPerUser:       2,
 			RunStdinMaxBytes: 64 << 10,
+		},
+		Agent: AgentConfig{
+			HealthAddr: ":8082",
+			Runner: RunnerConfig{
+				ImageGo:    "ghcr.io/sparklyi/soj-runner-go:main",
+				ImageCpp17: "ghcr.io/sparklyi/soj-runner-cpp17:main",
+			},
 		},
 		Retention: RetentionConfig{
 			RunDays:     7,
@@ -158,178 +212,29 @@ func Load() (Config, error) {
 			RunBatch:    200,
 		},
 		Auth: AuthConfig{
-			JWTSecret:       env("SOJ_JWT_SECRET", ""),
 			AccessTokenTTL:  15 * time.Minute,
 			RefreshTokenTTL: 30 * 24 * time.Hour,
 		},
 		Log: LogConfig{
-			Level: env("SOJ_LOG_LEVEL", "info"),
+			Level: "info",
 		},
 		Migrations: MigrationsConfig{
-			Dir: env("SOJ_MIGRATIONS_DIR", "internal/migrations"),
-		},
-		Tracing: TracingConfig{
-			ServiceName:        env("OTEL_SERVICE_NAME", ""),
-			ResourceAttributes: env("OTEL_RESOURCE_ATTRIBUTES", ""),
-			ExporterEndpoint:   tracingExporterEndpoint(),
+			Dir: "internal/migrations",
 		},
 	}
-
-	var err error
-	if cfg.HTTP.ReadTimeout, err = envDuration("SOJ_HTTP_READ_TIMEOUT", cfg.HTTP.ReadTimeout); err != nil {
-		return Config{}, err
-	}
-	if cfg.HTTP.WriteTimeout, err = envDuration("SOJ_HTTP_WRITE_TIMEOUT", cfg.HTTP.WriteTimeout); err != nil {
-		return Config{}, err
-	}
-	if cfg.Worker.ShutdownTimeout, err = envDuration("SOJ_SHUTDOWN_TIMEOUT", cfg.Worker.ShutdownTimeout); err != nil {
-		return Config{}, err
-	}
-	if cfg.Redis.BatchSize, err = envInt("SOJ_REDIS_BATCH_SIZE", cfg.Redis.BatchSize); err != nil {
-		return Config{}, err
-	}
-	if cfg.Redis.Block, err = envDuration("SOJ_REDIS_BLOCK", cfg.Redis.Block); err != nil {
-		return Config{}, err
-	}
-	if cfg.Redis.StreamMaxLen, err = envPositiveInt64("SOJ_REDIS_STREAM_MAX_LEN", cfg.Redis.StreamMaxLen); err != nil {
-		return Config{}, err
-	}
-	if cfg.Redis.DeadStreamMaxLen, err = envPositiveInt64("SOJ_REDIS_DEAD_STREAM_MAX_LEN", cfg.Redis.DeadStreamMaxLen); err != nil {
-		return Config{}, err
-	}
-	if cfg.Storage.UsePathStyle, err = envBool("SOJ_STORAGE_PATH_STYLE", false); err != nil {
-		return Config{}, err
-	}
-	if cfg.Judge.Timeout, err = envDuration("SOJ_JUDGE_TIMEOUT", cfg.Judge.Timeout); err != nil {
-		return Config{}, err
-	}
-	if cfg.Judge.CleanupTimeout, err = envDuration("SOJ_JUDGE_CLEANUP_TIMEOUT", cfg.Judge.CleanupTimeout); err != nil {
-		return Config{}, err
-	}
-	if cfg.Judge.RunParallelism, err = envPositiveInt("SOJ_JUDGE_RUN_PARALLELISM", cfg.Judge.RunParallelism); err != nil {
-		return Config{}, err
-	}
-	if cfg.Judge.RunPerUser, err = envPositiveInt("SOJ_JUDGE_RUN_PER_USER", cfg.Judge.RunPerUser); err != nil {
-		return Config{}, err
-	}
-	if cfg.Judge.RunStdinMaxBytes, err = envPositiveInt("SOJ_JUDGE_RUN_STDIN_MAX_BYTES", cfg.Judge.RunStdinMaxBytes); err != nil {
-		return Config{}, err
-	}
-	if cfg.Retention.RunDays, err = envNonNegativeInt("SOJ_RUN_RETENTION_DAYS", cfg.Retention.RunDays); err != nil {
-		return Config{}, err
-	}
-	if cfg.Retention.RunInterval, err = envDuration("SOJ_RUN_RETENTION_INTERVAL", cfg.Retention.RunInterval); err != nil {
-		return Config{}, err
-	}
-	if cfg.Retention.RunBatch, err = envPositiveInt("SOJ_RUN_RETENTION_BATCH", cfg.Retention.RunBatch); err != nil {
-		return Config{}, err
-	}
-	if cfg.Auth.AccessTokenTTL, err = envDuration("SOJ_ACCESS_TOKEN_TTL", cfg.Auth.AccessTokenTTL); err != nil {
-		return Config{}, err
-	}
-	if cfg.Auth.RefreshTokenTTL, err = envDuration("SOJ_REFRESH_TOKEN_TTL", cfg.Auth.RefreshTokenTTL); err != nil {
-		return Config{}, err
-	}
-	if cfg.Tracing.Enabled, err = envBool("SOJ_TRACING_ENABLED", false); err != nil {
-		return Config{}, err
-	}
-
-	return cfg, nil
 }
 
-func tracingExporterEndpoint() string {
-	if value := env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", ""); value != "" {
-		return value
+// normalize derives values that depend on other values. It runs after the file
+// is applied and before validation, so the rest of the program only sees a
+// complete configuration.
+func (c *Config) normalize() {
+	if c.Redis.RunStream == "" {
+		c.Redis.RunStream = c.Redis.Stream + ":runs"
 	}
-	return env("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-}
-
-func env(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+	if c.Redis.ResultStream == "" {
+		c.Redis.ResultStream = c.Redis.Stream + ":results"
 	}
-	return fallback
-}
-
-func envDuration(key string, fallback time.Duration) (time.Duration, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback, nil
+	if c.Judge.MaxBatch == 0 {
+		c.Judge.MaxBatch = c.Redis.BatchSize
 	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
-	}
-	return parsed, nil
-}
-
-func envInt(key string, fallback int) (int, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
-	}
-	return parsed, nil
-}
-
-func envPositiveInt64(key string, fallback int64) (int64, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
-	}
-	if parsed <= 0 {
-		return 0, fmt.Errorf("%s: must be greater than zero", key)
-	}
-	return parsed, nil
-}
-
-// envNonNegativeInt parses a value where zero is meaningful, unlike
-// envPositiveInt. Retention uses it: zero has to mean "off", not "keep nothing".
-func envNonNegativeInt(key string, fallback int) (int, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
-	}
-	if parsed < 0 {
-		return 0, fmt.Errorf("%s: must not be negative", key)
-	}
-	return parsed, nil
-}
-
-func envPositiveInt(key string, fallback int) (int, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", key, err)
-	}
-	if parsed <= 0 {
-		return 0, fmt.Errorf("%s: must be greater than zero", key)
-	}
-	return parsed, nil
-}
-
-func envBool(key string, fallback bool) (bool, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", key, err)
-	}
-	return parsed, nil
 }

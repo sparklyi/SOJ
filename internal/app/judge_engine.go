@@ -68,7 +68,7 @@ func newRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine, erro
 }
 
 func newLocalRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine, error) {
-	backend, err := sandbox.SelectBackend(cfg.Env, envOr("SOJ_JUDGE_SANDBOX_BACKEND", ""), cfg.Judge.Endpoint)
+	backend, err := sandbox.SelectBackend(cfg.Env, cfg.Judge.SandboxBackend, cfg.Judge.Endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func newLocalRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine,
 		return nil, errUnsupportedSandboxBackend(backend)
 	}
 
-	runner, err := newJudgeAgentSandbox(backend, cfg.Judge.CleanupTimeout, nil, logger)
+	runner, err := newJudgeAgentSandbox(backend, cfg.Agent.Runner, cfg.Judge.CleanupTimeout, nil, logger)
 	if err != nil {
 		return nil, err
 	}

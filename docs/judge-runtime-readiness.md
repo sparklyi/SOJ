@@ -75,7 +75,7 @@ Local Prometheus is available at `http://localhost:9090` when the Compose stack 
 
 Local Prometheus loads alert rules from `deploy/prometheus-rules/soj-alerts.yml`. The rules cover readiness dependency failures, HTTP 5xx/latency, judge dispatch failures, result-consumer failures, dead task activity, recovery activity, reconciliation failures, queue backlog, oldest pending message age, slot saturation, sandbox backend errors, and cleanup failures.
 
-See `docs/observability-trial-loop.md` for dashboard queries, alert interpretation, and trace pivot workflow. Tracing is optional; set `SOJ_TRACING_ENABLED=true` plus standard `OTEL_*` exporter variables only in environments that provide an OTLP collector or tracing backend. The default local stack does not require one.
+See `docs/observability-trial-loop.md` for dashboard queries, alert interpretation, and trace pivot workflow. Tracing is optional; set `tracing.enabled: true` (or the `SOJ_TRACING_ENABLED` placeholder) plus the standard `OTEL_*` exporter variables only in environments that provide an OTLP collector or tracing backend. The default local stack does not require one.
 
 ## Local Validation Environment
 
@@ -107,4 +107,4 @@ RUNNER_IMAGES_PREPARE=pull make smoke-real-docker
 - Result queue grows but submissions do not finish: check `soj_worker_result_consumer_messages_total{result="error"}`, PostgreSQL readiness, and result-consumer logs.
 - Dead tasks accumulate: inspect `judge_tasks.last_error`, Redis `soj:judge:tasks:dead`, and `soj_worker_reconciliation_total`; recover individual tasks only after fixing the underlying dependency.
 - A specific submission is slow or stuck: use the admin diagnostics `trace_id`; when tracing is enabled, search the tracing backend for that ID, otherwise pivot through judge attempts, Redis stream state, and the queue metrics above.
-- Tracing is enabled but no spans appear: confirm `SOJ_TRACING_ENABLED=true`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT`, collector reachability from each process, and the service name used in the tracing backend.
+- Tracing is enabled but no spans appear: confirm `tracing.enabled: true`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, collector reachability from each process, and the service name used in the tracing backend.

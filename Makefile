@@ -1,4 +1,4 @@
-.PHONY: test vet compose-config compose-config-docker-runner runner-images runner-images-pull runner-images-build up smoke smoke-real-docker smoke-real-gvisor smoke-runner-capacity down
+.PHONY: test vet compose-config compose-config-docker-runner config-print runner-images runner-images-pull runner-images-build up smoke smoke-real-docker smoke-real-gvisor smoke-runner-capacity down
 
 COMPOSE_FILE ?= deploy/docker-compose.yaml
 DOCKER_RUNNER_COMPOSE_FILES ?= deploy/docker-compose.yaml:deploy/docker-compose.docker-runner.yaml
@@ -22,6 +22,9 @@ compose-config:
 
 compose-config-docker-runner:
 	COMPOSE_FILE=$(DOCKER_RUNNER_COMPOSE_FILES) docker compose config
+
+config-print:
+	go run ./cmd/soj-api --config deploy/config.yaml --print-config
 
 runner-images:
 ifeq ($(RUNNER_IMAGES_PREPARE),build)
