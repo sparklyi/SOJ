@@ -272,6 +272,14 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 	if err != nil {
 		return nil, nil, err
 	}
+	// A sandbox that runs containers pulls the language images first: a pull
+	// inside a run would be killed by the run's own time limit, and the probe
+	// below must not race one either.
+	if preparer, ok := runtimeSandbox.(imagePreparer); ok {
+		if err := preparer.PrepareImages(ctx, languageImages(languages)); err != nil {
+			return nil, nil, err
+		}
+	}
 	capabilities, err := runtimeSandbox.Probe(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -294,6 +302,12 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 		TestcaseLoader:  testcaseCache,
 		ResultPublisher: publisher,
 	}), sandboxReady, nil
+}
+
+// imagePreparer is the optional capability of a sandbox that needs its runner
+// images resident before it can start.
+type imagePreparer interface {
+	PrepareImages(ctx context.Context, images []string) error
 }
 
 func newJudgeAgentSandbox(backend string, runner config.RunnerConfig, probeImage string, cleanupTimeout time.Duration, observer sandbox.SandboxObserver, logger *slog.Logger) (sandbox.Sandbox, error) {

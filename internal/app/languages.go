@@ -21,6 +21,16 @@ func loadLanguages(cfg config.Config) (*language.Catalog, error) {
 	return catalog, nil
 }
 
+// languageImages lists every runner image the catalog names, in catalog order.
+func languageImages(catalog *language.Catalog) []string {
+	profiles := catalog.Profiles()
+	images := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		images = append(images, profile.Image)
+	}
+	return images
+}
+
 // probeImage picks a runner image for the sandbox probe, which runs a container
 // that does nothing. Any language's image works.
 func probeImage(catalog *language.Catalog) string {

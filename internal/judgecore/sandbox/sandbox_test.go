@@ -2,6 +2,9 @@ package sandbox
 
 import (
 	"context"
+	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"SOJ/internal/judge"
@@ -73,5 +76,31 @@ func TestDockerSandboxSkipsCompilationWithoutACompileCommand(t *testing.T) {
 	}
 	if len(client.runs) != 0 {
 		t.Fatalf("container runs = %d, want 0: no compile command means no container", len(client.runs))
+	}
+}
+
+func TestDockerSandboxPrepareImagesPullsEachImageOnce(t *testing.T) {
+	client := &recordingDockerClient{}
+	runner := NewDockerSandbox(DockerSandboxOptions{Client: client})
+
+	if err := runner.PrepareImages(context.Background(), []string{"soj-runner-rust:test", "soj-runner-go:test", "soj-runner-rust:test", "  "}); err != nil {
+		t.Fatalf("PrepareImages returned error: %v", err)
+	}
+	want := []string{"soj-runner-go:test", "soj-runner-rust:test"}
+	if !slices.Equal(client.pulls, want) {
+		t.Fatalf("pulls = %v, want %v", client.pulls, want)
+	}
+}
+
+func TestDockerSandboxPrepareImagesReportsTheFailingImage(t *testing.T) {
+	client := &recordingDockerClient{pullErr: errors.New("registry unreachable")}
+	runner := NewDockerSandbox(DockerSandboxOptions{Client: client})
+
+	err := runner.PrepareImages(context.Background(), []string{"soj-runner-java:test"})
+	if err == nil {
+		t.Fatal("PrepareImages returned nil error")
+	}
+	if !strings.Contains(err.Error(), "soj-runner-java:test") || !strings.Contains(err.Error(), "registry unreachable") {
+		t.Fatalf("error = %v, want the image and the cause", err)
 	}
 }

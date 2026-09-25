@@ -253,6 +253,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      # A first start pulls the runner images; that must not count as unhealthy.
+      start_period: 10m
     ports:
       - "8082:8082"
 

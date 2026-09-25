@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,10 @@ import (
 )
 
 const (
+	// imagePullTimeout bounds one image download. It is deliberately generous:
+	// a first deploy pulls from a registry the machine may never have talked to.
+	imagePullTimeout = 10 * time.Minute
+
 	defaultDockerRunnerUser  = "1000:1000"
 	defaultDockerPidsLimit   = 128
 	defaultDockerTmpfs       = "/tmp:rw,nosuid,nodev,noexec,size=128m"
@@ -30,6 +35,7 @@ type DockerClient interface {
 	Run(ctx context.Context, spec DockerRunSpec) (commandOutput, error)
 	RemoveContainer(ctx context.Context, name string) error
 	RuntimeAvailable(ctx context.Context, runtime string) (bool, error)
+	Pull(ctx context.Context, image string) error
 }
 
 type DockerSandboxOptions struct {
@@ -156,6 +162,38 @@ func (s *DockerSandbox) Probe(ctx context.Context) (Capabilities, error) {
 	}
 	capabilities.ProductionReady = true
 	return capabilities, nil
+}
+
+// PrepareImages pulls the runner images the configured languages name.
+//
+// A pull is the slowest thing an agent does, and it must not happen inside a
+// run: the run's time limit would kill the container while the image is still
+// downloading. Doing it at startup also means the sandbox probe meets a cached
+// image instead of racing a pull against its own deadline.
+func (s *DockerSandbox) PrepareImages(ctx context.Context, images []string) error {
+	unique := make([]string, 0, len(images))
+	for _, image := range images {
+		image = strings.TrimSpace(image)
+		if image == "" || slices.Contains(unique, image) {
+			continue
+		}
+		unique = append(unique, image)
+	}
+	slices.Sort(unique)
+
+	for _, image := range unique {
+		pullCtx, cancel := context.WithTimeout(ctx, imagePullTimeout)
+		started := time.Now()
+		err := s.client.Pull(pullCtx, image)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("pull runner image %s: %w", image, err)
+		}
+		if s.logger != nil {
+			s.logger.InfoContext(ctx, "runner image ready", "image", image, "duration", time.Since(started))
+		}
+	}
+	return nil
 }
 
 func (s *DockerSandbox) Prepare(ctx context.Context, request PrepareRequest) (Workspace, error) {
@@ -388,6 +426,15 @@ func (c dockerCLIClient) RemoveContainer(ctx context.Context, name string) error
 		return err
 	}
 	return err
+}
+
+func (c dockerCLIClient) Pull(ctx context.Context, image string) error {
+	cmd := exec.CommandContext(ctx, c.binary, "pull", image)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func (c dockerCLIClient) RuntimeAvailable(ctx context.Context, runtime string) (bool, error) {
