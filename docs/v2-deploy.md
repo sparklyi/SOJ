@@ -36,6 +36,7 @@ Every request and result `XADD` uses approximate `MAXLEN` retention. `redis.stre
 
 - `Dockerfile.v2`: multi-stage image for `soj-api`, `soj-worker`, `soj-judge-agent`, and `soj-migrate`.
 - `deploy/config.yaml`: the runtime configuration; the Compose files mount it into every Go service.
+- `deploy/languages/`: one directory per language; the directory name is the slug.
 - `deploy/docker-compose.yaml`: local v2 stack.
 - `deploy/prometheus.yml`: local Prometheus scrape config for API and worker metrics.
 - `deploy/env/api.env.example`: the environment values the configuration file references.
@@ -58,6 +59,28 @@ docker compose -f deploy/docker-compose.yaml exec api /app/soj --print-config
 # or from a checkout:
 go run ./cmd/soj-api --config deploy/config.yaml --print-config
 ```
+
+## Languages
+
+`deploy/languages/<slug>/language.yaml` defines a language: its source filename,
+the argv that compiles and runs it, and the runner image. The directory is the
+source of truth for execution; the API reconciles it into the `languages` table at
+startup, so adding a language never needs a schema change or seed SQL.
+
+```yaml
+# deploy/languages/python3/language.yaml
+name: Python 3
+version: "3.12"
+source_file: main.py
+compile: ["python3", "-m", "py_compile", "{{source}}"]   # empty = no compile step
+run: ["python3", "{{source}}"]
+image: ${SOJ_RUNNER_REGISTRY:-ghcr.io/sparklyi}/soj-runner-python3:${SOJ_RUNNER_TAG:-main}
+```
+
+A `Dockerfile` next to the definition is built and published as
+`soj-runner-<slug>` by `.github/workflows/publish-runner-images.yml`; languages
+without one reuse an image published elsewhere. See the README for the full key
+table and validation rules.
 
 ## Required Secrets
 
@@ -87,8 +110,8 @@ SOJ_DATABASE_DSN=postgres://soj:<random-password>@postgres:5432/soj?sslmode=disa
 SOJ_STORAGE_ACCESS_KEY=<random-access-key>
 SOJ_STORAGE_SECRET_KEY=<random-secret-key>
 SOJ_JWT_SECRET=<random-jwt-secret>
-SOJ_DOCKER_RUNNER_IMAGE_GO=ghcr.io/sparklyi/soj-runner-go:<release-or-sha-tag>
-SOJ_DOCKER_RUNNER_IMAGE_CPP17=ghcr.io/sparklyi/soj-runner-cpp17:<release-or-sha-tag>
+SOJ_RUNNER_REGISTRY=ghcr.io/sparklyi
+SOJ_RUNNER_TAG=<release-or-sha-tag>
 ```
 
 Validate and start the stack with:
@@ -206,7 +229,7 @@ Production startup runs a Docker capability probe. It fails if Docker is unavail
 
 Single-node deployment can run API, worker, Redis, PostgreSQL, object storage, and one judge-agent on the same host for small installations. The judge-agent still needs a dedicated Docker runner work directory and Docker socket access, and runner containers must not mount the Docker socket.
 
-Multi-node deployment runs additional `soj-judge-agent` processes on dedicated judge nodes. They share Redis request/result streams and object storage with the main stack, use the same runner images, and should set `SOJ_JUDGE_PARALLELISM` and `SOJ_JUDGE_LANGUAGE_SLOTS` according to host CPU and memory.
+Multi-node deployment runs additional `soj-judge-agent` processes on dedicated judge nodes. They share Redis request/result streams and object storage with the main stack, use the same language directory, and should set `SOJ_JUDGE_PARALLELISM` and `SOJ_JUDGE_LANGUAGE_SLOTS` according to host CPU and memory.
 
 The process backend exists only for development tests and local real-code smoke. It is rejected in non-development environments.
 
@@ -220,7 +243,7 @@ The process backend exists only for development tests and local real-code smoke.
 - Sandbox verdict anomalies: compare the attempt manifest fields for judge core version, sandbox backend/profile, language runtime, testcase set hash, and trace id.
 - Traced submission diagnosis: when tracing is enabled, pivot from an alert time window to `request_id`, persisted `trace_id`, and the corresponding API/worker/judge-agent spans.
 - Local Docker runner smoke fails with wrong answers on input-reading programs: confirm Docker run uses the current code and `--interactive` is present in the runner args.
-- Local real smoke fails with compile errors: confirm runner images exist with `make runner-images-pull`, or use `RUNNER_IMAGES_PREPARE=build` while developing Dockerfiles locally.
+- Local real smoke fails with compile errors: confirm the language images exist with `make runner-images-pull`, or use `RUNNER_IMAGES_PREPARE=build` while developing Dockerfiles locally.
 - Capacity smoke below target: compare `container_startup_p95_ms`, `p95_attempt_ms`, queue oldest pending age, and `soj_sandbox_backend_errors_total` before raising slots or adding judge-agent nodes.
 
 ## Local Reset

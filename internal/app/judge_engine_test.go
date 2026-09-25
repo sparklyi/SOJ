@@ -4,50 +4,42 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"SOJ/internal/config"
 	"SOJ/internal/judge"
 	"SOJ/internal/judgecore/sandbox"
 )
 
-func TestNewJudgeEngineDefaultsToAgentProtocol(t *testing.T) {
-	engine := newJudgeEngine(config.JudgeConfig{})
+func TestWorkerJudgeEngineIsUnavailableForTheAgentPath(t *testing.T) {
+	engine := workerJudgeEngine(config.JudgeConfig{})
 
-	languages, err := engine.Languages(context.Background())
-	if err != nil {
-		t.Fatalf("Languages returned error: %v", err)
-	}
-	if len(languages) != 0 {
-		t.Fatalf("languages = %+v, want no baked-in languages from protocol stub", languages)
-	}
-	_, err = engine.Judge(context.Background(), judge.Request{LanguageID: 71, Source: []byte("package main")})
+	_, err := engine.Judge(context.Background(), judge.Request{LanguageSlug: "go", Source: []byte("package main")})
 	if err == nil {
-		t.Fatal("Judge returned nil error, want agent protocol unavailable until agent client is implemented")
+		t.Fatal("Judge returned nil error, want the agent path to have no in-process engine")
 	}
 }
 
-func TestFakeAcceptedJudgeEngineProvidesDefaultLanguage(t *testing.T) {
-	engine := newJudgeEngine(config.JudgeConfig{Endpoint: "fake://accepted", Timeout: time.Second})
+func TestWorkerJudgeEngineFakeAcceptedJudges(t *testing.T) {
+	engine := workerJudgeEngine(config.JudgeConfig{Endpoint: "fake://accepted"})
 
-	languages, err := engine.Languages(context.Background())
+	result, err := engine.Judge(context.Background(), judge.Request{LanguageSlug: "go", Source: []byte("package main")})
 	if err != nil {
-		t.Fatalf("Languages returned error: %v", err)
+		t.Fatalf("Judge returned error: %v", err)
 	}
-	if len(languages) != 1 {
-		t.Fatalf("languages = %+v, want one fake language", languages)
-	}
-	if languages[0].ID != 71 || !languages[0].Enabled {
-		t.Fatalf("language = %+v, want enabled fake language 71", languages[0])
+	if result.Verdict != judge.VerdictAccepted {
+		t.Fatalf("verdict = %q, want accepted", result.Verdict)
 	}
 }
 
-func TestNewJudgeEngineRejectsHTTPJudgeEndpoint(t *testing.T) {
-	engine := newJudgeEngine(config.JudgeConfig{Endpoint: "http://legacy-judge:2358", Timeout: time.Second})
+func TestNewRunEngineRejectsLegacyHTTPJudgeEndpoint(t *testing.T) {
+	engine, err := newRunEngine(config.Config{Judge: config.JudgeConfig{Endpoint: "http://legacy-judge:2358"}}, nil, nil)
+	if err != nil {
+		t.Fatalf("newRunEngine returned error: %v", err)
+	}
 
-	_, err := engine.Languages(context.Background())
+	_, err = engine.Run(context.Background(), judge.RunRequest{LanguageSlug: "go", Source: []byte("package main")})
 	if err == nil {
-		t.Fatal("Languages returned nil error, want unsupported judge endpoint error")
+		t.Fatal("Run returned nil error, want unsupported judge endpoint error")
 	}
 	if got, want := err.Error(), "unsupported judge endpoint http://legacy-judge:2358"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
@@ -68,14 +60,14 @@ func TestNewWorkerObjectStorageAcceptsHTTPEndpoint(t *testing.T) {
 }
 
 func TestNewJudgeAgentSandboxRejectsIsolateUntilAdapterExists(t *testing.T) {
-	_, err := newJudgeAgentSandbox(sandbox.BackendIsolate, config.RunnerConfig{}, 0, nil, nil)
+	_, err := newJudgeAgentSandbox(sandbox.BackendIsolate, config.RunnerConfig{}, "", 0, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "isolate sandbox execution is not implemented") {
 		t.Fatalf("err = %v, want explicit isolate unavailable error", err)
 	}
 }
 
 func TestNewJudgeAgentSandboxAllowsProcessBackend(t *testing.T) {
-	got, err := newJudgeAgentSandbox(sandbox.BackendProcess, config.RunnerConfig{}, 0, nil, nil)
+	got, err := newJudgeAgentSandbox(sandbox.BackendProcess, config.RunnerConfig{}, "", 0, nil, nil)
 	if err != nil {
 		t.Fatalf("newJudgeAgentSandbox returned error: %v", err)
 	}
@@ -87,7 +79,7 @@ func TestNewJudgeAgentSandboxAllowsProcessBackend(t *testing.T) {
 func TestNewJudgeAgentSandboxAllowsDockerBackend(t *testing.T) {
 	t.Setenv("SOJ_DOCKER_RUNNER_RUNTIME", "runsc")
 
-	got, err := newJudgeAgentSandbox(sandbox.BackendDocker, config.RunnerConfig{}, 0, nil, nil)
+	got, err := newJudgeAgentSandbox(sandbox.BackendDocker, config.RunnerConfig{}, "", 0, nil, nil)
 	if err != nil {
 		t.Fatalf("newJudgeAgentSandbox returned error: %v", err)
 	}
@@ -97,11 +89,11 @@ func TestNewJudgeAgentSandboxAllowsDockerBackend(t *testing.T) {
 }
 
 func TestNewRunEngineFakeEndpointRuns(t *testing.T) {
-	engine, err := newRunEngine(config.Config{Judge: config.JudgeConfig{Endpoint: "fake://accepted"}}, nil)
+	engine, err := newRunEngine(config.Config{Judge: config.JudgeConfig{Endpoint: "fake://accepted"}}, nil, nil)
 	if err != nil {
 		t.Fatalf("newRunEngine returned error: %v", err)
 	}
-	if _, err := engine.Run(context.Background(), judge.RunRequest{LanguageID: 71, Source: []byte("package main")}); err != nil {
+	if _, err := engine.Run(context.Background(), judge.RunRequest{LanguageSlug: "go", Source: []byte("package main")}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 }
@@ -114,7 +106,7 @@ func TestNewRunEngineFakeEndpointRuns(t *testing.T) {
 // every production self-run a system_error. A nil engine that the service reads
 // as "queued" is a decision; an engine that always errors is an accident.
 func TestNewRunEngineAgentEndpointHasNoInProcessEngine(t *testing.T) {
-	engine, err := newRunEngine(config.Config{Judge: config.JudgeConfig{Endpoint: "agent://local"}}, nil)
+	engine, err := newRunEngine(config.Config{Judge: config.JudgeConfig{Endpoint: "agent://local"}}, nil, nil)
 	if err != nil {
 		t.Fatalf("newRunEngine returned error: %v", err)
 	}
@@ -124,7 +116,7 @@ func TestNewRunEngineAgentEndpointHasNoInProcessEngine(t *testing.T) {
 }
 
 func TestNewRunEngineLocalEndpointUsesProcessSandboxInDevelopment(t *testing.T) {
-	engine, err := newRunEngine(config.Config{Env: "local", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil)
+	engine, err := newRunEngine(config.Config{Env: "local", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil, nil)
 	if err != nil {
 		t.Fatalf("newRunEngine returned error: %v", err)
 	}
@@ -139,7 +131,7 @@ func TestNewRunEngineLocalEndpointUsesProcessSandboxInDevelopment(t *testing.T) 
 func TestNewRunEngineLocalRefusesDockerBackend(t *testing.T) {
 	t.Setenv("SOJ_JUDGE_SANDBOX_BACKEND", sandbox.BackendDocker)
 
-	_, err := newRunEngine(config.Config{Env: "prod", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil)
+	_, err := newRunEngine(config.Config{Env: "prod", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil, nil)
 	if err == nil {
 		t.Fatal("newRunEngine returned nil error, want the docker backend refused")
 	}
@@ -153,16 +145,7 @@ func TestNewRunEngineLocalRejectsProcessSandboxOutsideDevelopment(t *testing.T) 
 
 	// SelectBackend 自己就会拦住「生产环境用 process 沙箱」，这里确认这条
 	// 保护在 local:// 这条新路径上依然生效。
-	if _, err := newRunEngine(config.Config{Env: "prod", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil); err == nil {
+	if _, err := newRunEngine(config.Config{Env: "prod", Judge: config.JudgeConfig{Endpoint: "local://"}}, nil, nil); err == nil {
 		t.Fatal("newRunEngine returned nil error, want the process backend refused in prod")
-	}
-}
-
-func TestNewJudgeEngineAcceptsLocalEndpointForLanguages(t *testing.T) {
-	// local:// 不做判题，但必须能回答 Languages（空目录），否则语言目录同步
-	// 会从一个可恢复的空状态变成一次失败。
-	engine := newJudgeEngine(config.JudgeConfig{Endpoint: "local://"})
-	if _, err := engine.Languages(context.Background()); err != nil {
-		t.Fatalf("Languages returned error: %v", err)
 	}
 }

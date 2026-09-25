@@ -7,14 +7,13 @@ import (
 
 	"SOJ/internal/judge"
 	"SOJ/internal/judgecore/checker"
-	"SOJ/internal/judgecore/language"
 	"SOJ/internal/judgecore/sandbox"
+	"SOJ/internal/language"
 )
 
 const Version = "soj-judgecore-mvp"
 
 type Core struct {
-	languages      *language.Registry
 	sandbox        sandbox.Sandbox
 	checker        checker.Checker
 	now            func() time.Time
@@ -22,7 +21,6 @@ type Core struct {
 }
 
 type Options struct {
-	Languages      *language.Registry
 	Sandbox        sandbox.Sandbox
 	Checker        checker.Checker
 	Now            func() time.Time
@@ -30,7 +28,7 @@ type Options struct {
 }
 
 type Request struct {
-	LanguageID       int64
+	Language         language.Profile
 	Source           []byte
 	Cases            []Case
 	Timeout          time.Duration
@@ -49,10 +47,6 @@ type Case struct {
 }
 
 func New(options Options) *Core {
-	registry := options.Languages
-	if registry == nil {
-		registry = language.DefaultRegistry()
-	}
 	sandboxBackend := options.Sandbox
 	if sandboxBackend == nil {
 		sandboxBackend = sandbox.NewProcessSandbox()
@@ -69,17 +63,14 @@ func New(options Options) *Core {
 	if cleanupTimeout <= 0 {
 		cleanupTimeout = sandbox.DefaultCleanupTimeout
 	}
-	return &Core{languages: registry, sandbox: sandboxBackend, checker: outputChecker, now: now, cleanupTimeout: cleanupTimeout}
+	return &Core{sandbox: sandboxBackend, checker: outputChecker, now: now, cleanupTimeout: cleanupTimeout}
 }
 
 func (c *Core) Judge(ctx context.Context, request Request) (judge.Result, error) {
 	if err := request.Validate(); err != nil {
 		return judge.Result{}, err
 	}
-	profile, err := c.languages.ResolveID(request.LanguageID)
-	if err != nil {
-		return judge.Result{}, err
-	}
+	profile := request.Language
 	workspace, err := c.prepareWorkspace(ctx, profile, request.Source, limits(request.Timeout, request.MemoryKB, request.OutputLimitBytes))
 	if err != nil {
 		return judge.Result{}, err
@@ -148,21 +139,36 @@ func (c *Core) Judge(ctx context.Context, request Request) (judge.Result, error)
 	return c.result(profile, judge.Result{Verdict: verdict, TimeMS: maxTime, MemoryKB: maxMemory, Cases: results, JudgedAt: c.now()}), nil
 }
 
+// RunRequest is one execution of source with no expected output. It carries a
+// resolved profile, like Request: the caller knows the slug and owns the
+// catalog, the core knows how to execute and owns nothing else.
+type RunRequest struct {
+	Language language.Profile
+	Source   []byte
+	Stdin    string
+	Timeout  time.Duration
+	MemoryKB int64
+}
+
+// Validate reports whether the request is complete enough to execute.
+func (r RunRequest) Validate() error {
+	if r.Language.Slug == "" {
+		return fmt.Errorf("language is required")
+	}
+	if len(r.Source) == 0 {
+		return fmt.Errorf("source is required")
+	}
+	return nil
+}
+
 // Run compiles source and executes it once with the given stdin, returning the
 // raw output. Nothing is compared and no testcase is involved: this is the
 // operation behind a self-run / playground run.
-//
-// It takes judge.RunRequest rather than a local request type because there is
-// nothing to translate -- unlike judging, where the port speaks in testcase
-// storage keys and the core in inline content.
-func (c *Core) Run(ctx context.Context, request judge.RunRequest) (judge.Result, error) {
+func (c *Core) Run(ctx context.Context, request RunRequest) (judge.Result, error) {
 	if err := request.Validate(); err != nil {
 		return judge.Result{}, err
 	}
-	profile, err := c.languages.ResolveID(request.LanguageID)
-	if err != nil {
-		return judge.Result{}, err
-	}
+	profile := request.Language
 	workspace, err := c.prepareWorkspace(ctx, profile, request.Source, limits(request.Timeout, request.MemoryKB, 0))
 	if err != nil {
 		return judge.Result{}, err
@@ -224,7 +230,7 @@ func (c *Core) compileFailed(profile language.Profile, compiled sandbox.CompileR
 
 func (c *Core) result(profile language.Profile, result judge.Result) judge.Result {
 	result.Manifest.JudgeCoreVersion = Version
-	result.Manifest.LanguageRuntime = profile.Runtime
+	result.Manifest.LanguageRuntime = profile.RuntimeLabel()
 	result.Manifest.SandboxBackend = c.sandbox.Name()
 	result.Manifest.SandboxProfile = c.sandbox.Profile()
 	return result
@@ -266,8 +272,8 @@ func caseScore(verdict judge.Verdict, score int32) int32 {
 }
 
 func (r Request) Validate() error {
-	if r.LanguageID == 0 {
-		return fmt.Errorf("language_id is required")
+	if r.Language.Slug == "" {
+		return fmt.Errorf("language is required")
 	}
 	if len(r.Source) == 0 {
 		return fmt.Errorf("source is required")

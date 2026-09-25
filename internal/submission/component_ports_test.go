@@ -61,12 +61,6 @@ func (runExecutorStub) Run(context.Context, judge.RunRequest) (judge.Result, err
 	return judge.Result{Verdict: judge.VerdictAccepted}, nil
 }
 
-type languageProviderStub struct{}
-
-func (languageProviderStub) Languages(context.Context) ([]judge.Language, error) {
-	return nil, nil
-}
-
 type contestSubmissionPolicyStub struct{}
 
 func (contestSubmissionPolicyStub) ValidateSubmission(context.Context, auth.Actor, int64, int64) error {
@@ -204,16 +198,12 @@ func (languageStoreStub) ListLanguages(context.Context, ListLanguagesInput) ([]L
 	return []LanguageRecord{{ID: 71, Name: "Go", Enabled: true}}, 1, nil
 }
 
-func (languageStoreStub) UpsertLanguage(context.Context, judge.Language) (LanguageRecord, error) {
-	return LanguageRecord{}, nil
-}
-
 func (languageStoreStub) UpdateLanguage(context.Context, int64, UpdateLanguageInput) (LanguageRecord, error) {
 	return LanguageRecord{}, nil
 }
 
 func TestLanguageServiceUsesOnlyLanguageStore(t *testing.T) {
-	service := NewLanguageService(languageStoreStub{}, languageProviderStub{})
+	service := NewLanguageService(languageStoreStub{})
 
 	items, total, err := service.ListPublicLanguages(t.Context(), auth.Actor{UserID: 7, Role: auth.RoleUser}, ListLanguagesInput{Limit: 10})
 	if err != nil {

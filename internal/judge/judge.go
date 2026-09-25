@@ -32,14 +32,6 @@ const (
 	VerdictCanceled            Verdict = "canceled"
 )
 
-type Language struct {
-	ID        int64
-	Name      string
-	Enabled   bool
-	TimeLimit time.Duration
-	MemoryKB  int64
-}
-
 type Testcase struct {
 	InputKey          string
 	ExpectedOutputKey string
@@ -50,8 +42,8 @@ type Testcase struct {
 // Request is a testcase judging request. Testcases are named by storage key,
 // not by content, so the engine resolves them against the object store.
 type Request struct {
-	LanguageID int64
-	Source     []byte
+	LanguageSlug string
+	Source       []byte
 	// Stdin is carried for the agent wire protocol only (see AgentRequest).
 	// Testcase judging does not use it: each Testcase brings its own input.
 	// Scratch runs use RunRequest instead.
@@ -69,19 +61,19 @@ type Request struct {
 // "just run it", so a bug that fails to load testcases would come back as a
 // clean Accepted instead of an error.
 type RunRequest struct {
-	LanguageID int64
-	Source     []byte
-	Stdin      string
-	Timeout    time.Duration
-	MemoryKB   int64
+	LanguageSlug string
+	Source       []byte
+	Stdin        string
+	Timeout      time.Duration
+	MemoryKB     int64
 }
 
 // Validate reports whether the request is complete enough to execute. It lives
 // here rather than in the executor because RunRequest owns its own invariants;
 // every implementation would otherwise repeat the same three checks.
 func (r RunRequest) Validate() error {
-	if r.LanguageID == 0 {
-		return errors.New("language_id is required")
+	if r.LanguageSlug == "" {
+		return errors.New("language is required")
 	}
 	if len(r.Source) == 0 {
 		return errors.New("source is required")
@@ -127,11 +119,6 @@ type Manifest struct {
 	ValidatorHash    string
 	TraceID          string
 	Raw              map[string]any
-}
-
-type JudgeEngine interface {
-	Judge(ctx context.Context, request Request) (Result, error)
-	Languages(ctx context.Context) ([]Language, error)
 }
 
 // RunEngine executes scratch runs.

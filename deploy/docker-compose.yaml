@@ -24,8 +24,9 @@ x-soj-common: &soj-common
   SOJ_DOCKER_RUNNER_RUNTIME: ${SOJ_DOCKER_RUNNER_RUNTIME:-}
   SOJ_DOCKER_RUNNER_WORKDIR: ${SOJ_DOCKER_RUNNER_WORKDIR:-}
   SOJ_DOCKER_RUNNER_USER: ${SOJ_DOCKER_RUNNER_USER:-}
-  SOJ_DOCKER_RUNNER_IMAGE_GO: ${SOJ_DOCKER_RUNNER_IMAGE_GO:-}
-  SOJ_DOCKER_RUNNER_IMAGE_CPP17: ${SOJ_DOCKER_RUNNER_IMAGE_CPP17:-}
+  # The language files name their runner images; these fill the placeholders.
+  SOJ_RUNNER_REGISTRY: ${SOJ_RUNNER_REGISTRY:-}
+  SOJ_RUNNER_TAG: ${SOJ_RUNNER_TAG:-}
   SOJ_TRACING_ENABLED: ${SOJ_TRACING_ENABLED:-}
   OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
   OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
@@ -140,55 +141,6 @@ services:
                 updated_at = now();"
         fi
 
-        psql -h postgres -U soj -d soj -v ON_ERROR_STOP=1 <<'SQL'
-        INSERT INTO languages (
-          id,
-          engine,
-          engine_language_id,
-          name,
-          version,
-          compile_command,
-          run_command,
-          default_time_limit_ms,
-          default_memory_limit_kb,
-          enabled
-        ) VALUES
-          (
-            60,
-            'soj-agent',
-            'go',
-            'Go',
-            '1.24',
-            'go build -o {{binary}} {{source}}',
-            '{{binary}}',
-            1000,
-            262144,
-            true
-          ),
-          (
-            54,
-            'soj-agent',
-            'cpp17',
-            'C++17',
-            '17',
-            'g++ -std=c++17 -O2 -pipe -o {{binary}} {{source}}',
-            '{{binary}}',
-            1000,
-            262144,
-            true
-          )
-        ON CONFLICT (engine, engine_language_id) DO UPDATE
-        SET name = EXCLUDED.name,
-            version = EXCLUDED.version,
-            compile_command = EXCLUDED.compile_command,
-            run_command = EXCLUDED.run_command,
-            enabled = true,
-            default_time_limit_ms = EXCLUDED.default_time_limit_ms,
-            default_memory_limit_kb = EXCLUDED.default_memory_limit_kb,
-            updated_at = now();
-
-        SELECT setval(pg_get_serial_sequence('languages', 'id'), (SELECT max(id) FROM languages));
-        SQL
 
   migrate:
     build:
@@ -222,6 +174,8 @@ services:
     configs:
       - source: soj-config
         target: /etc/soj/config.yaml
+    volumes:
+      - ./languages:/etc/soj/languages:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -287,6 +241,8 @@ services:
     configs:
       - source: soj-config
         target: /etc/soj/config.yaml
+    volumes:
+      - ./languages:/etc/soj/languages:ro
     depends_on:
       redis:
         condition: service_healthy

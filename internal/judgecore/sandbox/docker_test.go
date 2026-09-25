@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"SOJ/internal/judge"
-	"SOJ/internal/judgecore/language"
 )
 
 func TestDockerSandboxCompileUsesSecureContainerSpec(t *testing.T) {
@@ -18,10 +17,9 @@ func TestDockerSandboxCompileUsesSecureContainerSpec(t *testing.T) {
 	s := NewDockerSandbox(DockerSandboxOptions{
 		Client:  client,
 		Runtime: "runsc",
-		Images:  map[string]string{"go": "soj-runner-go:test"},
 	})
 	workspace, err := s.Prepare(context.Background(), PrepareRequest{
-		Profile: language.GoProfile(),
+		Profile: testGoProfile(),
 		Source:  []byte("package main\nfunc main() {}\n"),
 		Limits:  Limits{TimeLimit: time.Second, MemoryKB: 262144, OutputLimitBytes: 1024},
 	})
@@ -30,7 +28,7 @@ func TestDockerSandboxCompileUsesSecureContainerSpec(t *testing.T) {
 	}
 	cleanupDockerWorkspace(t, s, workspace)
 
-	compiled, err := s.Compile(context.Background(), workspace, language.GoProfile())
+	compiled, err := s.Compile(context.Background(), workspace, testGoProfile())
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
@@ -75,13 +73,13 @@ func TestDockerSandboxRunMapsVerdicts(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &recordingDockerClient{runOutput: tc.output, runErr: tc.err}
-			s := NewDockerSandbox(DockerSandboxOptions{Client: client, Images: map[string]string{"go": "soj-runner-go:test"}})
-			workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: language.GoProfile(), Source: []byte("package main\nfunc main() {}\n")})
+			s := NewDockerSandbox(DockerSandboxOptions{Client: client})
+			workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: testGoProfile(), Source: []byte("package main\nfunc main() {}\n")})
 			if err != nil {
 				t.Fatalf("Prepare returned error: %v", err)
 			}
 			cleanupDockerWorkspace(t, s, workspace)
-			result, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Stdin: "1 2\n", Limits: Limits{TimeLimit: time.Second}})
+			result, err := s.Run(context.Background(), workspace, testGoProfile(), RunRequest{Stdin: "1 2\n", Limits: Limits{TimeLimit: time.Second}})
 			if err != nil {
 				t.Fatalf("Run returned error: %v", err)
 			}
@@ -98,14 +96,14 @@ func TestDockerSandboxRunMapsVerdicts(t *testing.T) {
 func TestDockerSandboxObserverRecordsPhaseDuration(t *testing.T) {
 	client := &recordingDockerClient{runOutput: commandOutput{stdout: "3\n"}}
 	observer := &recordingSandboxObserver{}
-	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Observer: observer, Images: map[string]string{"go": "soj-runner-go:test"}})
-	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: language.GoProfile(), Source: []byte("package main\nfunc main() {}\n")})
+	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Observer: observer})
+	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: testGoProfile(), Source: []byte("package main\nfunc main() {}\n")})
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
 	cleanupDockerWorkspace(t, s, workspace)
 
-	if _, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Stdin: "1 2\n", Limits: Limits{TimeLimit: time.Second}}); err != nil {
+	if _, err := s.Run(context.Background(), workspace, testGoProfile(), RunRequest{Stdin: "1 2\n", Limits: Limits{TimeLimit: time.Second}}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	if len(observer.phases) != 1 || observer.phases[0].backend != BackendDocker || observer.phases[0].phase != "run" || observer.phases[0].result != "success" {
@@ -116,14 +114,14 @@ func TestDockerSandboxObserverRecordsPhaseDuration(t *testing.T) {
 func TestDockerSandboxObserverRecordsContainerCleanupFailure(t *testing.T) {
 	client := &recordingDockerClient{runOutput: commandOutput{stdout: "3\n"}, removeErr: errors.New("remove failed")}
 	observer := &recordingSandboxObserver{}
-	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Observer: observer, Images: map[string]string{"go": "soj-runner-go:test"}})
-	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: language.GoProfile(), Source: []byte("package main\nfunc main() {}\n")})
+	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Observer: observer})
+	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: testGoProfile(), Source: []byte("package main\nfunc main() {}\n")})
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
 	cleanupDockerWorkspace(t, s, workspace)
 
-	if _, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Limits: Limits{TimeLimit: time.Second}}); err != nil {
+	if _, err := s.Run(context.Background(), workspace, testGoProfile(), RunRequest{Limits: Limits{TimeLimit: time.Second}}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	if observer.cleanupFailures != 1 {
@@ -139,16 +137,15 @@ func TestDockerSandboxContainerCleanupUsesDeadline(t *testing.T) {
 		Client:         client,
 		CleanupTimeout: cleanupTimeout,
 		Observer:       observer,
-		Images:         map[string]string{"go": "soj-runner-go:test"},
 	})
-	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: language.GoProfile(), Source: []byte("package main\nfunc main() {}\n")})
+	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: testGoProfile(), Source: []byte("package main\nfunc main() {}\n")})
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
 	cleanupDockerWorkspace(t, s, workspace)
 
 	started := time.Now()
-	if _, err := s.Run(context.Background(), workspace, language.GoProfile(), RunRequest{Limits: Limits{TimeLimit: time.Second}}); err != nil {
+	if _, err := s.Run(context.Background(), workspace, testGoProfile(), RunRequest{Limits: Limits{TimeLimit: time.Second}}); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	elapsed := time.Since(started)
@@ -198,14 +195,14 @@ func TestDockerSandboxWorkspaceCleanupRecordsTimeout(t *testing.T) {
 
 func TestDockerSandboxCompileMapsCompileError(t *testing.T) {
 	client := &recordingDockerClient{runOutput: commandOutput{stderr: "syntax error", exitCode: int32Ptr(1)}, runErr: errors.New("exit status 1")}
-	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Images: map[string]string{"cpp17": "soj-runner-cpp17:test"}})
-	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: language.Cpp17Profile(), Source: []byte("bad")})
+	s := NewDockerSandbox(DockerSandboxOptions{Client: client})
+	workspace, err := s.Prepare(context.Background(), PrepareRequest{Profile: testCpp17Profile(), Source: []byte("bad")})
 	if err != nil {
 		t.Fatalf("Prepare returned error: %v", err)
 	}
 	cleanupDockerWorkspace(t, s, workspace)
 
-	compiled, err := s.Compile(context.Background(), workspace, language.Cpp17Profile())
+	compiled, err := s.Compile(context.Background(), workspace, testCpp17Profile())
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
@@ -216,7 +213,7 @@ func TestDockerSandboxCompileMapsCompileError(t *testing.T) {
 
 func TestDockerSandboxProbeReportsRunscReadiness(t *testing.T) {
 	client := &recordingDockerClient{runtimeAvailable: true}
-	s := NewDockerSandbox(DockerSandboxOptions{Client: client, Runtime: "runsc"})
+	s := NewDockerSandbox(DockerSandboxOptions{Client: client, ProbeImage: "soj-runner-go:test", Runtime: "runsc"})
 	capabilities, err := s.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("Probe returned error: %v", err)

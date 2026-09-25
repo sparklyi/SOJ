@@ -65,6 +65,7 @@ func TestLoadDefaultsWithoutFile(t *testing.T) {
 func TestLoadFileOverridesDefaults(t *testing.T) {
 	cfg := loadAgent(t, `
 env: docker
+languages_dir: languages
 http:
   addr: ":19090"
   read_timeout: 3s
@@ -202,6 +203,7 @@ func TestPrintMasksSecrets(t *testing.T) {
 
 	file := writeConfig(t, `
 env: prod
+languages_dir: languages
 database:
   dsn: ${SOJ_TEST_DSN}
 auth:

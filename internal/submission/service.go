@@ -226,10 +226,6 @@ func (s *Service) ListPublicLanguages(ctx context.Context, actor auth.Actor, inp
 	return s.languages.ListPublicLanguages(ctx, actor, input)
 }
 
-func (s *Service) SyncLanguages(ctx context.Context, actor auth.Actor) ([]LanguageRecord, error) {
-	return s.languages.SyncLanguages(ctx, actor)
-}
-
 func (s *Service) UpdateLanguage(ctx context.Context, actor auth.Actor, id int64, input UpdateLanguageInput) (LanguageRecord, error) {
 	return s.languages.UpdateLanguage(ctx, actor, id, input)
 }

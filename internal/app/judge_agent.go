@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/judgecore"
 	"SOJ/internal/judgecore/sandbox"
+	"SOJ/internal/language"
 	"SOJ/internal/observability"
 	"SOJ/internal/queue"
 	"SOJ/internal/storage"
@@ -49,6 +49,10 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		cfg.Agent.HealthAddr = *healthAddr
 	}
 	sandboxBackend, err := sandbox.SelectBackend(cfg.Env, cfg.Judge.SandboxBackend, cfg.Judge.Endpoint)
+	if err != nil {
+		return err
+	}
+	catalog, err := loadLanguages(cfg)
 	if err != nil {
 		return err
 	}
@@ -100,7 +104,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	slotLimiter := newJudgeAgentSlotLimiter(cfg.Judge.Parallelism, languageSlots)
 
-	agent, sandboxReady, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, metrics, logger, queueResultPublisher{queue: resultQueue})
+	agent, sandboxReady, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, catalog, objectStore, metrics, logger, queueResultPublisher{queue: resultQueue})
 	if err != nil {
 		return err
 	}
@@ -248,16 +252,10 @@ func judgeAgentMessageLanguageKey(message queue.Message) string {
 	if err := json.Unmarshal(message.Payload, &request); err != nil {
 		return ""
 	}
-	if request.LanguageSlug != "" {
-		return request.LanguageSlug
-	}
-	if request.LanguageID != 0 {
-		return strconv.FormatInt(request.LanguageID, 10)
-	}
-	return ""
+	return request.LanguageSlug
 }
 
-func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, objectStore storage.ObjectStorage, metrics *observability.Metrics, logger *slog.Logger, publisher submission.ResultPublisher) (judgeRequestProcessor, observability.CheckFunc, error) {
+func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Config, languages *language.Catalog, objectStore storage.ObjectStorage, metrics *observability.Metrics, logger *slog.Logger, publisher submission.ResultPublisher) (judgeRequestProcessor, observability.CheckFunc, error) {
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	if backend == sandbox.BackendFake {
 		// One fake engine serves both capabilities; passing it twice keeps each
@@ -270,7 +268,7 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 			ResultPublisher: publisher,
 		}), nil, nil
 	}
-	runtimeSandbox, err := newJudgeAgentSandbox(backend, cfg.Agent.Runner, cfg.Judge.CleanupTimeout, metrics, logger)
+	runtimeSandbox, err := newJudgeAgentSandbox(backend, cfg.Agent.Runner, probeImage(languages), cfg.Judge.CleanupTimeout, metrics, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -291,28 +289,26 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 	testcaseCache := submission.NewTestcaseCache(objectStore, submission.TestcaseCacheOptions{Metrics: metrics})
 	return submission.NewCoreAsyncAgent(submission.CoreAsyncAgentOptions{
 		Core:            judgecore.New(judgecore.Options{Sandbox: runtimeSandbox, CleanupTimeout: cfg.Judge.CleanupTimeout}),
+		Languages:       languages,
 		SourceStore:     sourceStore,
 		TestcaseLoader:  testcaseCache,
 		ResultPublisher: publisher,
 	}), sandboxReady, nil
 }
 
-func newJudgeAgentSandbox(backend string, runner config.RunnerConfig, cleanupTimeout time.Duration, observer sandbox.SandboxObserver, logger *slog.Logger) (sandbox.Sandbox, error) {
+func newJudgeAgentSandbox(backend string, runner config.RunnerConfig, probeImage string, cleanupTimeout time.Duration, observer sandbox.SandboxObserver, logger *slog.Logger) (sandbox.Sandbox, error) {
 	switch backend {
 	case sandbox.BackendProcess:
 		return sandbox.NewProcessSandbox(), nil
 	case sandbox.BackendDocker:
 		return sandbox.NewDockerSandbox(sandbox.DockerSandboxOptions{
+			ProbeImage:     probeImage,
 			Runtime:        runner.Runtime,
 			TempDir:        runner.Workdir,
 			User:           runner.User,
 			CleanupTimeout: cleanupTimeout,
 			Observer:       observer,
 			Logger:         logger,
-			Images: map[string]string{
-				"go":    runner.ImageGo,
-				"cpp17": runner.ImageCpp17,
-			},
 		}), nil
 	case sandbox.BackendIsolate:
 		return nil, errIsolateSandboxUnavailable{}

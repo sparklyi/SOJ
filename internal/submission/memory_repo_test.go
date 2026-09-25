@@ -10,6 +10,7 @@ import (
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/judge"
+	judgeevents "SOJ/internal/judge/events"
 )
 
 type memoryRepo struct {
@@ -249,7 +250,7 @@ func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64,
 		ID:                   attemptID,
 		SubmissionID:         &row.ID,
 		AttemptNo:            attemptNo,
-		ProtocolVersion:      judge.ProtocolVersion,
+		ProtocolVersion:      judgeevents.RequestEventType,
 		JudgeCoreVersion:     result.Manifest.JudgeCoreVersion,
 		JudgeEngine:          judge.EngineSOJAgent,
 		JudgeAgentID:         stringPtr(result.Manifest.JudgeAgentID),
@@ -273,7 +274,7 @@ func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64,
 		TraceID:              stringPtr(result.Manifest.TraceID),
 	}
 	if attempt.JudgeCoreVersion == "" {
-		attempt.JudgeCoreVersion = judge.ProtocolVersion
+		attempt.JudgeCoreVersion = judgeevents.RequestEventType
 	}
 	r.attempts[attemptID] = attempt
 	for _, item := range result.Cases {
@@ -749,11 +750,6 @@ func (r *memoryRepo) ListLanguages(ctx context.Context, arg ListLanguagesInput) 
 		rows = append(rows, row)
 	}
 	return rows, int64(len(rows)), nil
-}
-func (r *memoryRepo) UpsertLanguage(ctx context.Context, language judge.Language) (LanguageRecord, error) {
-	row := LanguageRecord{ID: language.ID, Engine: judge.EngineSOJAgent, Name: language.Name, Enabled: language.Enabled}
-	r.languages[row.ID] = row
-	return row, nil
 }
 func (r *memoryRepo) UpdateLanguage(ctx context.Context, id int64, arg UpdateLanguageInput) (LanguageRecord, error) {
 	row := r.languages[id]

@@ -13,6 +13,9 @@
 
 env: ${SOJ_ENV:-docker}
 
+# One directory per language; the directory name is the slug.
+languages_dir: languages
+
 http:
   addr: ":8080"
   read_timeout: 10s
@@ -75,8 +78,6 @@ agent:
     runtime: ${SOJ_DOCKER_RUNNER_RUNTIME:-}
     workdir: ${SOJ_DOCKER_RUNNER_WORKDIR:-}
     user: ${SOJ_DOCKER_RUNNER_USER:-}
-    go_image: ${SOJ_DOCKER_RUNNER_IMAGE_GO:-ghcr.io/sparklyi/soj-runner-go:main}
-    cpp17_image: ${SOJ_DOCKER_RUNNER_IMAGE_CPP17:-ghcr.io/sparklyi/soj-runner-cpp17:main}
 
 retention:
   # Self-runs are drafts: after run_days the worker removes the source object

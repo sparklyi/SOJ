@@ -38,7 +38,7 @@ Error responses use:
 Exceptions:
 
 - `204` responses have an empty body.
-- Explicitly empty `202` responses have an empty body. In the baseline this applies to `POST /api/v1/admin/languages/sync`.
+- Explicitly empty `202` responses have an empty body. 
 
 ## Pagination
 
@@ -162,8 +162,7 @@ Admin:
 - `GET /api/v1/admin/users/cursor`
 - `PATCH /api/v1/admin/users/{id}`
 - `GET /api/v1/admin/languages`
-- `POST /api/v1/admin/languages/sync`
-- `PATCH /api/v1/admin/languages/{id}`
+- - `PATCH /api/v1/admin/languages/{id}`
 
 ## Status And Error Baseline
 

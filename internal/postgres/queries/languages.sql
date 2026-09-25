@@ -1,8 +1,9 @@
 -- Owner: WP4 Submission/Language
 
--- Sync intentionally preserves enabled on existing rows so JudgeEngine language
--- refreshes do not re-enable languages disabled by an admin.
--- name: UpsertLanguage :one
+-- Reconcile intentionally preserves enabled and the limits on existing rows:
+-- the language directory owns identity and metadata, administrators own
+-- enablement and limits.
+-- name: UpsertCatalogLanguage :one
 INSERT INTO languages (
     engine,
     engine_language_id,
@@ -14,17 +15,23 @@ INSERT INTO languages (
     default_memory_limit_kb,
     enabled
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, true
 )
 ON CONFLICT (engine, engine_language_id) DO UPDATE
 SET name = EXCLUDED.name,
     version = EXCLUDED.version,
     compile_command = EXCLUDED.compile_command,
     run_command = EXCLUDED.run_command,
-    default_time_limit_ms = EXCLUDED.default_time_limit_ms,
-    default_memory_limit_kb = EXCLUDED.default_memory_limit_kb,
     updated_at = now()
 RETURNING *;
+
+-- name: DisableLanguagesNotListed :execrows
+UPDATE languages
+SET enabled = false,
+    updated_at = now()
+WHERE engine = $1
+  AND enabled
+  AND engine_language_id <> ALL(sqlc.arg(slugs)::text[]);
 
 -- name: GetLanguageByID :one
 SELECT *

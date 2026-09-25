@@ -195,7 +195,6 @@ func (d *TaskDispatcher) submissionRequestEvent(ctx context.Context, task JudgeT
 		TraceID:         valueOr(attempt.TraceID, traceID),
 		TraceContext:    traceContext,
 		SubmissionID:    submission.ID,
-		LanguageID:      language.ID,
 		LanguageSlug:    language.EngineLanguageID,
 		SourceArtifact: judgeevents.ArtifactRef{
 			ID:          artifact.ID,
@@ -268,7 +267,6 @@ func (d *TaskDispatcher) runRequestEvent(ctx context.Context, task JudgeTaskReco
 		TraceID:         valueOr(attempt.TraceID, traceID),
 		TraceContext:    traceContext,
 		RunID:           run.ID,
-		LanguageID:      language.ID,
 		LanguageSlug:    language.EngineLanguageID,
 		SourceArtifact: judgeevents.ArtifactRef{
 			ID:          artifact.ID,
@@ -467,10 +465,10 @@ func (p *TaskProcessor) processMessage(ctx context.Context, message queue.Messag
 	}
 
 	result, err := p.engine.Judge(ctx, judge.Request{
-		LanguageID: language.ID,
-		Source:     source,
-		Testcases:  testcases,
-		Timeout:    language.DefaultTimeLimit,
+		LanguageSlug: language.EngineLanguageID,
+		Source:       source,
+		Testcases:    testcases,
+		Timeout:      language.DefaultTimeLimit,
 	})
 	if err != nil {
 		return p.failures.retryOrDead(ctx, message, task, err)

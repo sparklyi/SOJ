@@ -1,0 +1,9 @@
+name: C++17
+version: "17"
+source_file: main.cpp
+binary_file: main
+compile: ["g++", "-std=c++17", "-O2", "-pipe", "-o", "{{binary}}", "{{source}}"]
+run: ["{{binary}}"]
+image: ${SOJ_RUNNER_REGISTRY:-ghcr.io/sparklyi}/soj-runner-cpp17:${SOJ_RUNNER_TAG:-main}
+time_limit_ms: 1000
+memory_limit_kb: 262144

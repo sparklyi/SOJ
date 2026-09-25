@@ -204,7 +204,7 @@ Through Docker runner containers:
 make smoke-real-docker
 ```
 
-The target pulls the published runner images from GHCR by default. To build them locally while
+The target pulls each language's published runner image from GHCR by default. To build them locally while
 changing Dockerfiles:
 
 ```bash
@@ -267,8 +267,47 @@ The shipped file references these variables
 | `SOJ_JUDGE_PARALLELISM` / `SOJ_JUDGE_LANGUAGE_SLOTS` / `SOJ_JUDGE_MAX_BATCH` | Judge agent capacity. |
 | `SOJ_JUDGE_RUN_PARALLELISM` / `SOJ_JUDGE_RUN_PER_USER` / `SOJ_JUDGE_RUN_STDIN_MAX_BYTES` | Self-run limits. |
 | `SOJ_RUN_RETENTION_DAYS` / `SOJ_RUN_RETENTION_INTERVAL` / `SOJ_RUN_RETENTION_BATCH` | Self-run retention sweep. |
-| `SOJ_DOCKER_RUNNER_*` | Runner runtime, workdir, and images for the docker sandbox. |
+| `SOJ_RUNNER_REGISTRY` / `SOJ_RUNNER_TAG` | Registry and tag the language files resolve their runner images with. |
+| `SOJ_DOCKER_RUNNER_*` | Runner runtime, workdir, and user for the docker sandbox. |
 | `OTEL_*` | OpenTelemetry service name, resource attributes, and trace endpoint. |
+
+
+### Languages
+
+The judge runs the languages defined in `deploy/languages/`: one directory per
+language, the directory name is the slug, and everything about the language lives
+in its `language.yaml`.
+
+```text
+deploy/languages/
+  go/
+    language.yaml
+    Dockerfile
+  python3/
+    language.yaml
+    Dockerfile
+```
+
+| Key | Meaning |
+| --- | --- |
+| `name`, `version` | Catalog display values. |
+| `source_file` | Where the submitted source is written in the workspace. |
+| `binary_file` | What compilation produces; empty for interpreted languages. |
+| `compile` | argv the sandbox runs to build the source, with `{{source}}` and `{{binary}}` placeholders. Empty skips compilation. |
+| `run` | argv that executes once per testcase, with the same placeholders. |
+| `image` | Runner image; `${SOJ_RUNNER_REGISTRY}` and `${SOJ_RUNNER_TAG}` fill in the deployment's registry and tag. |
+| `time_limit_ms`, `memory_limit_kb` | Insert defaults for the catalog row; administrators tune the row afterwards. |
+
+Adding a language means adding a directory: write `language.yaml`, add a
+`Dockerfile` when it needs its own toolchain (the publish workflow discovers it),
+and restart the API. The API reconciles the directory into the database at
+startup, so no seed SQL and no schema change are involved. A language removed
+from the directory is disabled, and enablement and limits set through the admin
+API are never overwritten.
+
+The directories are validated while they load: an unknown key, an unknown
+placeholder, a missing `run`, or a `binary_file` without a `compile` all fail
+startup naming the file and key.
 
 Copy [deploy/env/api.env.example](deploy/env/api.env.example) to supply them.
 The production overlay and its required variables are documented in
@@ -350,8 +389,7 @@ Before exposing SOJ outside local development:
   sandbox target.
 - Set `env: prod` and `agent.runner.runtime: runsc` on production judge nodes; startup
   fails if runsc or the no-op runner probe is unavailable.
-- Pin the runner images (`agent.runner.go_image` and `agent.runner.cpp17_image`) to release or
-  `sha-*` tags.
+- Pin the runner images to release or `sha-*` tags with `SOJ_RUNNER_TAG`.
 - Make GHCR runner packages public or log in to `ghcr.io` on private judge nodes before pulling.
 - Do not use the `process` sandbox backend outside development, tests, and local real-code smoke.
 - Do not reuse the local fake language seed as production language data.
@@ -372,7 +410,8 @@ internal/user           Account and admin user use cases
 internal/problem        Problems, statements, tags, testcase sets
 internal/submission     Submissions, runs, judge tasks, worker logic
 internal/judge          Judge protocol and async event contracts
-internal/judgecore      Judge core pipeline, language profiles, checker, sandbox adapters
+internal/judgecore      Judge core pipeline, checker, sandbox adapters
+internal/language       Language directory contract: profiles and the catalog
 internal/contest        ACM contests, registrations, scoreboards
 internal/postgres       SQL queries and generated sqlc code
 internal/queue          Redis Stream task queue

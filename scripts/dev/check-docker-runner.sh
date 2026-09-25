@@ -2,8 +2,10 @@
 set -euo pipefail
 
 RUNTIME="${SOJ_DOCKER_RUNNER_RUNTIME:-${1:-}}"
-GO_IMAGE="${SOJ_DOCKER_RUNNER_IMAGE_GO:-ghcr.io/sparklyi/soj-runner-go:main}"
-CPP_IMAGE="${SOJ_DOCKER_RUNNER_IMAGE_CPP17:-ghcr.io/sparklyi/soj-runner-cpp17:main}"
+SOJ_RUNNER_REGISTRY="${SOJ_RUNNER_REGISTRY:-ghcr.io/sparklyi}"
+SOJ_RUNNER_TAG="${SOJ_RUNNER_TAG:-main}"
+GO_IMAGE="${SOJ_RUNNER_REGISTRY}/soj-runner-go:${SOJ_RUNNER_TAG}"
+CPP_IMAGE="${SOJ_RUNNER_REGISTRY}/soj-runner-cpp17:${SOJ_RUNNER_TAG}"
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then

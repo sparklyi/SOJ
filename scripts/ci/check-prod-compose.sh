@@ -19,8 +19,6 @@ export SOJ_DATABASE_DSN="${SOJ_DATABASE_DSN:-postgres://soj:ci-postgres-password
 export SOJ_STORAGE_ACCESS_KEY="${SOJ_STORAGE_ACCESS_KEY:-ci-storage-user}"
 export SOJ_STORAGE_SECRET_KEY="${SOJ_STORAGE_SECRET_KEY:-ci-storage-secret}"
 export SOJ_JWT_SECRET="${SOJ_JWT_SECRET:-ci-jwt-secret}"
-export SOJ_DOCKER_RUNNER_IMAGE_GO="${SOJ_DOCKER_RUNNER_IMAGE_GO:-ghcr.io/sparklyi/soj-runner-go:main}"
-export SOJ_DOCKER_RUNNER_IMAGE_CPP17="${SOJ_DOCKER_RUNNER_IMAGE_CPP17:-ghcr.io/sparklyi/soj-runner-cpp17:main}"
 
 fail() {
   echo "check-prod-compose: $1" >&2

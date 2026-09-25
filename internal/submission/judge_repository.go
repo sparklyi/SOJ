@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"SOJ/internal/judge"
+	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
 
@@ -44,6 +45,11 @@ func ensureJudgeAttempt(ctx context.Context, q *db.Queries, input EnsureJudgeAtt
 	item, itemErr := q.GetQueuedRejudgeBatchItemByTaskID(ctx, input.TaskID)
 	if itemErr != nil && !errors.Is(itemErr, pgx.ErrNoRows) {
 		return JudgeAttemptRecord{}, itemErr
+	}
+	// An attempt references the language row it ran. Failing here names the
+	// mistake; letting it through surfaces as a foreign key violation.
+	if input.LanguageID == 0 {
+		return JudgeAttemptRecord{}, errors.New("language_id is required to create a judge attempt")
 	}
 	latest, err := latestAttemptForSubject(ctx, q, input)
 	attemptNo := int32(1)
@@ -338,7 +344,7 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 	attempt, err := q.CreateJudgeAttempt(ctx, db.CreateJudgeAttemptParams{
 		SubmissionID:         pgtype.Int8{Int64: submission.ID, Valid: true},
 		AttemptNo:            attemptNo,
-		ProtocolVersion:      judge.ProtocolVersion,
+		ProtocolVersion:      judgeevents.RequestEventType,
 		JudgeCoreVersion:     defaultJudgeCoreVersion(result.Manifest),
 		JudgeEngine:          judge.EngineSOJAgent,
 		JudgeAgentID:         text(result.Manifest.JudgeAgentID),
@@ -496,7 +502,7 @@ func defaultJudgeCoreVersion(manifest judge.Manifest) string {
 	if manifest.JudgeCoreVersion != "" {
 		return manifest.JudgeCoreVersion
 	}
-	return judge.ProtocolVersion
+	return judgeevents.RequestEventType
 }
 
 func truncateSummary(value string) string {

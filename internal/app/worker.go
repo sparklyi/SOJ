@@ -116,7 +116,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if err := runQueue.Ensure(ctx); err != nil {
 		return err
 	}
-	judgeEngine := newJudgeEngine(cfg.Judge)
+	judgeEngine := workerJudgeEngine(cfg.Judge)
 	sourceStore := submission.NewObjectSourceStore(objectStore)
 	dispatcher := submission.NewTaskDispatcher(submission.TaskDispatcherOptions{
 		Store:            submissionRepo,

@@ -297,11 +297,11 @@ func (s *RunService) completeRunAsync(runID int64, language LanguageRecord, sour
 	ctx, cancel := context.WithTimeout(s.runCtx, s.runTimeout)
 	defer cancel()
 	result, err := s.runner.Run(ctx, judge.RunRequest{
-		LanguageID: language.ID,
-		Source:     source,
-		Stdin:      stdin,
-		Timeout:    language.DefaultTimeLimit,
-		MemoryKB:   language.DefaultMemoryKB,
+		LanguageSlug: language.EngineLanguageID,
+		Source:       source,
+		Stdin:        stdin,
+		Timeout:      language.DefaultTimeLimit,
+		MemoryKB:     language.DefaultMemoryKB,
 	})
 	if err != nil {
 		result = judge.Result{Verdict: judge.VerdictSystemError, ErrorMessage: err.Error(), JudgedAt: s.now()}

@@ -44,7 +44,7 @@ func (r *unreadyProblemReader) GetForJudge(_ context.Context, _ int64) (problem.
 
 func runTestRepo() *memoryRepo {
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	return repo
 }
 

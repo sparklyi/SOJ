@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"SOJ/internal/judge"
-	"SOJ/internal/judgecore/language"
+	"SOJ/internal/language"
 )
 
 const (
@@ -33,9 +33,11 @@ type DockerClient interface {
 }
 
 type DockerSandboxOptions struct {
-	Client         DockerClient
+	Client DockerClient
+	// ProbeImage is any runner image, used to verify the runtime with a
+	// container that runs nothing. Languages name their own images.
+	ProbeImage     string
 	Runtime        string
-	Images         map[string]string
 	TempDir        string
 	User           string
 	CleanupTimeout time.Duration
@@ -74,7 +76,7 @@ type DockerMount struct {
 type DockerSandbox struct {
 	client         DockerClient
 	runtime        string
-	images         map[string]string
+	probeImage     string
 	tempDir        string
 	user           string
 	cleanupTimeout time.Duration
@@ -94,15 +96,6 @@ func NewDockerSandbox(options DockerSandboxOptions) *DockerSandbox {
 	if client == nil {
 		client = dockerCLIClient{binary: "docker"}
 	}
-	images := map[string]string{
-		"go":    "ghcr.io/sparklyi/soj-runner-go:main",
-		"cpp17": "ghcr.io/sparklyi/soj-runner-cpp17:main",
-	}
-	for language, image := range options.Images {
-		if strings.TrimSpace(image) != "" {
-			images[normalizeLanguageSlug(language)] = image
-		}
-	}
 	user := strings.TrimSpace(options.User)
 	if user == "" {
 		user = defaultDockerRunnerUser
@@ -114,7 +107,7 @@ func NewDockerSandbox(options DockerSandboxOptions) *DockerSandbox {
 	return &DockerSandbox{
 		client:         client,
 		runtime:        strings.TrimSpace(options.Runtime),
-		images:         images,
+		probeImage:     strings.TrimSpace(options.ProbeImage),
 		tempDir:        options.TempDir,
 		user:           user,
 		cleanupTimeout: cleanupTimeout,
@@ -174,17 +167,20 @@ func (s *DockerSandbox) Prepare(ctx context.Context, request PrepareRequest) (Wo
 		_ = os.RemoveAll(dir)
 		return Workspace{}, err
 	}
-	sourcePath := filepath.Join(dir, request.Profile.SourceFilename)
+	sourcePath := filepath.Join(dir, request.Profile.SourceFile)
 	if err := os.WriteFile(sourcePath, request.Source, 0644); err != nil {
 		_ = os.RemoveAll(dir)
 		return Workspace{}, err
 	}
-	return Workspace{Dir: dir, SourcePath: sourcePath, BinaryPath: filepath.Join(dir, request.Profile.BinaryFilename), Limits: request.Limits}, nil
+	return Workspace{Dir: dir, SourcePath: sourcePath, BinaryPath: filepath.Join(dir, request.Profile.BinaryFile), Limits: request.Limits}, nil
 }
 
 func (s *DockerSandbox) Compile(ctx context.Context, workspace Workspace, profile language.Profile) (CompileResult, error) {
+	if len(profile.Compile) == 0 {
+		return CompileResult{Verdict: judge.VerdictAccepted}, nil
+	}
 	compileLimits := Limits{TimeLimit: 30 * time.Second, MemoryKB: workspace.Limits.MemoryKB, OutputLimitBytes: workspace.Limits.OutputLimitBytes}
-	output, err := s.runContainer(ctx, workspace, profile, "compile", "rw", "", compileLimits, render(profile.CompileCommand, dockerWorkspace(workspace)))
+	output, err := s.runContainer(ctx, workspace, profile, "compile", "rw", "", compileLimits, render(profile.Compile, dockerWorkspace(workspace)))
 	combined := output.stdout + output.stderr
 	if err == nil {
 		return CompileResult{Verdict: judge.VerdictAccepted, Output: combined}, nil
@@ -200,7 +196,7 @@ func (s *DockerSandbox) Compile(ctx context.Context, workspace Workspace, profil
 
 func (s *DockerSandbox) Run(ctx context.Context, workspace Workspace, profile language.Profile, request RunRequest) (RunResult, error) {
 	started := time.Now()
-	output, err := s.runContainer(ctx, workspace, profile, "run", "ro", request.Stdin, request.Limits, render(profile.RunCommand, dockerWorkspace(workspace)))
+	output, err := s.runContainer(ctx, workspace, profile, "run", "ro", request.Stdin, request.Limits, render(profile.Run, dockerWorkspace(workspace)))
 	elapsed := int(time.Since(started).Milliseconds())
 	result := RunResult{Verdict: judge.VerdictAccepted, Stdout: output.stdout, Stderr: output.stderr, TimeMS: elapsed, ExitCode: output.exitCode, Signal: output.signal}
 	if err == nil {
@@ -289,9 +285,9 @@ func (s *DockerSandbox) runContainer(ctx context.Context, workspace Workspace, p
 }
 
 func (s *DockerSandbox) runSpec(workspace Workspace, profile language.Profile, phase, mountMode, stdin string, limits Limits, command []string) (DockerRunSpec, error) {
-	image := s.images[normalizeLanguageSlug(profile.Slug)]
+	image := strings.TrimSpace(profile.Image)
 	if image == "" {
-		return DockerRunSpec{}, fmt.Errorf("docker runner image for language %q is not configured", profile.Slug)
+		return DockerRunSpec{}, fmt.Errorf("language %q does not name a runner image", profile.Slug)
 	}
 	if len(command) == 0 {
 		return DockerRunSpec{}, fmt.Errorf("docker runner command for phase %s is empty", phase)
@@ -325,9 +321,9 @@ func (s *DockerSandbox) runSpec(workspace Workspace, profile language.Profile, p
 }
 
 func (s *DockerSandbox) probeNoopContainer(ctx context.Context) error {
-	image := s.images["go"]
+	image := s.probeImage
 	if image == "" {
-		return fmt.Errorf("go runner image is not configured")
+		return fmt.Errorf("no runner image is available to probe the sandbox")
 	}
 	spec := DockerRunSpec{
 		Name:             dockerContainerName("probe", "probe"),
@@ -366,10 +362,6 @@ func dockerWorkspace(workspace Workspace) Workspace {
 func dockerContainerName(phase, workspaceDir string) string {
 	base := strings.NewReplacer(".", "-", "_", "-", string(os.PathSeparator), "-").Replace(filepath.Base(workspaceDir))
 	return fmt.Sprintf("soj-%s-%s-%d", phase, base, time.Now().UnixNano())
-}
-
-func normalizeLanguageSlug(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
 }
 
 type dockerCLIClient struct {

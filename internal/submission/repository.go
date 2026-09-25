@@ -3,11 +3,13 @@ package submission
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/judge"
+	"SOJ/internal/language"
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
 
@@ -246,16 +248,35 @@ func (r *SQLRepository) ListLanguages(ctx context.Context, arg ListLanguagesInpu
 	return out, total, nil
 }
 
-func (r *SQLRepository) UpsertLanguage(ctx context.Context, language judge.Language) (LanguageRecord, error) {
-	row, err := r.q.UpsertLanguage(ctx, db.UpsertLanguageParams{
-		Engine:               judge.EngineSOJAgent,
-		EngineLanguageID:     int64String(language.ID),
-		Name:                 language.Name,
-		DefaultTimeLimitMs:   int32(language.TimeLimit / time.Millisecond),
-		DefaultMemoryLimitKb: int32(language.MemoryKB),
-		Enabled:              language.Enabled,
-	})
-	return languageRecord(row), err
+// ReconcileLanguages makes the catalog rows match the language directory: rows
+// for configured slugs are created or updated, and rows whose slug is gone are
+// disabled. Enablement and limits belong to administrators and are never
+// overwritten.
+func (r *SQLRepository) ReconcileLanguages(ctx context.Context, profiles []language.Profile) error {
+	slugs := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		if _, err := r.q.UpsertCatalogLanguage(ctx, db.UpsertCatalogLanguageParams{
+			Engine:               judge.EngineSOJAgent,
+			EngineLanguageID:     profile.Slug,
+			Name:                 profile.Name,
+			Version:              text(profile.Version),
+			CompileCommand:       text(profile.DisplayCompile()),
+			RunCommand:           text(profile.DisplayRun()),
+			DefaultTimeLimitMs:   int32(profile.TimeLimitMS),
+			DefaultMemoryLimitKb: int32(profile.MemoryLimitKB),
+		}); err != nil {
+			return fmt.Errorf("upsert language %s: %w", profile.Slug, err)
+		}
+		slugs = append(slugs, profile.Slug)
+	}
+
+	if _, err := r.q.DisableLanguagesNotListed(ctx, db.DisableLanguagesNotListedParams{
+		Engine: judge.EngineSOJAgent,
+		Slugs:  slugs,
+	}); err != nil {
+		return fmt.Errorf("disable removed languages: %w", err)
+	}
+	return nil
 }
 
 func (r *SQLRepository) UpdateLanguage(ctx context.Context, id int64, arg UpdateLanguageInput) (LanguageRecord, error) {

@@ -1328,20 +1328,6 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "500": { $ref: "#/components/responses/InternalError" }
-  /api/v1/admin/languages/sync:
-    post:
-      tags: [Admin Languages]
-      operationId: adminSyncLanguages
-      summary: Sync judge languages
-      description: Refreshes language profiles from the configured SOJ judge engine. The active engine name for the self-built judge agent is `soj-agent`; local Docker may use an internal fake engine before `soj-judge-agent` is available.
-      x-owner: WP4 Submission/Language
-      x-auth: admin-root
-      responses:
-        "202":
-          description: Language sync accepted. Empty body.
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/PermissionDenied" }
-        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/admin/languages/{id}:
     patch:
       tags: [Admin Languages]

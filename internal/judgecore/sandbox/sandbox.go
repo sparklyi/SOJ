@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"SOJ/internal/judge"
-	"SOJ/internal/judgecore/language"
+	"SOJ/internal/language"
 )
 
 const DefaultCleanupTimeout = 5 * time.Second
@@ -100,17 +100,20 @@ func (s *ProcessSandbox) Prepare(ctx context.Context, request PrepareRequest) (W
 	if err != nil {
 		return Workspace{}, err
 	}
-	sourcePath := filepath.Join(dir, request.Profile.SourceFilename)
+	sourcePath := filepath.Join(dir, request.Profile.SourceFile)
 	if err := os.WriteFile(sourcePath, request.Source, 0600); err != nil {
 		_ = os.RemoveAll(dir)
 		return Workspace{}, err
 	}
-	return Workspace{Dir: dir, SourcePath: sourcePath, BinaryPath: filepath.Join(dir, request.Profile.BinaryFilename), Limits: request.Limits}, nil
+	return Workspace{Dir: dir, SourcePath: sourcePath, BinaryPath: filepath.Join(dir, request.Profile.BinaryFile), Limits: request.Limits}, nil
 }
 
 func (s *ProcessSandbox) Compile(ctx context.Context, workspace Workspace, profile language.Profile) (CompileResult, error) {
+	if len(profile.Compile) == 0 {
+		return CompileResult{Verdict: judge.VerdictAccepted}, nil
+	}
 	compileLimits := Limits{TimeLimit: 30 * time.Second, OutputLimitBytes: workspace.Limits.OutputLimitBytes}
-	output, err := runCommand(ctx, workspace.Dir, render(profile.CompileCommand, workspace), "", compileLimits)
+	output, err := runCommand(ctx, workspace.Dir, render(profile.Compile, workspace), "", compileLimits)
 	if err == nil {
 		return CompileResult{Verdict: judge.VerdictAccepted, Output: output.stdout + output.stderr}, nil
 	}
@@ -125,7 +128,7 @@ func (s *ProcessSandbox) Compile(ctx context.Context, workspace Workspace, profi
 
 func (s *ProcessSandbox) Run(ctx context.Context, workspace Workspace, profile language.Profile, request RunRequest) (RunResult, error) {
 	started := time.Now()
-	output, err := runCommand(ctx, workspace.Dir, render(profile.RunCommand, workspace), request.Stdin, request.Limits)
+	output, err := runCommand(ctx, workspace.Dir, render(profile.Run, workspace), request.Stdin, request.Limits)
 	elapsed := int(time.Since(started).Milliseconds())
 	result := RunResult{Verdict: judge.VerdictAccepted, Stdout: output.stdout, Stderr: output.stderr, TimeMS: elapsed, Signal: output.signal}
 	if err == nil {

@@ -1,37 +1,17 @@
 package app
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"SOJ/internal/config"
 	"SOJ/internal/judge"
 	"SOJ/internal/judgecore"
 	"SOJ/internal/judgecore/sandbox"
+	"SOJ/internal/language"
 )
-
-// newJudgeEngine resolves the engine the API uses for the language catalog and
-// for judging. Submissions are judged asynchronously by the judge-agent through
-// Redis, so the API never actually calls Judge -- but the endpoint still has to
-// answer Languages, which is how the catalog is seeded.
-func newJudgeEngine(cfg config.JudgeConfig) judge.JudgeEngine {
-	endpoint := strings.TrimSpace(cfg.Endpoint)
-	if endpoint == "" {
-		endpoint = judge.DefaultAgentEndpoint
-	}
-	if strings.HasPrefix(endpoint, "fake://") {
-		return fakeJudgeEngine(endpoint)
-	}
-	// Both agent:// and local:// delegate judging elsewhere (the judge-agent),
-	// so this process cannot answer Judge. UnavailableEngine answers Languages
-	// with an empty catalog rather than an error, which keeps the catalog sync
-	// a no-op instead of a failure.
-	if strings.HasPrefix(endpoint, judge.AgentEndpointPrefix) || strings.HasPrefix(endpoint, judge.LocalEndpointPrefix) {
-		return judge.NewUnavailableEngine(endpoint)
-	}
-	return unsupportedJudgeEndpoint(endpoint)
-}
 
 // newRunEngine resolves the engine that executes self-runs (the playground and
 // the problem page's "run" button) inside this process.
@@ -50,7 +30,7 @@ func newJudgeEngine(cfg config.JudgeConfig) judge.JudgeEngine {
 //   - sandbox.SelectBackend already refuses the process backend outside
 //     dev/test/local environments, so a production process cannot quietly end
 //     up running untrusted code without a sandbox.
-func newRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine, error) {
+func newRunEngine(cfg config.Config, languages *language.Catalog, logger *slog.Logger) (judge.RunEngine, error) {
 	endpoint := strings.TrimSpace(cfg.Judge.Endpoint)
 	if endpoint == "" {
 		endpoint = judge.DefaultAgentEndpoint
@@ -59,7 +39,7 @@ func newRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine, erro
 	case strings.HasPrefix(endpoint, "fake://"):
 		return fakeJudgeEngine(endpoint), nil
 	case strings.HasPrefix(endpoint, judge.LocalEndpointPrefix):
-		return newLocalRunEngine(cfg, logger)
+		return newLocalRunEngine(cfg, languages, logger)
 	case strings.HasPrefix(endpoint, judge.AgentEndpointPrefix):
 		return nil, nil
 	default:
@@ -67,7 +47,29 @@ func newRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine, erro
 	}
 }
 
-func newLocalRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine, error) {
+// localRunEngine executes self-runs in this process. The catalog translates the
+// run's slug into the profile judgecore executes, which is why the core itself
+// needs no catalog.
+type localRunEngine struct {
+	core      *judgecore.Core
+	languages *language.Catalog
+}
+
+func (e localRunEngine) Run(ctx context.Context, request judge.RunRequest) (judge.Result, error) {
+	profile, ok := e.languages.Lookup(request.LanguageSlug)
+	if !ok {
+		return judge.Result{}, fmt.Errorf("language %q is not configured", request.LanguageSlug)
+	}
+	return e.core.Run(ctx, judgecore.RunRequest{
+		Language: profile,
+		Source:   request.Source,
+		Stdin:    request.Stdin,
+		Timeout:  request.Timeout,
+		MemoryKB: request.MemoryKB,
+	})
+}
+
+func newLocalRunEngine(cfg config.Config, languages *language.Catalog, logger *slog.Logger) (judge.RunEngine, error) {
 	backend, err := sandbox.SelectBackend(cfg.Env, cfg.Judge.SandboxBackend, cfg.Judge.Endpoint)
 	if err != nil {
 		return nil, err
@@ -82,31 +84,43 @@ func newLocalRunEngine(cfg config.Config, logger *slog.Logger) (judge.RunEngine,
 		return nil, errUnsupportedSandboxBackend(backend)
 	}
 
-	runner, err := newJudgeAgentSandbox(backend, cfg.Agent.Runner, cfg.Judge.CleanupTimeout, nil, logger)
+	runner, err := newJudgeAgentSandbox(backend, cfg.Agent.Runner, "", cfg.Judge.CleanupTimeout, nil, logger)
 	if err != nil {
 		return nil, err
 	}
-	return judgecore.New(judgecore.Options{
-		Sandbox:        runner,
-		CleanupTimeout: cfg.Judge.CleanupTimeout,
-	}), nil
+	return localRunEngine{
+		core:      judgecore.New(judgecore.Options{Sandbox: runner, CleanupTimeout: cfg.Judge.CleanupTimeout}),
+		languages: languages,
+	}, nil
+}
+
+// inlineJudgeEngine is the judging capability the worker's inline path needs.
+// It lives here, next to its only caller, rather than in the judge package.
+type inlineJudgeEngine interface {
+	Judge(ctx context.Context, request judge.Request) (judge.Result, error)
+}
+
+// workerJudgeEngine resolves the engine behind the worker's inline judging
+// path. In production it is unavailable on purpose: judging happens on the
+// judge agent, and an engine that says so beats one that silently accepts.
+func workerJudgeEngine(cfg config.JudgeConfig) inlineJudgeEngine {
+	endpoint := strings.TrimSpace(cfg.Endpoint)
+	if endpoint == "" {
+		endpoint = judge.DefaultAgentEndpoint
+	}
+	if strings.HasPrefix(endpoint, "fake://") {
+		return fakeJudgeEngine(endpoint)
+	}
+	return judge.NewUnavailableEngine(endpoint)
 }
 
 // fakeJudgeEngine returns the concrete engine so callers can use it as either a
 // JudgeEngine or a RunEngine without a type assertion.
 func fakeJudgeEngine(endpoint string) *judge.FakeEngine {
 	engine := judge.NewFakeEngine()
-	if strings.EqualFold(strings.TrimPrefix(endpoint, "fake://"), "accepted") {
-		engine.SetLanguages([]judge.Language{{
-			ID:        71,
-			Name:      "Fake Accepted",
-			Enabled:   true,
-			TimeLimit: time.Second,
-			MemoryKB:  65536,
-		}})
-		return engine
+	if !strings.EqualFold(strings.TrimPrefix(endpoint, "fake://"), "accepted") {
+		engine.SetError(errUnsupportedFakeJudge(endpoint))
 	}
-	engine.SetError(errUnsupportedFakeJudge(endpoint))
 	return engine
 }
 

@@ -78,7 +78,7 @@ func TestCompleteSubmissionPersistsJudgeEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLatestJudgeAttemptBySubmissionID returned error: %v", err)
 	}
-	if attempt.ProtocolVersion != judge.ProtocolVersion || attempt.JudgeCoreVersion != "core-2026.07" || attempt.JudgeEngine != judge.EngineSOJAgent {
+	if attempt.ProtocolVersion != judgeevents.RequestEventType || attempt.JudgeCoreVersion != "core-2026.07" || attempt.JudgeEngine != judge.EngineSOJAgent {
 		t.Fatalf("attempt protocol fields = %+v", attempt)
 	}
 	if attempt.Status != StatusWrongAnswer {
@@ -114,7 +114,7 @@ func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
-	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	store := NewMemorySourceStore()
 	store.objects["source"] = []byte("bad")
 	q := &memoryQueue{}
@@ -152,7 +152,7 @@ func TestWorkerDeadLetterOrderAcksOriginalWhenDeadStreamFails(t *testing.T) {
 	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 1}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
-	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	store := NewMemorySourceStore()
 	store.objects["source"] = []byte("bad")
 	q := &memoryQueue{deadErr: errors.New("dead stream unavailable"), events: &repo.events}
@@ -191,7 +191,7 @@ func TestWorkerRejudgesClaimedRunningTaskWhenSubmissionIsNotTerminal(t *testing.
 	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "running", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusRunning, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
-	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	store := NewMemorySourceStore()
 	store.objects["source"] = []byte("package main")
 	q := &memoryQueue{}
@@ -225,7 +225,7 @@ func TestWorkerRecordsJudgeTaskMetrics(t *testing.T) {
 	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
-	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	store := NewMemorySourceStore()
 	store.objects["source"] = []byte("package main")
 	metrics := &recordingWorkerMetrics{}
@@ -257,7 +257,7 @@ func TestWorkerRecordsJudgeTaskMetrics(t *testing.T) {
 // 空的 accepted。这个 bug 在线上活了很久，因为它看起来「成功」了。
 func TestCreateRunExecutesThroughRunNotJudge(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "42\n", TimeMS: 12, MemoryKB: 256})
 	service := newServiceForTest(serviceTestOptions{
 		Repository:    repo,
@@ -312,7 +312,7 @@ func TestListPublicLanguagesReturnsEnabledCatalogForRegularUsers(t *testing.T) {
 
 func TestCreateRunReturnsRunningWhenShortWaitExpiresAndCompletesAsync(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "ok\n"})
 	engine.SetDelay(50 * time.Millisecond)
 	service := newServiceForTest(serviceTestOptions{
@@ -340,7 +340,7 @@ func TestCreateRunReturnsRunningWhenShortWaitExpiresAndCompletesAsync(t *testing
 
 func TestCreateRunRejectsWhenExecutionCapacityIsExhausted(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := newBlockingRunJudge()
 	defer engine.unblock()
 	service := newServiceForTest(serviceTestOptions{
@@ -377,7 +377,7 @@ func TestCreateRunRejectsWhenExecutionCapacityIsExhausted(t *testing.T) {
 func TestHandlerCreateRunReturnsServiceUnavailableWhenExecutionCapacityIsExhausted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := newBlockingRunJudge()
 	defer engine.unblock()
 	service := newServiceForTest(serviceTestOptions{
@@ -416,7 +416,7 @@ func TestHandlerCreateRunReturnsServiceUnavailableWhenExecutionCapacityIsExhaust
 
 func TestServiceCloseCancelsActiveRunAndRejectsNewRuns(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := newBlockingRunJudge()
 	defer engine.unblock()
 	service := newServiceForTest(serviceTestOptions{
@@ -458,7 +458,7 @@ func TestCreateRunRejectsWhenRunContextIsCanceled(t *testing.T) {
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	service := newServiceForTest(serviceTestOptions{
 		Repository:    repo,
 		ProblemReader: fakeProblemReader{},
@@ -536,10 +536,6 @@ func (e *blockingRunJudge) block(ctx context.Context) (judge.Result, error) {
 	}
 }
 
-func (e *blockingRunJudge) Languages(ctx context.Context) ([]judge.Language, error) {
-	return nil, nil
-}
-
 func (e *blockingRunJudge) waitStarted(t *testing.T) {
 	t.Helper()
 	select {
@@ -576,7 +572,7 @@ func TestReconcilerResetsStaleJudgeTasks(t *testing.T) {
 
 func TestCreateSubmissionStoresSourceAndCreatesPendingTask(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true}
 	service := newServiceForTest(serviceTestOptions{
 		Repository:       repo,
 		ProblemReader:    fakeProblemReader{},
@@ -596,7 +592,7 @@ func TestCreateSubmissionStoresSourceAndCreatesPendingTask(t *testing.T) {
 
 func TestCreateSubmissionRollsBackSubmissionWhenTaskCreationFails(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true}
 	repo.failCreateJudgeTask = errors.New("task insert failed")
 	service := newServiceForTest(serviceTestOptions{
 		Repository:       repo,
@@ -621,7 +617,7 @@ func TestWorkerDefaultRetryPolicyUsesFiveRetriesAndConfiguredBackoff(t *testing.
 	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 4}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
-	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	store := NewMemorySourceStore()
 	store.objects["source"] = []byte("package main")
 	engine := judge.NewFakeEngine()
@@ -651,7 +647,7 @@ func TestWorkerRetryAndDeadLetterSynchronizeSubmissionStatus(t *testing.T) {
 	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched", Attempts: 0}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
-	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	store := NewMemorySourceStore()
 	store.objects["source"] = []byte("bad")
 	engine := judge.NewFakeEngine()
@@ -687,7 +683,7 @@ func TestWorkerUsesSubmissionTestcaseSetSnapshot(t *testing.T) {
 	repo.tasks[7] = JudgeTaskRecord{ID: 7, SubmissionID: int64Ptr(9), Status: "dispatched"}
 	repo.submissions[9] = SubmissionRecord{ID: 9, ProblemID: 1, LanguageID: 71, SourceArtifactID: 4, Status: StatusQueued, TestcaseSetID: 3}
 	repo.artifacts[4] = ArtifactRecord{ID: 4, StorageKey: "source"}
-	repo.languages[71] = LanguageRecord{ID: 71, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144, Enabled: true}
 	store := NewMemorySourceStore()
 	store.objects["source"] = []byte("package main")
 	resolver := fakeSnapshotTestcaseResolver{
@@ -721,7 +717,7 @@ func TestWorkerUsesSubmissionTestcaseSetSnapshot(t *testing.T) {
 func TestHandlerCreateSubmissionAcceptsSourceCodeField(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true}
 	handler := NewHandler(newServiceForTest(serviceTestOptions{
 		Repository:       repo,
 		ProblemReader:    fakeProblemReader{},
@@ -1200,7 +1196,7 @@ func TestHandlerSubmissionDetailIncludesAdminDiagnosticsForAdmin(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if envelope.Data.AdminDiagnostics == nil || envelope.Data.AdminDiagnostics.ProtocolVersion != judge.ProtocolVersion {
+	if envelope.Data.AdminDiagnostics == nil || envelope.Data.AdminDiagnostics.ProtocolVersion != judgeevents.RequestEventType {
 		t.Fatalf("admin diagnostics = %+v", envelope.Data.AdminDiagnostics)
 	}
 	if envelope.Data.AdminDiagnostics.TraceID == nil || *envelope.Data.AdminDiagnostics.TraceID != "trace-admin" {
@@ -1331,35 +1327,10 @@ func (p frozenSubmissionPolicy) SubmissionResultVisibility(ctx context.Context, 
 	return SubmissionResultVisibility{ShowResult: true, ShowCases: true, Visibility: "visible"}, nil
 }
 
-func TestHandlerSyncLanguagesReturnsAcceptedEmptyForRoot(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	repo := newMemoryRepo()
-	engine := judge.NewFakeEngine()
-	engine.SetLanguages([]judge.Language{{ID: 71, Name: "Go", Enabled: true}})
-	handler := NewHandler(newServiceForTest(serviceTestOptions{Repository: repo, Judge: engine}))
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/languages/sync", nil)
-	req.Header.Set("X-User-ID", "1")
-	req.Header.Set("X-User-Role", "root")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if rec.Body.Len() != 0 {
-		t.Fatalf("expected empty response body, got %q", rec.Body.String())
-	}
-	if len(repo.languages) != 1 {
-		t.Fatalf("languages = %+v", repo.languages)
-	}
-}
-
 func TestHandlerCreateRunReturnsOpenAPIShapeAndShortWaitStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
-	repo.languages[71] = LanguageRecord{ID: 71, Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
+	repo.languages[71] = LanguageRecord{ID: 71, EngineLanguageID: "go", Enabled: true, DefaultTimeLimit: time.Second, DefaultMemoryKB: 262144}
 	engine := judge.NewFakeEngine(judge.Result{Verdict: judge.VerdictAccepted, Stdout: "ok\n"})
 	handler := NewHandler(newServiceForTest(serviceTestOptions{
 		Repository:    repo,
