@@ -41,6 +41,10 @@ type HTTPConfig struct {
 type WorkerConfig struct {
 	HealthAddr      string        `yaml:"health_addr"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	// ReconcileInterval is how often the worker sweeps stale tasks and builds
+	// due scoreboard snapshots. The smoke stack lowers it so tests do not wait
+	// a full tick for contest snapshots.
+	ReconcileInterval time.Duration `yaml:"reconcile_interval"`
 }
 
 type DatabaseConfig struct {
@@ -173,8 +177,9 @@ func defaults() Config {
 			WriteTimeout: 10 * time.Second,
 		},
 		Worker: WorkerConfig{
-			HealthAddr:      ":8081",
-			ShutdownTimeout: 10 * time.Second,
+			HealthAddr:        ":8081",
+			ShutdownTimeout:   10 * time.Second,
+			ReconcileInterval: 30 * time.Second,
 		},
 		Redis: RedisConfig{
 			Addr:             "localhost:6379",

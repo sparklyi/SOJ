@@ -60,6 +60,9 @@ func TestLoadDefaultsWithoutFile(t *testing.T) {
 	if cfg.Redis.ResultStream != "soj:judge:tasks:results" {
 		t.Fatalf("Redis.ResultStream = %q, want derived stream", cfg.Redis.ResultStream)
 	}
+	if cfg.Worker.ReconcileInterval != 30*time.Second {
+		t.Fatalf("Worker.ReconcileInterval = %v, want 30s", cfg.Worker.ReconcileInterval)
+	}
 }
 
 func TestLoadFileOverridesDefaults(t *testing.T) {
@@ -79,6 +82,8 @@ judge:
   language_slots: go=2
 retention:
   run_days: 0
+worker:
+  reconcile_interval: 1s
 `)
 
 	if cfg.Env != "docker" {
@@ -98,6 +103,9 @@ retention:
 	}
 	if cfg.Retention.RunDays != 0 {
 		t.Fatalf("Retention.RunDays = %d, want 0", cfg.Retention.RunDays)
+	}
+	if cfg.Worker.ReconcileInterval != time.Second {
+		t.Fatalf("Worker.ReconcileInterval = %v, want 1s", cfg.Worker.ReconcileInterval)
 	}
 	if cfg.Judge.MaxBatch != cfg.Redis.BatchSize {
 		t.Fatalf("Judge.MaxBatch = %d, want redis.batch_size %d", cfg.Judge.MaxBatch, cfg.Redis.BatchSize)
@@ -173,6 +181,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{"unknown agent streams", "redis:\n  agent_streams: sometimes\n", "redis.agent_streams"},
 		{"negative retention", "retention:\n  run_days: -1\n", "retention.run_days"},
 		{"negative batch", "judge:\n  max_batch: -1\n", "judge.max_batch"},
+		{"zero reconcile interval", "worker:\n  reconcile_interval: 0s\n", "worker.reconcile_interval"},
 	}
 
 	for _, test := range tests {

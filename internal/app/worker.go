@@ -158,7 +158,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		TracingEnabled: tracing.Enabled(),
 		TracingService: tracing.ServiceName(),
 	})
-	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "run_stream", cfg.Redis.RunStream, "result_stream", cfg.Redis.ResultStream, "result_group", cfg.Redis.ResultGroup, "run_retention_days", cfg.Retention.RunDays, "run_retention_interval", cfg.Retention.RunInterval)
+	logger.InfoContext(ctx, "starting soj worker", "health_addr", cfg.Worker.HealthAddr, "request_stream", cfg.Redis.Stream, "request_group", cfg.Redis.Group, "run_stream", cfg.Redis.RunStream, "result_stream", cfg.Redis.ResultStream, "result_group", cfg.Redis.ResultGroup, "reconcile_interval", cfg.Worker.ReconcileInterval, "run_retention_days", cfg.Retention.RunDays, "run_retention_interval", cfg.Retention.RunInterval)
 
 	server := &http.Server{
 		Addr:         cfg.Worker.HealthAddr,
@@ -173,7 +173,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, retention, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block)
+		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, retention, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block, cfg.Worker.ReconcileInterval)
 	}()
 
 	err = <-errCh
@@ -205,7 +205,7 @@ type runRetentionSweeper interface {
 	Sweep(context.Context) (submission.RunRetentionResult, error)
 }
 
-func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, retention runRetentionSweeper, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration) error {
+func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, retention runRetentionSweeper, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration, reconcileEvery time.Duration) error {
 	errCh := make(chan error, 4)
 	go func() {
 		errCh <- runDispatchLoop(ctx, worker, requestQueue, batchSize, dispatchInterval(block), metrics)
@@ -214,7 +214,7 @@ func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsum
 		errCh <- runResultConsumerLoop(ctx, resultConsumer, resultQueue, batchSize, block, metrics)
 	}()
 	go func() {
-		errCh <- runReconcilerLoop(ctx, reconciler, snapshots)
+		errCh <- runReconcilerLoop(ctx, reconciler, snapshots, reconcileEvery)
 	}()
 	if retention != nil && retention.Enabled() {
 		go func() {
@@ -326,8 +326,18 @@ func dispatchInterval(block time.Duration) time.Duration {
 	return time.Second
 }
 
-func runReconcilerLoop(ctx context.Context, reconciler workerReconciler, snapshots scoreSnapshotGenerator) error {
-	ticker := time.NewTicker(30 * time.Second)
+// reconcileInterval returns the reconciler loop's tick interval. Zero or
+// negative values fall back to the configuration default, so a loop that was
+// wired without an interval still makes progress.
+func reconcileInterval(interval time.Duration) time.Duration {
+	if interval > 0 {
+		return interval
+	}
+	return 30 * time.Second
+}
+
+func runReconcilerLoop(ctx context.Context, reconciler workerReconciler, snapshots scoreSnapshotGenerator, interval time.Duration) error {
+	ticker := time.NewTicker(reconcileInterval(interval))
 	defer ticker.Stop()
 	for {
 		loopCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.reconciler")

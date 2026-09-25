@@ -24,6 +24,9 @@ http:
 worker:
   health_addr: ":8081"
   shutdown_timeout: 10s
+  # How often the worker sweeps stale tasks and builds due scoreboard
+  # snapshots. The smoke stack lowers it so tests do not wait a full tick.
+  reconcile_interval: ${SOJ_WORKER_RECONCILE_INTERVAL:-30s}
 
 log:
   level: info
