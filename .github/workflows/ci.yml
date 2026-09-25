@@ -36,9 +36,9 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U soj -d soj"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
+          --health-interval 1s
+          --health-timeout 1s
+          --health-retries 30
     env:
       # One database, two readers: soj-migrate takes the first, and the
       # DSN-gated integration tests (cursor pagination) take the second.
@@ -55,6 +55,8 @@ jobs:
           cache: true
 
       - name: Lint
+        # .golangci.yml enables govet, so this covers `go vet ./...` too; keep
+        # the analyzers there instead of adding a separate vet step.
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.11.4
@@ -65,9 +67,6 @@ jobs:
 
       - name: Test
         run: go test ./...
-
-      - name: Vet
-        run: go vet ./...
 
       - name: Validate Compose
         run: docker compose -f deploy/docker-compose.yaml config
