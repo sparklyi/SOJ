@@ -902,6 +902,44 @@ func (q *Queries) ListProblemCheckRunsByProblemID(ctx context.Context, arg ListP
 	return items, nil
 }
 
+const listProblemSubmissionCounts = `-- name: ListProblemSubmissionCounts :many
+SELECT
+    s.problem_id,
+    count(*)::bigint AS submission_count,
+    count(*) FILTER (WHERE s.status = 'accepted')::bigint AS accepted_count
+FROM submissions s
+WHERE s.problem_id = ANY($1::bigint[])
+GROUP BY s.problem_id
+`
+
+type ListProblemSubmissionCountsRow struct {
+	ProblemID       int64 `db:"problem_id" json:"problem_id"`
+	SubmissionCount int64 `db:"submission_count" json:"submission_count"`
+	AcceptedCount   int64 `db:"accepted_count" json:"accepted_count"`
+}
+
+// Batched submission counts for a page of problems, so a list view never
+// issues one stats query per row. Hits submissions_problem_status_idx.
+func (q *Queries) ListProblemSubmissionCounts(ctx context.Context, problemIds []int64) ([]ListProblemSubmissionCountsRow, error) {
+	rows, err := q.db.Query(ctx, listProblemSubmissionCounts, problemIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProblemSubmissionCountsRow
+	for rows.Next() {
+		var i ListProblemSubmissionCountsRow
+		if err := rows.Scan(&i.ProblemID, &i.SubmissionCount, &i.AcceptedCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProblemTags = `-- name: ListProblemTags :many
 SELECT pt.id, pt.name, pt.slug
 FROM problem_tags pt

@@ -174,7 +174,6 @@ func (r *ContestReader) withFrontendContract(ctx context.Context, actor auth.Act
 		return ContestRecord{}, err
 	}
 	record.Problems = problems
-	record.ScoringMode = ScoringModeACM
 	record.Registered = r.actorRegisteredForContest(ctx, actor, record.ID)
 	record.CurrentUserRoles = r.currentUserRoles(ctx, actor, record.ID)
 	return record, nil

@@ -498,8 +498,8 @@ func TestContestResponsesIncludeFrontendContractFields(t *testing.T) {
 	if len(list.Items) != 1 {
 		t.Fatalf("list = %+v, want one contest", list)
 	}
-	if !list.Items[0].Registered || list.Items[0].ScoringMode != ScoringModeACM {
-		t.Fatalf("list contest = %+v, want registered ACM contest", list.Items[0])
+	if !list.Items[0].Registered {
+		t.Fatalf("list contest = %+v, want registered contest", list.Items[0])
 	}
 	if len(list.Items[0].Problems) != 1 || list.Items[0].Problems[0].Title != "Two Sum" {
 		t.Fatalf("list problems = %+v, want enriched problem title", list.Items[0].Problems)
@@ -509,8 +509,8 @@ func TestContestResponsesIncludeFrontendContractFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetContest returned error: %v", err)
 	}
-	if !detail.Registered || detail.ScoringMode != ScoringModeACM {
-		t.Fatalf("detail = %+v, want registered ACM contest", detail)
+	if !detail.Registered {
+		t.Fatalf("detail = %+v, want registered contest", detail)
 	}
 }
 

@@ -299,7 +299,7 @@ type taskProcessStore interface {
 	MarkSubmissionRunning(context.Context, int64) (SubmissionRecord, error)
 	GetArtifact(context.Context, int64) (ArtifactRecord, error)
 	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
-	CompleteSubmissionWithResult(context.Context, int64, judge.Result, int32) (SubmissionRecord, error)
+	CompleteSubmissionWithResult(context.Context, int64, judge.Result) (SubmissionRecord, error)
 }
 
 type taskFailureStore interface {

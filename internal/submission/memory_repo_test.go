@@ -230,10 +230,9 @@ func (r *memoryRepo) MarkSubmissionSystemError(ctx context.Context, id int64, re
 	r.submissions[id] = row
 	return row, nil
 }
-func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
+func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result) (SubmissionRecord, error) {
 	row := r.submissions[id]
 	row.Status = dbStatus(result.Verdict)
-	row.Score = score
 	row.TimeMS = int32Ptr(int32(result.TimeMS))
 	row.MemoryKB = int32Ptr(int32(result.MemoryKB))
 	row.ErrorMessage = stringPtr(result.ErrorMessage)
@@ -264,7 +263,6 @@ func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64,
 		ValidatorHash:        stringPtr(result.Manifest.ValidatorHash),
 		Status:               dbStatus(result.Verdict),
 		Verdict:              stringPtr(string(result.Verdict)),
-		Score:                score,
 		TimeMS:               int32Ptr(int32(result.TimeMS)),
 		MemoryKB:             int32Ptr(int32(result.MemoryKB)),
 		FirstFailedCaseIndex: firstFailedCaseIndex(result.Cases),
@@ -298,7 +296,6 @@ func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64,
 		SubmissionID:         id,
 		AttemptID:            attemptID,
 		Status:               row.Status,
-		Score:                score,
 		TimeMS:               int32Ptr(int32(result.TimeMS)),
 		MemoryKB:             int32Ptr(int32(result.MemoryKB)),
 		FirstFailedCaseIndex: firstFailedCaseIndex(result.Cases),
@@ -397,7 +394,6 @@ func (r *memoryRepo) EnsureJudgeAttempt(ctx context.Context, input EnsureJudgeAt
 		JudgeEngine:      input.JudgeEngine,
 		LanguageID:       input.LanguageID,
 		Status:           "created",
-		Score:            0,
 		TraceID:          stringPtr(input.TraceID),
 		CreatedAt:        time.Now().UTC(),
 		UpdatedAt:        time.Now().UTC(),
@@ -458,7 +454,6 @@ func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input Compl
 
 	attempt.Status = status
 	attempt.Verdict = stringPtr(status)
-	attempt.Score = submission.Score
 	attempt.TimeMS = int32Ptr(int32(input.Result.TimeMS))
 	attempt.MemoryKB = int32Ptr(int32(input.Result.MemoryKB))
 	attempt.TraceID = stringPtr(input.TraceID)
@@ -472,7 +467,6 @@ func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input Compl
 		SubmissionID: submission.ID,
 		AttemptID:    attemptID,
 		Status:       status,
-		Score:        submission.Score,
 		TimeMS:       int32Ptr(int32(input.Result.TimeMS)),
 		MemoryKB:     int32Ptr(int32(input.Result.MemoryKB)),
 		SafeSummary:  []byte(`{"verdict":"` + status + `"}`),

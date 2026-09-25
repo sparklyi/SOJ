@@ -223,7 +223,7 @@ func markSubmissionSystemError(ctx context.Context, q *db.Queries, id int64, rea
 	return record, nil
 }
 
-func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result, score int32) (SubmissionRecord, error) {
+func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result) (SubmissionRecord, error) {
 	if r.txRunner == nil {
 		return SubmissionRecord{}, errors.New("transaction runner is required to complete submission with judge result")
 	}
@@ -231,7 +231,6 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 		Status:       dbStatus(result.Verdict),
 		TimeMs:       int4(result.TimeMS),
 		MemoryKb:     int4(result.MemoryKB),
-		Score:        pgtype.Int4{Int32: score, Valid: true},
 		ErrorMessage: text(result.ErrorMessage),
 		JudgedAt:     judgedAtParam(result.JudgedAt),
 		ID:           id,
@@ -262,7 +261,7 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 		if err != nil {
 			return err
 		}
-		if _, err := persistJudgeResult(ctx, q, record, result, score); err != nil {
+		if _, err := persistJudgeResult(ctx, q, record, result); err != nil {
 			return err
 		}
 		return rebuildContestProblemResult(ctx, q, record, projectionLock)
@@ -279,5 +278,5 @@ func copyInt64Ptr(value *int64) *int64 {
 }
 
 func submissionRecord(row db.Submission) SubmissionRecord {
-	return SubmissionRecord{ID: row.ID, UserID: row.UserID, ProblemID: row.ProblemID, ContestID: int8Value(row.ContestID), LanguageID: row.LanguageID, TestcaseSetID: row.TestcaseSetID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), Score: row.Score, ErrorMessage: textValue(row.ErrorMessage), SubmittedAt: row.SubmittedAt.Time, JudgedAt: timeValue(row.JudgedAt), FirstJudgedAt: timeValue(row.FirstJudgedAt), UpdatedAt: row.UpdatedAt.Time}
+	return SubmissionRecord{ID: row.ID, UserID: row.UserID, ProblemID: row.ProblemID, ContestID: int8Value(row.ContestID), LanguageID: row.LanguageID, TestcaseSetID: row.TestcaseSetID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), ErrorMessage: textValue(row.ErrorMessage), SubmittedAt: row.SubmittedAt.Time, JudgedAt: timeValue(row.JudgedAt), FirstJudgedAt: timeValue(row.FirstJudgedAt), UpdatedAt: row.UpdatedAt.Time}
 }

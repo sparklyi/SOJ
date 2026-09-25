@@ -26,8 +26,6 @@ const (
 	RegistrationActive   = "active"
 	RegistrationCanceled = "canceled"
 
-	ScoringModeACM = "acm"
-
 	CellNone      = "none"
 	CellAttempted = "attempted"
 	CellAccepted  = "accepted"
@@ -54,7 +52,6 @@ type ContestRecord struct {
 	FreezeAt       time.Time `json:"freeze_at"`
 	InviteCodeHash string    `json:"-"`
 	ScoreRevision  int64     `json:"-"`
-	ScoringMode    string    `json:"scoring_mode"`
 	Registered     bool      `json:"registered"`
 	// CurrentUserRoles exposes the viewer's contest-scoped roles so the frontend
 	// can gate contest management surfaces. Always serialized, empty for

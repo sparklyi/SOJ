@@ -19,16 +19,25 @@ type submissionReaderStore interface {
 	GetSubmissionResult(context.Context, int64) (SubmissionResultRecord, error)
 	GetLatestJudgeAttemptBySubmissionID(context.Context, int64) (JudgeAttemptRecord, error)
 	ListJudgeCaseResults(context.Context, int64) ([]JudgeCaseResultRecord, error)
+	GetArtifact(context.Context, int64) (ArtifactRecord, error)
 }
 
 // SubmissionReader owns submission queries and result visibility projection.
 type SubmissionReader struct {
 	store         submissionReaderStore
 	contestPolicy ContestResultVisibilityPolicy
+	sources       sourceReader
 }
 
-func NewSubmissionReader(store submissionReaderStore, contestPolicy ContestResultVisibilityPolicy) *SubmissionReader {
-	return &SubmissionReader{store: store, contestPolicy: contestPolicy}
+// NewSubmissionReader builds a reader with its query store, contest visibility
+// policy, and the object source store it reads submission source from. A nil
+// source store simply makes GetSubmissionSource return unavailable rather than
+// preventing the reader from serving everything else.
+func NewSubmissionReader(store submissionReaderStore, contestPolicy ContestResultVisibilityPolicy, sources sourceReader) *SubmissionReader {
+	if store == nil {
+		panic("submission reader store is required")
+	}
+	return &SubmissionReader{store: store, contestPolicy: contestPolicy, sources: sources}
 }
 
 func (s *SubmissionReader) GetSubmission(ctx context.Context, actor auth.Actor, id int64) (SubmissionView, error) {
@@ -40,6 +49,57 @@ func (s *SubmissionReader) GetSubmission(ctx context.Context, actor auth.Actor, 
 		return SubmissionView{}, apperror.Forbidden("submission.not_allowed", "submission access denied")
 	}
 	return s.submissionView(ctx, actor, record)
+}
+
+// GetSubmissionSource reads the stored source for an authorized reader. The
+// owner and global admins always pass; anyone else needs contest staff rights
+// on the submission's contest, asked through the same contest policy that owns
+// result visibility.
+func (s *SubmissionReader) GetSubmissionSource(ctx context.Context, actor auth.Actor, id int64) (SubmissionSource, error) {
+	record, err := s.store.GetSubmission(ctx, id)
+	if err != nil {
+		return SubmissionSource{}, err
+	}
+	if err := s.authorizeSourceRead(ctx, actor, record); err != nil {
+		return SubmissionSource{}, err
+	}
+	if s.sources == nil {
+		return SubmissionSource{}, apperror.ServiceUnavailable("submission source storage unavailable")
+	}
+	artifact, err := s.store.GetArtifact(ctx, record.SourceArtifactID)
+	if err != nil {
+		return SubmissionSource{}, err
+	}
+	source, err := s.sources.Get(ctx, artifact.StorageKey)
+	if err != nil {
+		return SubmissionSource{}, err
+	}
+	return SubmissionSource{SourceCode: string(source), LanguageID: record.LanguageID}, nil
+}
+
+func (s *SubmissionReader) authorizeSourceRead(ctx context.Context, actor auth.Actor, record SubmissionRecord) error {
+	if actor.Admin() || (actor.Authenticated() && actor.UserID == record.UserID) {
+		return nil
+	}
+	if record.ContestID == nil {
+		return sourceDenied()
+	}
+	policy, ok := s.contestPolicy.(ContestSourcePolicy)
+	if !ok {
+		return sourceDenied()
+	}
+	allowed, err := policy.CanReadSubmissionSource(ctx, actor, contestSubmissionVisibility(record))
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return sourceDenied()
+	}
+	return nil
+}
+
+func sourceDenied() error {
+	return apperror.Forbidden("submission.source_not_allowed", "submission source access denied")
 }
 
 func (s *SubmissionReader) ListSubmissions(ctx context.Context, actor auth.Actor, input ListSubmissionsInput) ([]SubmissionView, int64, error) {

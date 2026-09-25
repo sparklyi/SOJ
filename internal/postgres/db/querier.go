@@ -150,6 +150,9 @@ type Querier interface {
 	ListProblemCheckFindingsByRunID(ctx context.Context, runID int64) ([]ProblemCheckFinding, error)
 	ListProblemCheckRunsByProblemID(ctx context.Context, arg ListProblemCheckRunsByProblemIDParams) ([]ProblemCheckRun, error)
 	ListProblemReviewEvents(ctx context.Context, problemID int64) ([]ProblemReviewEvent, error)
+	// Batched submission counts for a page of problems, so a list view never
+	// issues one stats query per row. Hits submissions_problem_status_idx.
+	ListProblemSubmissionCounts(ctx context.Context, problemIds []int64) ([]ListProblemSubmissionCountsRow, error)
 	ListProblemTags(ctx context.Context, problemID int64) ([]ProblemTag, error)
 	ListProblems(ctx context.Context, arg ListProblemsParams) ([]ListProblemsRow, error)
 	ListProblemsForReview(ctx context.Context, arg ListProblemsForReviewParams) ([]Problem, error)

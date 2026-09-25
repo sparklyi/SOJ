@@ -133,9 +133,13 @@ func (submissionReaderStoreStub) ListJudgeCaseResults(context.Context, int64) ([
 	return nil, nil
 }
 
+func (submissionReaderStoreStub) GetArtifact(context.Context, int64) (ArtifactRecord, error) {
+	return ArtifactRecord{ID: 1, StorageKey: "submission/7/source"}, nil
+}
+
 func TestSubmissionReaderUsesOnlyReaderStore(t *testing.T) {
 	contestID := int64(2)
-	reader := NewSubmissionReader(submissionReaderStoreStub{record: SubmissionRecord{ID: 1, UserID: 7, ContestID: &contestID, Status: StatusQueued}}, contestResultVisibilityPolicyStub{})
+	reader := NewSubmissionReader(submissionReaderStoreStub{record: SubmissionRecord{ID: 1, UserID: 7, ContestID: &contestID, Status: StatusQueued}}, contestResultVisibilityPolicyStub{}, sourceReaderStub{})
 
 	view, err := reader.GetSubmission(t.Context(), auth.Actor{UserID: 7, Role: auth.RoleUser}, 1)
 	if err != nil {
@@ -143,6 +147,14 @@ func TestSubmissionReaderUsesOnlyReaderStore(t *testing.T) {
 	}
 	if view.Submission.ID != 1 {
 		t.Fatalf("GetSubmission() = %+v, want submission 1", view)
+	}
+
+	source, err := reader.GetSubmissionSource(t.Context(), auth.Actor{UserID: 7, Role: auth.RoleUser}, 1)
+	if err != nil {
+		t.Fatalf("GetSubmissionSource() error = %v", err)
+	}
+	if source.SourceCode != "package main" {
+		t.Fatalf("GetSubmissionSource() = %+v, want the owner's source", source)
 	}
 }
 
@@ -222,9 +234,8 @@ func (s *submissionCompletionStoreStub) GetSubmission(context.Context, int64) (S
 	return s.current, nil
 }
 
-func (s *submissionCompletionStoreStub) CompleteSubmissionWithResult(_ context.Context, _ int64, result judge.Result, score int32) (SubmissionRecord, error) {
+func (s *submissionCompletionStoreStub) CompleteSubmissionWithResult(_ context.Context, _ int64, result judge.Result) (SubmissionRecord, error) {
 	s.current.Status = string(result.Verdict)
-	s.current.Score = score
 	return s.current, nil
 }
 
@@ -236,7 +247,7 @@ func TestSubmissionCompleterUsesOnlyCompletionStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteSubmission() error = %v", err)
 	}
-	if completed.Status != StatusAccepted || completed.Score != 100 {
+	if completed.Status != StatusAccepted {
 		t.Fatalf("CompleteSubmission() = %+v", completed)
 	}
 }
