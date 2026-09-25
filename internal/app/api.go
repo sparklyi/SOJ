@@ -123,6 +123,10 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err := submissionRepo.ReconcileLanguages(ctx, catalog.Profiles()); err != nil {
 		return err
 	}
+	// Reconciliation is a catalog write like any other, so the site aggregate has
+	// to follow it: the cached count would otherwise keep reporting the languages
+	// the deployment had before the restart.
+	statsService.Refresh(ctx)
 	runEngine, err := newRunEngine(cfg, catalog, logger)
 	if err != nil {
 		return err
