@@ -1,4 +1,4 @@
-.PHONY: test vet compose-config compose-config-docker-runner config-print runner-images runner-images-pull runner-images-build up smoke smoke-real-docker smoke-real-gvisor smoke-runner-capacity down
+.PHONY: test vet lint compose-config compose-config-docker-runner config-print runner-images runner-images-pull runner-images-build up smoke smoke-real-docker smoke-real-gvisor smoke-runner-capacity down
 
 COMPOSE_FILE ?= deploy/docker-compose.yaml
 DOCKER_RUNNER_COMPOSE_FILES ?= deploy/docker-compose.yaml:deploy/docker-compose.docker-runner.yaml
@@ -16,6 +16,10 @@ test:
 
 vet:
 	go vet ./...
+
+# Requires golangci-lint v2 (https://golangci-lint.run/welcome/install/).
+lint:
+	golangci-lint run
 
 compose-config:
 	docker compose -f $(COMPOSE_FILE) config

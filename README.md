@@ -113,6 +113,7 @@ Make your changes and run the checks:
 ```bash
 make test            # go test ./...
 make vet             # go vet ./...
+make lint            # golangci-lint run (needs golangci-lint v2)
 make compose-config  # validate every Compose file
 ```
 
