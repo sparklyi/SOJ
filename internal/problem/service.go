@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -436,7 +437,8 @@ func validateProblemCheckArchive(data []byte, set TestcaseSetRecord) problemChec
 	if err := verifyTestcaseArchiveContents(data, defaultTestcaseArchiveLimits); err != nil {
 		code := "testcase.zip_invalid"
 		message := "testcase archive must be a valid zip file"
-		if resourceErr, ok := err.(*testcaseArchiveResourceError); ok {
+		var resourceErr *testcaseArchiveResourceError
+		if errors.As(err, &resourceErr) {
 			code = resourceErr.code
 			message = resourceErr.message
 		}

@@ -3,6 +3,7 @@ package problem
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -343,14 +344,16 @@ func limitedReadBytes(maxBytes uint64) int64 {
 }
 
 func testcaseArchiveErrorMessage(err error) string {
-	if resourceErr, ok := err.(*testcaseArchiveResourceError); ok {
+	var resourceErr *testcaseArchiveResourceError
+	if errors.As(err, &resourceErr) {
 		return resourceErr.message
 	}
 	return "testcase archive must be a valid zip file"
 }
 
 func testcaseArchiveBadRequest(err error) error {
-	if resourceErr, ok := err.(*testcaseArchiveResourceError); ok {
+	var resourceErr *testcaseArchiveResourceError
+	if errors.As(err, &resourceErr) {
 		return apperror.BadRequest(resourceErr.code, resourceErr.message)
 	}
 	return apperror.BadRequest("testcase.zip_invalid", "testcase archive must be a valid zip file")

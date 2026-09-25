@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"errors"
 	"testing"
 
 	"SOJ/internal/auth"
@@ -61,7 +62,7 @@ func TestContestRolesExposeOnlyScopedPermissions(t *testing.T) {
 	if err := Authorize(judge, PermissionContestJudge); err != nil {
 		t.Fatalf("contest judge permission error = %v", err)
 	}
-	if err := Authorize(judge, PermissionContestManage); err != ErrForbidden {
+	if err := Authorize(judge, PermissionContestManage); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("contest judge manage error = %v, want %v", err, ErrForbidden)
 	}
 }
@@ -71,10 +72,10 @@ func TestAuthorizeRequiresAuthenticatedSubjectAndPermission(t *testing.T) {
 	if err := Authorize(author, PermissionProblemCreate); err != nil {
 		t.Fatalf("Authorize(author, create) error = %v", err)
 	}
-	if err := Authorize(author, PermissionProblemPublish); err != ErrForbidden {
+	if err := Authorize(author, PermissionProblemPublish); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("Authorize(author, publish) error = %v, want %v", err, ErrForbidden)
 	}
-	if err := Authorize(Subject{Roles: []Role{RoleRoot}}, PermissionSystemManage); err != ErrForbidden {
+	if err := Authorize(Subject{Roles: []Role{RoleRoot}}, PermissionSystemManage); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("Authorize(anonymous, system.manage) error = %v, want %v", err, ErrForbidden)
 	}
 }

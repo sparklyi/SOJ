@@ -98,11 +98,3 @@ func newRequestID() string {
 	}
 	return hex.EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano)))
 }
-
-func AbortUnauthorized(c *gin.Context) {
-	c.AbortWithStatusJSON(http.StatusUnauthorized, Envelope{
-		Data:      nil,
-		Error:     &ErrorBody{Code: "unauthorized", Message: "unauthorized"},
-		RequestID: requestID(c),
-	})
-}

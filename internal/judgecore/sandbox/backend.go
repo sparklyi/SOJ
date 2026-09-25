@@ -24,11 +24,12 @@ type Capabilities struct {
 func SelectBackend(env, configured, judgeEndpoint string) (string, error) {
 	backend := strings.TrimSpace(configured)
 	if backend == "" {
-		if strings.HasPrefix(strings.TrimSpace(judgeEndpoint), "fake://") {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(judgeEndpoint), "fake://"):
 			backend = BackendFake
-		} else if developmentEnv(env) {
+		case developmentEnv(env):
 			backend = BackendProcess
-		} else {
+		default:
 			backend = BackendDocker
 		}
 	}

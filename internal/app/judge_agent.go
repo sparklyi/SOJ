@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -138,7 +139,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 
 	err = <-errCh
 	cancel()
-	if err == nil || err == context.Canceled || err == context.DeadlineExceeded {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -325,21 +326,19 @@ func newJudgeAgentSandbox(backend string, runner config.RunnerConfig, probeImage
 			Logger:         logger,
 		}), nil
 	case sandbox.BackendIsolate:
-		return nil, errIsolateSandboxUnavailable{}
+		return nil, errIsolateSandboxUnavailable
 	default:
-		return nil, errUnsupportedSandboxBackend(backend)
+		return nil, unsupportedSandboxBackendError(backend)
 	}
 }
 
-type errIsolateSandboxUnavailable struct{}
+// errIsolateSandboxUnavailable reports that the isolate backend was requested but
+// is not compiled into this binary.
+var errIsolateSandboxUnavailable = errors.New("isolate sandbox execution is not implemented in this build")
 
-func (errIsolateSandboxUnavailable) Error() string {
-	return "isolate sandbox execution is not implemented in this build"
-}
+type unsupportedSandboxBackendError string
 
-type errUnsupportedSandboxBackend string
-
-func (e errUnsupportedSandboxBackend) Error() string {
+func (e unsupportedSandboxBackendError) Error() string {
 	return "unsupported judge-agent sandbox backend " + string(e)
 }
 

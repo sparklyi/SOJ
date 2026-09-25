@@ -108,6 +108,7 @@ git checkout -b fix/short-description
 ```bash
 make test            # go test ./...
 make vet             # go vet ./...
+make lint            # golangci-lint run（需要 golangci-lint v2）
 make compose-config  # 校验所有 Compose 文件
 ```
 

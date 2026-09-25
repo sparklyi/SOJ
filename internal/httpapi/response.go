@@ -33,10 +33,6 @@ func Accepted(c *gin.Context, data any) {
 	c.JSON(http.StatusAccepted, Envelope{Data: data, Error: nil, RequestID: requestID(c)})
 }
 
-func AcceptedEmpty(c *gin.Context) {
-	c.Status(http.StatusAccepted)
-}
-
 func NoContent(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }

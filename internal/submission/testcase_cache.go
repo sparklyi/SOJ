@@ -120,7 +120,12 @@ func (c *TestcaseCache) Load(ctx context.Context, ref judgeevents.TestcaseSetRef
 		c.record("error")
 		return nil, err
 	}
-	return cloneTestcases(value.([]problem.Testcase)), nil
+	cases, ok := value.([]problem.Testcase)
+	if !ok {
+		c.record("error")
+		return nil, errors.New("testcase cache load returned an unexpected value type")
+	}
+	return cloneTestcases(cases), nil
 }
 
 func testcaseCacheKeyFromRef(ref judgeevents.TestcaseSetRef) (testcaseCacheKey, error) {
@@ -201,7 +206,10 @@ func (c *TestcaseCache) get(key testcaseCacheKey) ([]problem.Testcase, bool) {
 		return nil, false
 	}
 	c.lru.MoveToFront(element)
-	entry := element.Value.(testcaseCacheEntry)
+	entry, ok := element.Value.(testcaseCacheEntry)
+	if !ok {
+		return nil, false
+	}
 	return cloneTestcases(entry.cases), true
 }
 

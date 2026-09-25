@@ -129,41 +129,8 @@ var allPermissions = []Permission{
 	PermissionUserManage,
 }
 
-var allRoles = []Role{
-	RoleUser,
-	RoleAuthor,
-	RoleReviewer,
-	RoleOperator,
-	RoleAdmin,
-	RoleRoot,
-	RoleContestStaff,
-	RoleContestManager,
-	RoleContestJudge,
-}
-
-func AllRoles() []Role {
-	return append([]Role(nil), allRoles...)
-}
-
 func AllPermissions() []Permission {
 	return append([]Permission(nil), allPermissions...)
-}
-
-func IsKnownRole(role Role) bool {
-	for _, known := range allRoles {
-		if role == known {
-			return true
-		}
-	}
-	return false
-}
-
-func IsGlobalRole(role Role) bool {
-	return auth.IsGlobalRole(role)
-}
-
-func IsContestRole(role Role) bool {
-	return auth.IsContestRole(role)
 }
 
 func RolePermissions(role Role) []Permission {

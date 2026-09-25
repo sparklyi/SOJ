@@ -969,7 +969,7 @@ func mapDBErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return apperror.NotFound("problem.not_found", "problem not found")
 	}
 	var pgErr *pgconn.PgError

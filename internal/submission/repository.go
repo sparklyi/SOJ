@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"SOJ/internal/apperror"
@@ -200,10 +199,6 @@ type SQLRepository struct {
 	txRunner postgres.TxRunner
 }
 
-func NewSQLRepository(q *db.Queries) *SQLRepository {
-	return &SQLRepository{q: q}
-}
-
 func NewSQLRepositoryWithTxRunner(q *db.Queries, txRunner postgres.TxRunner) *SQLRepository {
 	return &SQLRepository{q: q, txRunner: txRunner}
 }
@@ -388,10 +383,6 @@ func timeValue(value pgtype.Timestamptz) *time.Time {
 	}
 	out := value.Time
 	return &out
-}
-
-func int64String(value int64) string {
-	return strconv.FormatInt(value, 10)
 }
 
 func mapNotFound(err error, code, message string) error {

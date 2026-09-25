@@ -197,7 +197,7 @@ func runCommand(parent context.Context, dir string, args []string, stdin string,
 		ctx, cancel = context.WithTimeout(parent, limits.TimeLimit)
 	}
 	defer cancel()
-	cmdArgs := resourceWrappedArgs(args, limits)
+	cmdArgs := resourceWrappedArgs(args)
 	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(stdin)
@@ -273,10 +273,15 @@ func outputSizeExceeded(output commandOutput, limit int64) bool {
 	return int64(len(output.stdout)+len(output.stderr)) >= limit
 }
 
-func resourceWrappedArgs(args []string, limits Limits) []string {
-	commands := make([]string, 0, 4)
-	commands = append(commands, `exec "$@"`)
-	wrapped := []string{"sh", "-c", strings.Join(commands, "; "), "soj-command"}
+// resourceWrappedArgs runs the command through `sh -c 'exec "$@"'` so a profile
+// can keep shell syntax while the sandbox still ends up exec'ing the real
+// binary, which is what makes the run timeout and its signal report accurate.
+//
+// Memory is deliberately not limited here: the process backend is dev-only, and
+// the docker backend applies limits at the container level.
+func resourceWrappedArgs(args []string) []string {
+	wrapped := make([]string, 0, 4+len(args))
+	wrapped = append(wrapped, "sh", "-c", `exec "$@"`, "soj-command")
 	return append(wrapped, args...)
 }
 

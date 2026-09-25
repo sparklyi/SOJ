@@ -3,6 +3,7 @@ package problem
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -66,20 +67,21 @@ func (s *ProblemCheckService) RunProblemCheck(ctx context.Context, actor auth.Ac
 	storageReadable := false
 	zipReadable := false
 	caseCount := 0
-	if s.archives == nil {
+	switch {
+	case s.archives == nil:
 		findings = append(findings, problemCheckFindingDraft{
 			severity: ProblemCheckSeverityError,
 			code:     "testcase.storage_unreadable",
 			message:  "testcase object storage is unavailable",
 			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
 		})
-	} else if strings.TrimSpace(set.StorageKey) == "" {
+	case strings.TrimSpace(set.StorageKey) == "":
 		findings = append(findings, problemCheckFindingDraft{
 			severity: ProblemCheckSeverityError,
 			code:     "testcase.storage_unreadable",
 			message:  "testcase archive storage key is missing",
 		})
-	} else {
+	default:
 		body, _, err := s.archives.Get(ctx, set.StorageKey)
 		if err != nil {
 			findings = append(findings, problemCheckFindingDraft{
@@ -92,7 +94,8 @@ func (s *ProblemCheckService) RunProblemCheck(ctx context.Context, actor auth.Ac
 			storageReadable = true
 			data, err := readAllAndClose(body, defaultMaxTestcaseArchiveBytes)
 			if err != nil {
-				if resourceErr, ok := err.(*testcaseArchiveResourceError); ok {
+				var resourceErr *testcaseArchiveResourceError
+				if errors.As(err, &resourceErr) {
 					findings = append(findings, problemCheckFindingDraft{
 						severity: ProblemCheckSeverityError,
 						code:     resourceErr.code,

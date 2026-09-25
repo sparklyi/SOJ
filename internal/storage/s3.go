@@ -76,16 +76,6 @@ func normalizeEndpoint(endpoint string, secure bool) (string, bool, error) {
 	}
 }
 
-func NewS3StorageWithClient(client *minio.Client, bucket string) (*S3Storage, error) {
-	if client == nil {
-		return nil, errors.New("s3 client is required")
-	}
-	if strings.TrimSpace(bucket) == "" {
-		return nil, errors.New("s3 bucket is required")
-	}
-	return &S3Storage{client: client, bucket: bucket}, nil
-}
-
 func (s *S3Storage) Put(ctx context.Context, object Object) (ObjectInfo, error) {
 	if strings.TrimSpace(object.Key) == "" {
 		return ObjectInfo{}, errors.New("object key is required")

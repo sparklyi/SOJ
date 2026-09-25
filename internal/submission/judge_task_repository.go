@@ -119,7 +119,7 @@ func (r *SQLRepository) RecoverDeadJudgeTask(ctx context.Context, id int64, next
 		if err != nil {
 			return err
 		}
-		if currentTask.SubmissionID.Valid == false {
+		if !currentTask.SubmissionID.Valid {
 			return errJudgeTaskIsNotASubmission
 		}
 		submissionRow, err := q.LockSubmissionByID(ctx, currentTask.SubmissionID.Int64)
