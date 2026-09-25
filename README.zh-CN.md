@@ -15,27 +15,7 @@ SOJ（Sundial Online Judge）是一个可以自己部署的在线评测系统，
 
 ## 架构
 
-```mermaid
-flowchart LR
-    web["SOJ-web<br/>Next.js"]
-    api["<b>soj-api</b><br/>REST /api/v1"]
-    pg[("PostgreSQL<br/>提交 · 任务 · 判定")]
-    worker["<b>soj-worker</b><br/>分发 · 消费 · 对账"]
-    redis[("Redis Streams<br/>请求 · 结果")]
-    agent["<b>soj-judge-agent</b><br/>消费请求 · 控制并发"]
-    core["<b>judgecore</b><br/>编译 · 运行 · 比对"]
-    sandbox["sandbox<br/>fake · process · docker"]
-    s3[("S3 · MinIO<br/>源代码 · 测试点")]
-
-    web -->|HTTPS| api
-    api -->|写任务| pg
-    pg -->|认领| worker
-    worker <-->|请求 / 结果| redis
-    redis <-->|请求 / 结果| agent
-    agent --> core --> sandbox
-    worker -.->|落库| pg
-    agent -.->|读源代码| s3
-```
+![SOJ 架构](docs/architecture.zh-CN.svg)
 
 | 程序 | 职责 |
 | --- | --- |
