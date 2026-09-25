@@ -25,6 +25,25 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: soj
+          POSTGRES_PASSWORD: soj
+          POSTGRES_DB: soj
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U soj -d soj"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      # One database, two readers: soj-migrate takes the first, and the
+      # DSN-gated integration tests (cursor pagination) take the second.
+      SOJ_DATABASE_DSN: postgres://soj:soj@localhost:5432/soj?sslmode=disable
+      SOJ_TEST_DATABASE_DSN: postgres://soj:soj@localhost:5432/soj?sslmode=disable
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,6 +53,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.4
+
+      # Runs before the tests so the DSN-gated integration tests have a schema.
+      - name: Migrate test database
+        run: go run ./cmd/soj-migrate --config deploy/config.yaml up
 
       - name: Test
         run: go test ./...

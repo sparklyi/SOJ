@@ -12,15 +12,28 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Grouped on purpose. Ungrouped, each action bump is its own pull request and
+  # every one of them rewrites the same few workflow files, so merging one
+  # conflicts the rest. Security updates are never grouped and still arrive
+  # individually.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     commit-message:
       prefix: "chore(deps)"
 
+  # "/" only covers Dockerfile.v2. The judge runner images under
+  # deploy/languages/* are the ones that actually compile and run user code, so
+  # their base images need watching too.
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - "/"
+      - "/deploy/languages/*"
     schedule:
       interval: weekly
     commit-message:

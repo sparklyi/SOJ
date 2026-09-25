@@ -129,9 +129,12 @@ func seedCursorQueryIntegrationData(t *testing.T, ctx context.Context, tx integr
 	}
 	statements := []statement{
 		{
-			query: `INSERT INTO users (id, email, password_hash, username, role, status) VALUES
-				($1, $2, 'hash', $3, 'user', 'active'),
-				($4, $5, 'hash', $6, 'user', 'active')`,
+			// Roles live in user_role_assignments, not on users: migration 000004 only
+			// migrates a legacy users.role column away when a database still has it.
+			// ListUsersByCursor does not read roles, so no assignment is needed.
+			query: `INSERT INTO users (id, email, password_hash, username, status) VALUES
+				($1, $2, 'hash', $3, 'active'),
+				($4, $5, 'hash', $6, 'active')`,
 			args: []any{
 				fixture.userOneID, fixture.token + "-one@example.test", fixture.token + "-one",
 				fixture.userTwoID, fixture.token + "-two@example.test", fixture.token + "-two",
