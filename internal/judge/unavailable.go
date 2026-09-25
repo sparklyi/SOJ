@@ -26,10 +26,6 @@ func (e *UnavailableEngine) Run(ctx context.Context, request RunRequest) (Result
 	return Result{}, e.err()
 }
 
-func (e *UnavailableEngine) Languages(ctx context.Context) ([]Language, error) {
-	return []Language{}, nil
-}
-
 func (e *UnavailableEngine) err() error {
 	if e.endpoint == "" {
 		return fmt.Errorf("judge endpoint is not implemented")

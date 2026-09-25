@@ -10,7 +10,6 @@ import (
 	"SOJ/internal/judge"
 	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/judgecore"
-	"SOJ/internal/judgecore/language"
 	"SOJ/internal/problem"
 	"SOJ/internal/queue"
 
@@ -142,7 +141,7 @@ func TestFakeAsyncAgentPublishesResultBeforeRequestAck(t *testing.T) {
 		AttemptID:      "attempt-1",
 		TraceID:        "trace-1",
 		SubmissionID:   9,
-		LanguageID:     71,
+		LanguageSlug:   "go",
 		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
 		TestcaseSet:    testRequestTestcaseSet(),
 		TimeoutMS:      1000,
@@ -194,7 +193,7 @@ func TestFakeAsyncAgentPropagatesRequestTraceContextToJudgeAndResult(t *testing.
 		TraceID:      "4bf92f3577b34da6a3ce929d0e0e4736",
 		TraceContext: judgeevents.TraceContext{Traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
 		SubmissionID: 9,
-		LanguageID:   71,
+		LanguageSlug: "go",
 		SourceArtifact: judgeevents.ArtifactRef{
 			ID:          4,
 			StorageKey:  "source/key",
@@ -243,7 +242,7 @@ func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
 		AttemptID:      "attempt-core",
 		TraceID:        "trace-core",
 		SubmissionID:   9,
-		LanguageID:     language.GoID,
+		LanguageSlug:   "go",
 		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
 		TestcaseSet:    testRequestTestcaseSet(),
 		TimeoutMS:      5000,
@@ -257,6 +256,7 @@ func main() { var a, b int; fmt.Scan(&a, &b); fmt.Println(a + b) }
 	resultQueue := &recordingResultPublisher{}
 	agent := NewCoreAsyncAgent(CoreAsyncAgentOptions{
 		Core:            judgecore.New(judgecore.Options{}),
+		Languages:       testCatalog(t),
 		SourceStore:     store,
 		TestcaseLoader:  asyncTestcaseLoader{cases: []problem.Testcase{{InputKey: "1 2\n", OutputKey: "3\n", TimeLimit: 5 * time.Second, MemoryKB: 262144}}},
 		ResultPublisher: resultQueue,
@@ -412,10 +412,6 @@ func (e *contextCapturingEngine) Judge(ctx context.Context, request judge.Reques
 	return e.result, nil
 }
 
-func (e *contextCapturingEngine) Languages(ctx context.Context) ([]judge.Language, error) {
-	return nil, nil
-}
-
 func (p *recordingResultPublisher) PublishResult(ctx context.Context, event judgeevents.ResultEvent) (string, error) {
 	payload, err := json.Marshal(event)
 	if err != nil {
@@ -539,7 +535,7 @@ func (l failingTestcaseLoader) Load(context.Context, judgeevents.TestcaseSetRef)
 type recordingCore struct {
 	judgeCalls int
 	runCalls   int
-	runRequest judge.RunRequest
+	runRequest judgecore.RunRequest
 	result     judge.Result
 }
 
@@ -548,7 +544,7 @@ func (c *recordingCore) Judge(context.Context, judgecore.Request) (judge.Result,
 	return c.result, nil
 }
 
-func (c *recordingCore) Run(_ context.Context, request judge.RunRequest) (judge.Result, error) {
+func (c *recordingCore) Run(_ context.Context, request judgecore.RunRequest) (judge.Result, error) {
 	c.runCalls++
 	c.runRequest = request
 	return c.result, nil
@@ -565,7 +561,7 @@ func TestCoreAsyncAgentRunsWithoutLoadingTestcases(t *testing.T) {
 		AttemptID:      "attempt-run",
 		TraceID:        "trace-run",
 		RunID:          12,
-		LanguageID:     71,
+		LanguageSlug:   "go",
 		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
 		Stdin:          "7 8\n",
 		TimeoutMS:      5000,
@@ -580,6 +576,7 @@ func TestCoreAsyncAgentRunsWithoutLoadingTestcases(t *testing.T) {
 	resultQueue := &recordingResultPublisher{}
 	agent := NewCoreAsyncAgent(CoreAsyncAgentOptions{
 		Core:            core,
+		Languages:       testCatalog(t),
 		SourceStore:     store,
 		TestcaseLoader:  failingTestcaseLoader{t: t},
 		ResultPublisher: resultQueue,
@@ -620,7 +617,7 @@ func TestFakeAsyncAgentRunsWithoutJudging(t *testing.T) {
 		AttemptID:      "attempt-run",
 		TraceID:        "trace-run",
 		RunID:          12,
-		LanguageID:     71,
+		LanguageSlug:   "go",
 		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
 		Stdin:          "hello",
 		CreatedAt:      time.Unix(100, 0).UTC(),

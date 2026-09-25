@@ -8,7 +8,7 @@ import (
 func TestFakeEngineRecordsRequestsAndReturnsQueuedResults(t *testing.T) {
 	engine := NewFakeEngine(Result{Verdict: VerdictWrongAnswer, Stdout: "no"})
 
-	result, err := engine.Judge(context.Background(), Request{LanguageID: 71, Source: []byte("package main")})
+	result, err := engine.Judge(context.Background(), Request{LanguageSlug: "go", Source: []byte("package main")})
 	if err != nil {
 		t.Fatalf("Judge returned error: %v", err)
 	}
@@ -16,15 +16,15 @@ func TestFakeEngineRecordsRequestsAndReturnsQueuedResults(t *testing.T) {
 		t.Fatalf("verdict = %q, want %q", result.Verdict, VerdictWrongAnswer)
 	}
 	requests := engine.Requests()
-	if len(requests) != 1 || requests[0].LanguageID != 71 {
-		t.Fatalf("requests = %+v, want one language 71 request", requests)
+	if len(requests) != 1 || requests[0].LanguageSlug != "go" {
+		t.Fatalf("requests = %+v, want one go request", requests)
 	}
 }
 
 func TestFakeEngineServesRunsFromTheSameScript(t *testing.T) {
 	engine := NewFakeEngine(Result{Verdict: VerdictAccepted, Stdout: "42\n", TimeMS: 12})
 
-	result, err := engine.Run(context.Background(), RunRequest{LanguageID: 71, Source: []byte("package main"), Stdin: "1 2\n"})
+	result, err := engine.Run(context.Background(), RunRequest{LanguageSlug: "go", Source: []byte("package main"), Stdin: "1 2\n"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestFakeEngineRunValidatesTheRequest(t *testing.T) {
 func TestUnavailableEngineRunNamesTheEndpoint(t *testing.T) {
 	engine := NewUnavailableEngine("agent://local")
 
-	_, err := engine.Run(context.Background(), RunRequest{LanguageID: 71, Source: []byte("package main")})
+	_, err := engine.Run(context.Background(), RunRequest{LanguageSlug: "go", Source: []byte("package main")})
 	if err == nil {
 		t.Fatal("Run returned nil error, want an explicit failure")
 	}

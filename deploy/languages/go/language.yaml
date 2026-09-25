@@ -1,0 +1,10 @@
+# The directory name is the slug. Everything else about the language lives here.
+name: Go
+version: "1.24"
+source_file: main.go
+binary_file: main
+compile: ["go", "build", "-o", "{{binary}}", "{{source}}"]
+run: ["{{binary}}"]
+image: ${SOJ_RUNNER_REGISTRY:-ghcr.io/sparklyi}/soj-runner-go:${SOJ_RUNNER_TAG:-main}
+time_limit_ms: 1000
+memory_limit_kb: 262144

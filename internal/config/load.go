@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
-	"regexp"
-	"slices"
 	"strings"
 
+	"SOJ/internal/envsubst"
 	"SOJ/internal/judgecore/sandbox"
 
 	"go.yaml.in/yaml/v3"
@@ -107,6 +107,9 @@ func read(file string) (Config, error) {
 		if err := loadFile(&cfg, path); err != nil {
 			return Config{}, err
 		}
+		if cfg.LanguagesDir != "" && !filepath.IsAbs(cfg.LanguagesDir) {
+			cfg.LanguagesDir = filepath.Join(filepath.Dir(path), cfg.LanguagesDir)
+		}
 	}
 
 	cfg.normalize()
@@ -137,7 +140,7 @@ func loadFile(cfg *Config, path string) error {
 	if err != nil {
 		return err
 	}
-	expanded, err := expandEnv(string(data))
+	expanded, err := envsubst.Expand(string(data))
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
@@ -148,68 +151,6 @@ func loadFile(cfg *Config, path string) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
-}
-
-// envRefPattern matches ${NAME} and ${NAME:-default}.
-var envRefPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}`)
-
-// expandEnv replaces ${NAME} and ${NAME:-default} with environment values.
-//
-// A reference without a default must resolve to a non-empty value; anything
-// else is collected and reported, so a missing secret stops the process
-// instead of starting it with an empty one. YAML comments are left alone: a
-// placeholder written in a comment documents the file, it does not configure
-// it.
-func expandEnv(data string) (string, error) {
-	var missing []string
-	var expanded strings.Builder
-	expanded.Grow(len(data))
-
-	for _, line := range strings.SplitAfter(data, "\n") {
-		code, comment := splitComment(line)
-		expanded.WriteString(envRefPattern.ReplaceAllStringFunc(code, func(ref string) string {
-			match := envRefPattern.FindStringSubmatch(ref)
-			if value, ok := os.LookupEnv(match[1]); ok && value != "" {
-				return value
-			}
-			if match[2] != "" {
-				return match[3]
-			}
-			missing = append(missing, match[1])
-			return ref
-		}))
-		expanded.WriteString(comment)
-	}
-
-	if len(missing) == 0 {
-		return expanded.String(), nil
-	}
-	slices.Sort(missing)
-	return "", fmt.Errorf("undefined environment variable(s): %s", strings.Join(slices.Compact(missing), ", "))
-}
-
-// splitComment splits a line into the part the loader expands and a trailing
-// comment, which starts at the first # outside quotes.
-func splitComment(line string) (code, comment string) {
-	var quote byte
-
-	for i := 0; i < len(line); i++ {
-		switch c := line[i]; {
-		case quote != 0:
-			if c == '\\' && quote == '"' {
-				i++
-				continue
-			}
-			if c == quote {
-				quote = 0
-			}
-		case c == '"' || c == '\'':
-			quote = c
-		case c == '#':
-			return line[:i], line[i:]
-		}
-	}
-	return line, ""
 }
 
 func (c Config) validate(role Role) error {
@@ -280,6 +221,11 @@ func (c Config) validate(role Role) error {
 	}
 	if role == RoleAPI && c.Auth.JWTSecret == "" {
 		errs = append(errs, errors.New("auth.jwt_secret is required for the api command"))
+	}
+	if role == RoleAPI || role == RoleJudgeAgent {
+		if c.LanguagesDir == "" {
+			errs = append(errs, fmt.Errorf("languages_dir is required for the %s command", role))
+		}
 	}
 
 	return errors.Join(errs...)

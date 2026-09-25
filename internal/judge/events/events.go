@@ -53,7 +53,6 @@ type RequestEvent struct {
 	TraceContext    TraceContext   `json:"trace_context,omitempty,omitzero"`
 	SubmissionID    int64          `json:"submission_id,omitempty"`
 	RunID           int64          `json:"run_id,omitempty"`
-	LanguageID      int64          `json:"language_id"`
 	LanguageSlug    string         `json:"language_slug,omitempty"`
 	SourceArtifact  ArtifactRef    `json:"source_artifact"`
 	TestcaseSet     TestcaseSetRef `json:"testcase_set,omitzero"`
@@ -83,8 +82,8 @@ func (e RequestEvent) Validate() error {
 	if e.SubmissionID == 0 && e.RunID == 0 {
 		return fmt.Errorf("submission_id or run_id is required")
 	}
-	if e.LanguageID == 0 {
-		return fmt.Errorf("language_id is required")
+	if e.LanguageSlug == "" {
+		return fmt.Errorf("language_slug is required")
 	}
 	if e.SourceArtifact.ID == 0 {
 		return fmt.Errorf("source_artifact.id is required")

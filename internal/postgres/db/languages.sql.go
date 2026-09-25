@@ -33,6 +33,28 @@ func (q *Queries) CountLanguages(ctx context.Context, arg CountLanguagesParams) 
 	return column_1, err
 }
 
+const disableLanguagesNotListed = `-- name: DisableLanguagesNotListed :execrows
+UPDATE languages
+SET enabled = false,
+    updated_at = now()
+WHERE engine = $1
+  AND enabled
+  AND engine_language_id <> ALL($2::text[])
+`
+
+type DisableLanguagesNotListedParams struct {
+	Engine string   `db:"engine" json:"engine"`
+	Slugs  []string `db:"slugs" json:"slugs"`
+}
+
+func (q *Queries) DisableLanguagesNotListed(ctx context.Context, arg DisableLanguagesNotListedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, disableLanguagesNotListed, arg.Engine, arg.Slugs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getEnabledLanguageByID = `-- name: GetEnabledLanguageByID :one
 SELECT id, engine, engine_language_id, name, version, compile_command, run_command, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
 FROM languages
@@ -185,7 +207,7 @@ func (q *Queries) UpdateLanguageAdminFields(ctx context.Context, arg UpdateLangu
 	return i, err
 }
 
-const upsertLanguage = `-- name: UpsertLanguage :one
+const upsertCatalogLanguage = `-- name: UpsertCatalogLanguage :one
 
 INSERT INTO languages (
     engine,
@@ -198,20 +220,18 @@ INSERT INTO languages (
     default_memory_limit_kb,
     enabled
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, true
 )
 ON CONFLICT (engine, engine_language_id) DO UPDATE
 SET name = EXCLUDED.name,
     version = EXCLUDED.version,
     compile_command = EXCLUDED.compile_command,
     run_command = EXCLUDED.run_command,
-    default_time_limit_ms = EXCLUDED.default_time_limit_ms,
-    default_memory_limit_kb = EXCLUDED.default_memory_limit_kb,
     updated_at = now()
 RETURNING id, engine, engine_language_id, name, version, compile_command, run_command, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
 `
 
-type UpsertLanguageParams struct {
+type UpsertCatalogLanguageParams struct {
 	Engine               string      `db:"engine" json:"engine"`
 	EngineLanguageID     string      `db:"engine_language_id" json:"engine_language_id"`
 	Name                 string      `db:"name" json:"name"`
@@ -220,14 +240,14 @@ type UpsertLanguageParams struct {
 	RunCommand           pgtype.Text `db:"run_command" json:"run_command"`
 	DefaultTimeLimitMs   int32       `db:"default_time_limit_ms" json:"default_time_limit_ms"`
 	DefaultMemoryLimitKb int32       `db:"default_memory_limit_kb" json:"default_memory_limit_kb"`
-	Enabled              bool        `db:"enabled" json:"enabled"`
 }
 
 // Owner: WP4 Submission/Language
-// Sync intentionally preserves enabled on existing rows so JudgeEngine language
-// refreshes do not re-enable languages disabled by an admin.
-func (q *Queries) UpsertLanguage(ctx context.Context, arg UpsertLanguageParams) (Language, error) {
-	row := q.db.QueryRow(ctx, upsertLanguage,
+// Reconcile intentionally preserves enabled and the limits on existing rows:
+// the language directory owns identity and metadata, administrators own
+// enablement and limits.
+func (q *Queries) UpsertCatalogLanguage(ctx context.Context, arg UpsertCatalogLanguageParams) (Language, error) {
+	row := q.db.QueryRow(ctx, upsertCatalogLanguage,
 		arg.Engine,
 		arg.EngineLanguageID,
 		arg.Name,
@@ -236,7 +256,6 @@ func (q *Queries) UpsertLanguage(ctx context.Context, arg UpsertLanguageParams) 
 		arg.RunCommand,
 		arg.DefaultTimeLimitMs,
 		arg.DefaultMemoryLimitKb,
-		arg.Enabled,
 	)
 	var i Language
 	err := row.Scan(

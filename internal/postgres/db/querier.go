@@ -71,6 +71,7 @@ type Querier interface {
 	DeleteArtifactByID(ctx context.Context, id int64) error
 	DeleteContestProblems(ctx context.Context, contestID int64) error
 	DeleteRunByID(ctx context.Context, id int64) error
+	DisableLanguagesNotListed(ctx context.Context, arg DisableLanguagesNotListedParams) (int64, error)
 	EnsureContestProblemResultProjection(ctx context.Context, arg EnsureContestProblemResultProjectionParams) error
 	FailActiveRejudgeBatchItemByTaskID(ctx context.Context, arg FailActiveRejudgeBatchItemByTaskIDParams) (RejudgeBatchItem, error)
 	FailProblemCheckRun(ctx context.Context, arg FailProblemCheckRunParams) (ProblemCheckRun, error)
@@ -199,11 +200,12 @@ type Querier interface {
 	UpdateRunStatus(ctx context.Context, arg UpdateRunStatusParams) (Run, error)
 	UpdateSubmissionStatus(ctx context.Context, arg UpdateSubmissionStatusParams) (Submission, error)
 	UpdateUserAdminFields(ctx context.Context, arg UpdateUserAdminFieldsParams) (User, error)
-	UpsertContestProblemResult(ctx context.Context, arg UpsertContestProblemResultParams) (ContestProblemResult, error)
 	// Owner: WP4 Submission/Language
-	// Sync intentionally preserves enabled on existing rows so JudgeEngine language
-	// refreshes do not re-enable languages disabled by an admin.
-	UpsertLanguage(ctx context.Context, arg UpsertLanguageParams) (Language, error)
+	// Reconcile intentionally preserves enabled and the limits on existing rows:
+	// the language directory owns identity and metadata, administrators own
+	// enablement and limits.
+	UpsertCatalogLanguage(ctx context.Context, arg UpsertCatalogLanguageParams) (Language, error)
+	UpsertContestProblemResult(ctx context.Context, arg UpsertContestProblemResultParams) (ContestProblemResult, error)
 	UpsertSubmissionResult(ctx context.Context, arg UpsertSubmissionResultParams) (SubmissionResult, error)
 }
 

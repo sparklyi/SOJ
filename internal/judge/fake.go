@@ -10,7 +10,6 @@ type FakeEngine struct {
 	mu          sync.Mutex
 	results     []Result
 	err         error
-	languages   []Language
 	requests    []Request
 	runRequests []RunRequest
 	delay       time.Duration
@@ -24,12 +23,6 @@ func (e *FakeEngine) SetError(err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.err = err
-}
-
-func (e *FakeEngine) SetLanguages(languages []Language) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.languages = append([]Language(nil), languages...)
 }
 
 func (e *FakeEngine) SetDelay(delay time.Duration) {
@@ -108,13 +101,4 @@ func (e *FakeEngine) serve(ctx context.Context) (Result, error) {
 		result.JudgedAt = time.Now().UTC()
 	}
 	return result, nil
-}
-
-func (e *FakeEngine) Languages(ctx context.Context) ([]Language, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.err != nil {
-		return nil, e.err
-	}
-	return append([]Language(nil), e.languages...), nil
 }

@@ -8,8 +8,8 @@ import (
 
 	"SOJ/internal/judge"
 	"SOJ/internal/judgecore/checker"
-	"SOJ/internal/judgecore/language"
 	"SOJ/internal/judgecore/sandbox"
+	"SOJ/internal/language"
 )
 
 const normalCaseTimeLimit = 10 * time.Second
@@ -71,7 +71,7 @@ func main() { for {} }
 func TestCoreJudgesGoOutputLimit(t *testing.T) {
 	core := New(Options{})
 	result, err := core.Judge(context.Background(), Request{
-		LanguageID: language.GoID,
+		Language: testGoProfile(),
 		Source: []byte(`package main
 import "fmt"
 func main() { for i := 0; i < 4096; i++ { fmt.Print("x") } }
@@ -95,10 +95,10 @@ func TestCoreCleanupUsesConfiguredDeadline(t *testing.T) {
 
 	started := time.Now()
 	result, err := core.Judge(context.Background(), Request{
-		LanguageID: language.GoID,
-		Source:     []byte("package main\nfunc main() {}\n"),
-		Cases:      []Case{{Input: "", ExpectedOutput: ""}},
-		Policy:     checker.PolicyExact,
+		Language: testGoProfile(),
+		Source:   []byte("package main\nfunc main() {}\n"),
+		Cases:    []Case{{Input: "", ExpectedOutput: ""}},
+		Policy:   checker.PolicyExact,
 	})
 	elapsed := time.Since(started)
 
@@ -125,7 +125,7 @@ func TestCoreJudgesCpp17AcceptedWhenCompilerExists(t *testing.T) {
 	}
 	core := New(Options{})
 	result, err := core.Judge(context.Background(), Request{
-		LanguageID: language.Cpp17ID,
+		Language: testCpp17Profile(),
 		Source: []byte(`#include <iostream>
 int main() { int a, b; std::cin >> a >> b; std::cout << a + b << "\n"; }
 `),
@@ -144,10 +144,10 @@ func judgeGo(t *testing.T, source string, cases []Case) judge.Result {
 	t.Helper()
 	core := New(Options{})
 	result, err := core.Judge(context.Background(), Request{
-		LanguageID: language.GoID,
-		Source:     []byte(source),
-		Cases:      cases,
-		Policy:     checker.PolicyExact,
+		Language: testGoProfile(),
+		Source:   []byte(source),
+		Cases:    cases,
+		Policy:   checker.PolicyExact,
 	})
 	if err != nil {
 		t.Fatalf("Judge returned error: %v", err)

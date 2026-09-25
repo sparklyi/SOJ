@@ -8,7 +8,7 @@ on:
     tags:
       - "v*.*.*"
     paths:
-      - "deploy/runner-images/**"
+      - "deploy/languages/**"
       - ".github/workflows/publish-runner-images.yml"
 
 permissions:
@@ -16,19 +16,36 @@ permissions:
   packages: write
 
 jobs:
+  discover:
+    name: Discover languages
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # One language is one directory under deploy/languages; a language without
+      # a Dockerfile reuses an image published elsewhere and is skipped here.
+      - name: List languages with a Dockerfile
+        id: list
+        run: |
+          matrix="$(for dockerfile in deploy/languages/*/Dockerfile; do
+            [ -f "$dockerfile" ] || continue
+            dir="${dockerfile%/Dockerfile}"
+            printf '{"image":"soj-runner-%s","context":"%s","dockerfile":"%s"}\n' \
+              "$(basename "$dir")" "$dir" "$dockerfile"
+          done | jq -sc .)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   runner-images:
     name: ${{ matrix.image }}
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image: soj-runner-go
-            context: deploy/runner-images/go
-            dockerfile: deploy/runner-images/go/Dockerfile
-          - image: soj-runner-cpp17
-            context: deploy/runner-images/cpp17
-            dockerfile: deploy/runner-images/cpp17/Dockerfile
+        include: ${{ fromJSON(needs.discover.outputs.matrix) }}
 
     steps:
       - name: Checkout

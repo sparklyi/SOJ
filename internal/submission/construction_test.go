@@ -11,10 +11,10 @@ import (
 
 // runEngineTestDouble is what the test constructors need: a judging engine for
 // the worker paths and a run engine for RunService. Production keeps those as
-// two separate interfaces (judge.JudgeEngine and submission.runExecutor); a test
-// double is allowed to be one object because the fakes implement both.
+// two separate interfaces (judgeRunner and runExecutor); a test double is
+// allowed to be one object because the fakes implement both.
 type runEngineTestDouble interface {
-	judge.JudgeEngine
+	judgeRunner
 	runExecutor
 }
 
@@ -74,7 +74,7 @@ func newServiceForTest(options serviceTestOptions) *Service {
 		Parallelism:    options.RunParallelism,
 		MaxRunsPerUser: options.RunPerUser,
 	})
-	languages := NewLanguageService(options.Repository, judgeEngine)
+	languages := NewLanguageService(options.Repository)
 	completer := NewSubmissionCompleter(options.Repository)
 	return NewService(creator, reader, runs, languages, completer)
 }

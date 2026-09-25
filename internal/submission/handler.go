@@ -349,15 +349,6 @@ func (h *Handler) ListPublicLanguages(c *gin.Context) {
 	httpapi.OK(c, gin.H{"items": languageResponses(items), "total": total, "page": page, "page_size": pageSize})
 }
 
-func (h *Handler) SyncLanguages(c *gin.Context) {
-	_, err := h.service.SyncLanguages(c.Request.Context(), actorFromContext(c))
-	if err != nil {
-		httpapi.Error(c, err)
-		return
-	}
-	httpapi.AcceptedEmpty(c)
-}
-
 type updateLanguageRequest struct {
 	Enabled              *bool  `json:"enabled"`
 	DefaultTimeLimitMS   *int32 `json:"default_time_limit_ms"`

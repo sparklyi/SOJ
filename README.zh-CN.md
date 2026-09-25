@@ -196,7 +196,7 @@ worker 会定期清理超过 `retention.run_days` 的已完成自测运行，并
 make smoke-real-docker
 ```
 
-该目标默认从 GHCR 拉取已发布的 runner images。如需在修改 Dockerfile 时本地构建：
+该目标默认从 GHCR 拉取各语言已发布的 runner 镜像。如需在修改 Dockerfile 时本地构建：
 
 ```bash
 RUNNER_IMAGES_PREPARE=build make smoke-real-docker
@@ -254,8 +254,43 @@ go run ./cmd/soj-api --config deploy/config.yaml --print-config
 | `SOJ_JUDGE_PARALLELISM` / `SOJ_JUDGE_LANGUAGE_SLOTS` / `SOJ_JUDGE_MAX_BATCH` | judge-agent 容量。 |
 | `SOJ_JUDGE_RUN_PARALLELISM` / `SOJ_JUDGE_RUN_PER_USER` / `SOJ_JUDGE_RUN_STDIN_MAX_BYTES` | 自测运行限制。 |
 | `SOJ_RUN_RETENTION_DAYS` / `SOJ_RUN_RETENTION_INTERVAL` / `SOJ_RUN_RETENTION_BATCH` | 自测运行保留清理。 |
-| `SOJ_DOCKER_RUNNER_*` | docker sandbox 的 runtime、workdir 与镜像。 |
+| `SOJ_RUNNER_REGISTRY` / `SOJ_RUNNER_TAG` | 语言文件解析 runner 镜像用的 registry 与 tag。 |
+| `SOJ_DOCKER_RUNNER_*` | docker sandbox 的 runtime、workdir 与用户。 |
 | `OTEL_*` | OpenTelemetry service name、resource attributes 与 trace endpoint。 |
+
+
+### 语言目录
+
+判题执行的语言定义在 `deploy/languages/` 下：一门语言一个目录，**目录名就是 slug**，
+其余信息都在它的 `language.yaml` 里。
+
+```text
+deploy/languages/
+  go/
+    language.yaml
+    Dockerfile
+  python3/
+    language.yaml
+    Dockerfile
+```
+
+| 键 | 含义 |
+| --- | --- |
+| `name`、`version` | 目录展示用的名称与版本。 |
+| `source_file` | 提交源码在工作区里的落盘文件名。 |
+| `binary_file` | 编译产物名；解释型语言留空。 |
+| `compile` | sandbox 用来构建源码的 argv，支持 `{{source}}`、`{{binary}}` 占位；留空表示不编译。 |
+| `run` | 每个测试点执行一次的 argv，占位符同上。 |
+| `image` | runner 镜像；`${SOJ_RUNNER_REGISTRY}`、`${SOJ_RUNNER_TAG}` 由部署环境填充。 |
+| `time_limit_ms`、`memory_limit_kb` | 建库行的插入默认值，之后由管理员调整。 |
+
+加一门语言就是加一个目录：写 `language.yaml`，需要自带工具链时再加 `Dockerfile`
+（发布 workflow 会自动发现），然后重启 API。API 在启动时把目录对账进数据库——不需要
+seed SQL，也不需要改表。目录里删掉的语言会被停用；通过 admin 接口设置过的启用状态和
+限额不会被覆盖。
+
+目录在加载时校验：未知键、未知占位符、缺少 `run`、`binary_file` 没有对应 `compile`，
+都会在启动时点名文件和键报错。
 
 把 [deploy/env/api.env.example](deploy/env/api.env.example) 复制成部署环境的
 env 即可提供这些值；生产 overlay 与必填变量见
@@ -331,8 +366,7 @@ gh pr list
 - `judge.sandbox_backend: docker` 搭配 `runsc`/gVisor 是生产 sandbox 目标。
 - 生产 judge 节点设置 `env: prod` 和 `agent.runner.runtime: runsc`；如果 runsc 或
   no-op runner probe 不可用，启动会失败。
-- 生产环境将 runner 镜像（`agent.runner.go_image`、`agent.runner.cpp17_image`）固定到
-  release 或 `sha-*` tag。
+- 生产环境用 `SOJ_RUNNER_TAG` 把 runner 镜像固定到 release 或 `sha-*` tag。
 - 将 GHCR runner packages 设为 public，或在私有 judge 节点提前登录 `ghcr.io` 后再拉取镜像。
 - 不要在开发、测试和本地真实代码 smoke 之外使用 `process` sandbox backend。
 - 不要把本地 fake language seed 当作生产语言数据使用。
@@ -353,7 +387,8 @@ internal/user           账户和管理员用户用例
 internal/problem        题目、题面、标签、测试点集合
 internal/submission     提交、自测、评测任务、worker 逻辑
 internal/judge          评测协议和异步事件契约
-internal/judgecore      评测核心流水线、语言配置、checker、sandbox 适配器
+internal/judgecore      评测核心流水线、checker、sandbox 适配器
+internal/language       语言目录契约：profile 与 catalog
 internal/contest        ACM 比赛、报名、记分板
 internal/postgres       SQL 查询和 sqlc 生成代码
 internal/queue          Redis Stream 任务队列

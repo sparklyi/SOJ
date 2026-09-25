@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"SOJ/internal/judge"
-	"SOJ/internal/judgecore/language"
 )
 
 // These tests execute real programs through the process sandbox. They are the
@@ -18,8 +17,8 @@ import (
 func TestRunGoEchoesStdin(t *testing.T) {
 	requireGo(t)
 
-	result, err := New(Options{}).Run(context.Background(), judge.RunRequest{
-		LanguageID: language.GoID,
+	result, err := New(Options{}).Run(context.Background(), RunRequest{
+		Language: testGoProfile(),
 		Source: []byte(`package main
 import (
 	"bufio"
@@ -67,8 +66,8 @@ func TestRunReturnsNothingForAnEmptyCaseList(t *testing.T) {
 	// which is exactly the silent-success bug this operation was added to fix.
 	requireGo(t)
 
-	result, err := New(Options{}).Run(context.Background(), judge.RunRequest{
-		LanguageID: language.GoID,
+	result, err := New(Options{}).Run(context.Background(), RunRequest{
+		Language: testGoProfile(),
 		Source: []byte(`package main
 import "fmt"
 func main() { fmt.Println("ran") }
@@ -89,10 +88,10 @@ func main() { fmt.Println("ran") }
 func TestRunReportsCompileError(t *testing.T) {
 	requireGo(t)
 
-	result, err := New(Options{}).Run(context.Background(), judge.RunRequest{
-		LanguageID: language.GoID,
-		Source:     []byte("package main\nfunc main() {\n"),
-		Timeout:    10 * time.Second,
+	result, err := New(Options{}).Run(context.Background(), RunRequest{
+		Language: testGoProfile(),
+		Source:   []byte("package main\nfunc main() {\n"),
+		Timeout:  10 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -108,8 +107,8 @@ func TestRunReportsCompileError(t *testing.T) {
 func TestRunReportsNonZeroExitAsRuntimeError(t *testing.T) {
 	requireGo(t)
 
-	result, err := New(Options{}).Run(context.Background(), judge.RunRequest{
-		LanguageID: language.GoID,
+	result, err := New(Options{}).Run(context.Background(), RunRequest{
+		Language: testGoProfile(),
 		Source: []byte(`package main
 import (
 	"fmt"
@@ -137,8 +136,8 @@ func main() {
 func TestRunStopsAtTheTimeLimit(t *testing.T) {
 	requireGo(t)
 
-	result, err := New(Options{}).Run(context.Background(), judge.RunRequest{
-		LanguageID: language.GoID,
+	result, err := New(Options{}).Run(context.Background(), RunRequest{
+		Language: testGoProfile(),
 		Source: []byte(`package main
 func main() { for {} }
 `),
@@ -155,9 +154,9 @@ func main() { for {} }
 func TestRunRejectsAnIncompleteRequest(t *testing.T) {
 	core := New(Options{})
 
-	for name, request := range map[string]judge.RunRequest{
+	for name, request := range map[string]RunRequest{
 		"no language": {Source: []byte("package main")},
-		"no source":   {LanguageID: language.GoID},
+		"no source":   {Language: testGoProfile()},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := core.Run(context.Background(), request); err == nil {
@@ -170,10 +169,10 @@ func TestRunRejectsAnIncompleteRequest(t *testing.T) {
 func TestRunDoesNotRequireTestcases(t *testing.T) {
 	// The counter-test to Judge: a judging request without testcases is invalid,
 	// while a run request never carries any.
-	if err := (Request{LanguageID: language.GoID, Source: []byte("x")}).Validate(); err == nil {
+	if err := (Request{Language: testGoProfile(), Source: []byte("x")}).Validate(); err == nil {
 		t.Fatal("judging without testcases was accepted, want an error")
 	}
-	if err := (judge.RunRequest{LanguageID: language.GoID, Source: []byte("x")}).Validate(); err != nil {
+	if err := (RunRequest{Language: testGoProfile(), Source: []byte("x")}).Validate(); err != nil {
 		t.Fatalf("run request rejected: %v", err)
 	}
 }

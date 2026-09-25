@@ -9,6 +9,7 @@ import (
 	"SOJ/internal/judge"
 	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/judgecore"
+	"SOJ/internal/language"
 	"SOJ/internal/queue"
 
 	"go.opentelemetry.io/otel/propagation"
@@ -43,11 +44,14 @@ type FakeAsyncAgent struct {
 // request shapes, so neither can be served by the other by accident.
 type CoreJudge interface {
 	Judge(ctx context.Context, request judgecore.Request) (judge.Result, error)
-	Run(ctx context.Context, request judge.RunRequest) (judge.Result, error)
+	Run(ctx context.Context, request judgecore.RunRequest) (judge.Result, error)
 }
 
 type CoreAsyncAgentOptions struct {
-	Core            CoreJudge
+	Core CoreJudge
+	// Languages resolves the event's slug to the profile the core executes. It is
+	// required: an agent that cannot name a language cannot run it.
+	Languages       *language.Catalog
 	SourceStore     sourceReader
 	TestcaseLoader  testcaseLoader
 	ResultPublisher ResultPublisher
@@ -56,6 +60,7 @@ type CoreAsyncAgentOptions struct {
 
 type CoreAsyncAgent struct {
 	core            CoreJudge
+	languages       *language.Catalog
 	sourceStore     sourceReader
 	testcaseLoader  testcaseLoader
 	resultPublisher ResultPublisher
@@ -75,7 +80,7 @@ func NewCoreAsyncAgent(options CoreAsyncAgentOptions) *CoreAsyncAgent {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &CoreAsyncAgent{core: options.Core, sourceStore: options.SourceStore, testcaseLoader: options.TestcaseLoader, resultPublisher: options.ResultPublisher, now: now}
+	return &CoreAsyncAgent{core: options.Core, languages: options.Languages, sourceStore: options.SourceStore, testcaseLoader: options.TestcaseLoader, resultPublisher: options.ResultPublisher, now: now}
 }
 
 func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queue.Message, requestQueue MessageAcker) error {
@@ -100,17 +105,17 @@ func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 			return fmt.Errorf("run engine is required to serve run requests")
 		}
 		result, err = a.run.Run(ctx, judge.RunRequest{
-			LanguageID: request.LanguageID,
-			Source:     source,
-			Stdin:      request.Stdin,
-			Timeout:    time.Duration(request.TimeoutMS) * time.Millisecond,
-			MemoryKB:   request.MemoryKB,
+			LanguageSlug: request.LanguageSlug,
+			Source:       source,
+			Stdin:        request.Stdin,
+			Timeout:      time.Duration(request.TimeoutMS) * time.Millisecond,
+			MemoryKB:     request.MemoryKB,
 		})
 	} else {
 		result, err = a.judge.Judge(ctx, judge.Request{
-			LanguageID: request.LanguageID,
-			Source:     source,
-			Timeout:    time.Duration(request.TimeoutMS) * time.Millisecond,
+			LanguageSlug: request.LanguageSlug,
+			Source:       source,
+			Timeout:      time.Duration(request.TimeoutMS) * time.Millisecond,
 		})
 	}
 	if err != nil {
@@ -150,6 +155,10 @@ func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 		return err
 	}
 	ctx = contextWithTraceContext(ctx, request.TraceContext)
+	profile, ok := a.languages.Lookup(request.LanguageSlug)
+	if !ok {
+		return fmt.Errorf("language %q is not configured", request.LanguageSlug)
+	}
 	source, err := a.sourceStore.Get(ctx, request.SourceArtifact.StorageKey)
 	if err != nil {
 		return err
@@ -158,12 +167,12 @@ func (a *CoreAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 	// agent branches before it reaches judgecore.
 	var result judge.Result
 	if request.RunID != 0 {
-		result, err = a.core.Run(ctx, judge.RunRequest{
-			LanguageID: request.LanguageID,
-			Source:     source,
-			Stdin:      request.Stdin,
-			Timeout:    time.Duration(request.TimeoutMS) * time.Millisecond,
-			MemoryKB:   request.MemoryKB,
+		result, err = a.core.Run(ctx, judgecore.RunRequest{
+			Language: profile,
+			Source:   source,
+			Stdin:    request.Stdin,
+			Timeout:  time.Duration(request.TimeoutMS) * time.Millisecond,
+			MemoryKB: request.MemoryKB,
 		})
 	} else {
 		result, err = a.judgeSubmission(ctx, request, source)
@@ -203,12 +212,16 @@ func (a *CoreAsyncAgent) judgeSubmission(ctx context.Context, request judgeevent
 			MemoryKB:       item.MemoryKB,
 		})
 	}
+	profile, ok := a.languages.Lookup(request.LanguageSlug)
+	if !ok {
+		return judge.Result{}, fmt.Errorf("language %q is not configured", request.LanguageSlug)
+	}
 	return a.core.Judge(ctx, judgecore.Request{
-		LanguageID: request.LanguageID,
-		Source:     source,
-		Cases:      cases,
-		Timeout:    time.Duration(request.TimeoutMS) * time.Millisecond,
-		MemoryKB:   request.MemoryKB,
+		Language: profile,
+		Source:   source,
+		Cases:    cases,
+		Timeout:  time.Duration(request.TimeoutMS) * time.Millisecond,
+		MemoryKB: request.MemoryKB,
 	})
 }
 

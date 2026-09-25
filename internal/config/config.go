@@ -28,6 +28,8 @@ type Config struct {
 	Log        LogConfig        `yaml:"log"`
 	Migrations MigrationsConfig `yaml:"migrations"`
 	Tracing    TracingConfig    `yaml:"tracing"`
+	// LanguagesDir holds one directory per language; see internal/language.
+	LanguagesDir string `yaml:"languages_dir"`
 }
 
 type HTTPConfig struct {
@@ -112,13 +114,12 @@ type AgentConfig struct {
 	Runner     RunnerConfig `yaml:"runner"`
 }
 
-// RunnerConfig points the docker sandbox at its runner containers.
+// RunnerConfig points the docker sandbox at its runner containers. The image
+// for a language comes from that language's profile, not from here.
 type RunnerConfig struct {
-	Runtime    string `yaml:"runtime"`
-	Workdir    string `yaml:"workdir"`
-	User       string `yaml:"user"`
-	ImageGo    string `yaml:"go_image"`
-	ImageCpp17 string `yaml:"cpp17_image"`
+	Runtime string `yaml:"runtime"`
+	Workdir string `yaml:"workdir"`
+	User    string `yaml:"user"`
 }
 
 // RetentionConfig bounds how long the data a self-run leaves behind is kept.
@@ -163,6 +164,9 @@ type TracingConfig struct {
 func defaults() Config {
 	return Config{
 		Env: "dev",
+		// Relative to the configuration file when one is loaded; ./languages
+		// otherwise.
+		LanguagesDir: "languages",
 		HTTP: HTTPConfig{
 			Addr:         ":8080",
 			ReadTimeout:  10 * time.Second,
@@ -201,10 +205,6 @@ func defaults() Config {
 		},
 		Agent: AgentConfig{
 			HealthAddr: ":8082",
-			Runner: RunnerConfig{
-				ImageGo:    "ghcr.io/sparklyi/soj-runner-go:main",
-				ImageCpp17: "ghcr.io/sparklyi/soj-runner-cpp17:main",
-			},
 		},
 		Retention: RetentionConfig{
 			RunDays:     7,

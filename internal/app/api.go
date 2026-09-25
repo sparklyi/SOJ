@@ -113,8 +113,17 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		contestRoleStore,
 	)
 	submissionRepo := submission.NewSQLRepositoryWithTxRunner(queries, pool)
-	judgeEngine := newJudgeEngine(cfg.Judge)
-	runEngine, err := newRunEngine(cfg, logger)
+	catalog, err := loadLanguages(cfg)
+	if err != nil {
+		return err
+	}
+	// The language directory is the source; the catalog rows are its published
+	// copy. Reconcile before serving so the API never lists a language the
+	// agent cannot run, or misses one it can.
+	if err := submissionRepo.ReconcileLanguages(ctx, catalog.Profiles()); err != nil {
+		return err
+	}
+	runEngine, err := newRunEngine(cfg, catalog, logger)
 	if err != nil {
 		return err
 	}
@@ -141,7 +150,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		MaxStdinBytes:  cfg.Judge.RunStdinMaxBytes,
 		Timeout:        cfg.Judge.Timeout,
 	})
-	languages := submission.NewLanguageService(submissionRepo, judgeEngine, statsService)
+	languages := submission.NewLanguageService(submissionRepo, statsService)
 	completer := submission.NewSubmissionCompleter(submissionRepo)
 	submissionService := submission.NewService(creator, reader, runs, languages, completer)
 	rejudgeService := submission.NewRejudgeService(submissionRepo, rejudgeAuthorizationPolicy{problems: problemReader, contests: contestService}, nil, metrics)

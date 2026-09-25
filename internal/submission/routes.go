@@ -28,6 +28,5 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	}
 	admin := group.Group("/admin")
 	admin.GET("/languages", m.handler.ListLanguages)
-	admin.POST("/languages/sync", m.handler.SyncLanguages)
 	admin.PATCH("/languages/:id", m.handler.UpdateLanguage)
 }

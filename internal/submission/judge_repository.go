@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"SOJ/internal/judge"
+	judgeevents "SOJ/internal/judge/events"
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
 
@@ -338,7 +339,7 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 	attempt, err := q.CreateJudgeAttempt(ctx, db.CreateJudgeAttemptParams{
 		SubmissionID:         pgtype.Int8{Int64: submission.ID, Valid: true},
 		AttemptNo:            attemptNo,
-		ProtocolVersion:      judge.ProtocolVersion,
+		ProtocolVersion:      judgeevents.RequestEventType,
 		JudgeCoreVersion:     defaultJudgeCoreVersion(result.Manifest),
 		JudgeEngine:          judge.EngineSOJAgent,
 		JudgeAgentID:         text(result.Manifest.JudgeAgentID),
@@ -496,7 +497,7 @@ func defaultJudgeCoreVersion(manifest judge.Manifest) string {
 	if manifest.JudgeCoreVersion != "" {
 		return manifest.JudgeCoreVersion
 	}
-	return judge.ProtocolVersion
+	return judgeevents.RequestEventType
 }
 
 func truncateSummary(value string) string {
