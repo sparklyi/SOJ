@@ -1,0 +1,9 @@
+name: JavaScript (Node.js)
+version: "22"
+source_file: main.js
+# --check parses without executing, so a syntax error is a compile error.
+compile: ["node", "--check", "{{source}}"]
+run: ["node", "{{source}}"]
+image: ${SOJ_RUNNER_REGISTRY:-ghcr.io/sparklyi}/soj-runner-nodejs:${SOJ_RUNNER_TAG:-main}
+time_limit_ms: 2000
+memory_limit_kb: 262144

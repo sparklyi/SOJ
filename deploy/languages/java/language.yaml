@@ -1,0 +1,12 @@
+# The source file must be Main.java and declare a public class Main: that is the
+# class the run command names.
+name: Java
+version: "21"
+source_file: Main.java
+compile: ["javac", "-encoding", "UTF-8", "-d", ".", "{{source}}"]
+run: ["java", "-XX:+UseSerialGC", "-Xss64m", "-cp", ".", "Main"]
+image: ${SOJ_RUNNER_REGISTRY:-ghcr.io/sparklyi}/soj-runner-java:${SOJ_RUNNER_TAG:-main}
+# The JVM takes longer to start than a native binary and sizes its heap from the
+# container limit, so both budgets are larger than the C family's.
+time_limit_ms: 3000
+memory_limit_kb: 524288

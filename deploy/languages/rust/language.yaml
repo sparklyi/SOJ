@@ -1,0 +1,9 @@
+name: Rust
+version: "1.83"
+source_file: main.rs
+binary_file: main
+compile: ["rustc", "--edition", "2021", "-O", "-o", "{{binary}}", "{{source}}"]
+run: ["{{binary}}"]
+image: ${SOJ_RUNNER_REGISTRY:-ghcr.io/sparklyi}/soj-runner-rust:${SOJ_RUNNER_TAG:-main}
+time_limit_ms: 2000
+memory_limit_kb: 524288
