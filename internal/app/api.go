@@ -139,7 +139,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		ContestPolicy: contestService,
 		Stats:         statsService,
 	})
-	reader := submission.NewSubmissionReader(submissionRepo, contestService)
+	reader := submission.NewSubmissionReader(submissionRepo, contestService, sourceStore)
 	runs := submission.NewRunService(submission.RunServiceOptions{
 		Store:         submissionRepo,
 		ProblemReader: problemReader,

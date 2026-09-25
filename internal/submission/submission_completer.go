@@ -8,7 +8,7 @@ import (
 
 type submissionCompletionStore interface {
 	GetSubmission(context.Context, int64) (SubmissionRecord, error)
-	CompleteSubmissionWithResult(context.Context, int64, judge.Result, int32) (SubmissionRecord, error)
+	CompleteSubmissionWithResult(context.Context, int64, judge.Result) (SubmissionRecord, error)
 }
 
 // SubmissionCompleter applies a terminal judge result exactly once.
@@ -36,9 +36,5 @@ func completeSubmission(ctx context.Context, store submissionCompletionStore, su
 	if terminalStatus(current.Status) {
 		return current, nil
 	}
-	score := int32(0)
-	if result.Verdict == judge.VerdictAccepted {
-		score = 100
-	}
-	return store.CompleteSubmissionWithResult(ctx, submissionID, result, score)
+	return store.CompleteSubmissionWithResult(ctx, submissionID, result)
 }

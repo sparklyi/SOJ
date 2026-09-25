@@ -17,6 +17,7 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	group.GET("/submissions/mine", m.handler.ListOwnSubmissionsByCursor)
 	group.GET("/submissions/cursor", m.handler.ListSubmissionsByCursor)
 	group.GET("/submissions/:id", m.handler.GetSubmission)
+	group.GET("/submissions/:id/source", m.handler.GetSubmissionSource)
 	group.POST("/runs", m.handler.CreateRun)
 	group.GET("/runs/:id", m.handler.GetRun)
 	group.GET("/languages", m.handler.ListPublicLanguages)

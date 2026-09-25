@@ -102,6 +102,13 @@ type ContestResultVisibilityBatchPolicy interface {
 	SubmissionResultVisibilities(ctx context.Context, actor auth.Actor, submissions []ContestSubmissionVisibility) (map[int64]SubmissionResultVisibility, error)
 }
 
+// ContestSourcePolicy authorizes reading a submission's source for an actor who
+// is neither its owner nor a global admin. Contest staff (owner/judge) may read
+// sources within their contest; the owner/admin path is decided by the reader.
+type ContestSourcePolicy interface {
+	CanReadSubmissionSource(ctx context.Context, actor auth.Actor, submission ContestSubmissionVisibility) (bool, error)
+}
+
 type ContestSubmissionVisibility struct {
 	ID          int64
 	UserID      int64
@@ -116,6 +123,12 @@ type SubmissionResultVisibility struct {
 	ShowCases            bool
 	ShowAdminDiagnostics bool
 	Visibility           string
+}
+
+// SubmissionSource is a submission's source as an authorized reader sees it.
+type SubmissionSource struct {
+	SourceCode string
+	LanguageID int64
 }
 
 // Service is the HTTP-facing composition of submission use cases.
@@ -188,6 +201,10 @@ func (s *Service) CreateSubmission(ctx context.Context, actor auth.Actor, input 
 
 func (s *Service) GetSubmission(ctx context.Context, actor auth.Actor, id int64) (SubmissionView, error) {
 	return s.reader.GetSubmission(ctx, actor, id)
+}
+
+func (s *Service) GetSubmissionSource(ctx context.Context, actor auth.Actor, id int64) (SubmissionSource, error) {
+	return s.reader.GetSubmissionSource(ctx, actor, id)
 }
 
 func (s *Service) ListSubmissions(ctx context.Context, actor auth.Actor, input ListSubmissionsInput) ([]SubmissionView, int64, error) {

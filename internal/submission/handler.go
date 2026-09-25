@@ -266,6 +266,19 @@ func (h *Handler) GetSubmission(c *gin.Context) {
 	httpapi.OK(c, submissionResponse(out))
 }
 
+func (h *Handler) GetSubmissionSource(c *gin.Context) {
+	id, ok := idParam(c, "invalid_submission_id")
+	if !ok {
+		return
+	}
+	source, err := h.service.GetSubmissionSource(c.Request.Context(), actorFromContext(c), id)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, submissionSourceJSON(source))
+}
+
 type createRunRequest struct {
 	// ProblemID is optional. Omitted means a playground run: source plus stdin,
 	// no problem attached. A pointer so "absent" is distinguishable from zero.
@@ -380,7 +393,6 @@ type submissionJSON struct {
 	ContestID        *int64                 `json:"contest_id,omitempty"`
 	LanguageID       int64                  `json:"language_id"`
 	Status           string                 `json:"status"`
-	Score            int32                  `json:"score"`
 	TimeMS           *int32                 `json:"time_ms,omitempty"`
 	MemoryKB         *int32                 `json:"memory_kb,omitempty"`
 	ErrorMessage     *string                `json:"error_message,omitempty"`
@@ -393,10 +405,14 @@ type submissionJSON struct {
 	AdminDiagnostics *submissionAttemptJSON `json:"admin_diagnostics,omitempty"`
 }
 
+type submissionSourceJSON struct {
+	SourceCode string `json:"source_code"`
+	LanguageID int64  `json:"language_id"`
+}
+
 type submissionResultJSON struct {
 	AttemptID            int64           `json:"attempt_id"`
 	Status               string          `json:"status"`
-	Score                int32           `json:"score"`
 	TimeMS               *int32          `json:"time_ms,omitempty"`
 	MemoryKB             *int32          `json:"memory_kb,omitempty"`
 	FirstFailedCaseIndex *int32          `json:"first_failed_case_index,omitempty"`
@@ -410,7 +426,6 @@ type submissionCaseJSON struct {
 	CaseIndex         int32   `json:"case_index"`
 	GroupName         *string `json:"group_name,omitempty"`
 	Status            string  `json:"status"`
-	Score             int32   `json:"score"`
 	TimeMS            *int32  `json:"time_ms,omitempty"`
 	MemoryKB          *int32  `json:"memory_kb,omitempty"`
 	CheckerMessage    *string `json:"checker_message,omitempty"`
@@ -443,7 +458,6 @@ func submissionResponse(view SubmissionView) submissionJSON {
 		ContestID:    record.ContestID,
 		LanguageID:   record.LanguageID,
 		Status:       record.Status,
-		Score:        record.Score,
 		TimeMS:       record.TimeMS,
 		MemoryKB:     record.MemoryKB,
 		ErrorMessage: record.ErrorMessage,
@@ -456,7 +470,6 @@ func submissionResponse(view SubmissionView) submissionJSON {
 		out.Result = &submissionResultJSON{
 			AttemptID:            view.Result.AttemptID,
 			Status:               view.Result.Status,
-			Score:                view.Result.Score,
 			TimeMS:               view.Result.TimeMS,
 			MemoryKB:             view.Result.MemoryKB,
 			FirstFailedCaseIndex: view.Result.FirstFailedCaseIndex,
@@ -471,7 +484,6 @@ func submissionResponse(view SubmissionView) submissionJSON {
 			CaseIndex:         item.CaseIndex,
 			GroupName:         item.GroupName,
 			Status:            item.Status,
-			Score:             item.Score,
 			TimeMS:            item.TimeMS,
 			MemoryKB:          item.MemoryKB,
 			CheckerMessage:    item.CheckerMessage,

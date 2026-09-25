@@ -90,7 +90,6 @@ func ensureJudgeAttempt(ctx context.Context, q *db.Queries, input EnsureJudgeAtt
 		TestcaseSetID:    pgtype.Int8{Int64: input.TestcaseSetID, Valid: input.TestcaseSetID > 0},
 		TestcaseSetHash:  text(input.TestcaseSetHash),
 		Status:           "created",
-		Score:            0,
 		Manifest:         manifest,
 		Metrics:          []byte(`{}`),
 		TraceID:          text(input.TraceID),
@@ -170,15 +169,10 @@ func completeSubmissionAttempt(ctx context.Context, q *db.Queries, attempt db.Ju
 		return err
 	}
 
-	score := int32(0)
-	if input.Result.Verdict == judge.VerdictAccepted {
-		score = 100
-	}
 	params := db.UpdateSubmissionStatusParams{
 		Status:       status,
 		TimeMs:       int4(input.Result.TimeMS),
 		MemoryKb:     int4(input.Result.MemoryKB),
-		Score:        pgtype.Int4{Int32: score, Valid: true},
 		ErrorMessage: text(input.Result.ErrorMessage),
 		JudgedAt:     judgedAtParam(input.Result.JudgedAt),
 		ID:           attempt.SubmissionID.Int64,
@@ -211,7 +205,6 @@ func completeSubmissionAttempt(ctx context.Context, q *db.Queries, attempt db.Ju
 		SubmissionID:         record.ID,
 		AttemptID:            attempt.ID,
 		Status:               status,
-		Score:                score,
 		TimeMs:               int4(input.Result.TimeMS),
 		MemoryKb:             int4(input.Result.MemoryKB),
 		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
@@ -257,15 +250,10 @@ func finishJudgeAttempt(ctx context.Context, q *db.Queries, attempt db.JudgeAtte
 	if finishedAt.IsZero() {
 		finishedAt = time.Now().UTC()
 	}
-	score := int32(0)
-	if input.Result.Verdict == judge.VerdictAccepted {
-		score = 100
-	}
 	finished, err := q.MarkJudgeAttemptFinished(ctx, db.MarkJudgeAttemptFinishedParams{
 		ID:                   attempt.ID,
 		Status:               status,
 		Verdict:              text(status),
-		Score:                score,
 		TimeMs:               int4(input.Result.TimeMS),
 		MemoryKb:             int4(input.Result.MemoryKB),
 		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
@@ -314,7 +302,7 @@ func finishJudgeAttempt(ctx context.Context, q *db.Queries, attempt db.JudgeAtte
 	return finished, nil
 }
 
-func persistJudgeResult(ctx context.Context, q *db.Queries, submission SubmissionRecord, result judge.Result, score int32) (db.JudgeAttempt, error) {
+func persistJudgeResult(ctx context.Context, q *db.Queries, submission SubmissionRecord, result judge.Result) (db.JudgeAttempt, error) {
 	summary := judgeSummary(result)
 	manifest, err := judgeManifestJSON(result.Manifest)
 	if err != nil {
@@ -358,7 +346,6 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 		ValidatorHash:        text(result.Manifest.ValidatorHash),
 		Status:               dbStatus(result.Verdict),
 		Verdict:              text(string(result.Verdict)),
-		Score:                score,
 		TimeMs:               int4(result.TimeMS),
 		MemoryKb:             int4(result.MemoryKB),
 		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
@@ -402,7 +389,6 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 		SubmissionID:         submission.ID,
 		AttemptID:            attempt.ID,
 		Status:               dbStatus(result.Verdict),
-		Score:                score,
 		TimeMs:               int4(result.TimeMS),
 		MemoryKb:             int4(result.MemoryKB),
 		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
@@ -557,7 +543,6 @@ func judgeAttemptRecord(row db.JudgeAttempt) JudgeAttemptRecord {
 		ValidatorHash:        textValue(row.ValidatorHash),
 		Status:               row.Status,
 		Verdict:              textValue(row.Verdict),
-		Score:                row.Score,
 		TimeMS:               int4Value(row.TimeMs),
 		MemoryKB:             int4Value(row.MemoryKb),
 		FirstFailedCaseIndex: int4Value(row.FirstFailedCaseIndex),
@@ -604,7 +589,6 @@ func submissionResultRecord(row db.SubmissionResult) SubmissionResultRecord {
 		SubmissionID:         row.SubmissionID,
 		AttemptID:            row.AttemptID,
 		Status:               row.Status,
-		Score:                row.Score,
 		TimeMS:               int4Value(row.TimeMs),
 		MemoryKB:             int4Value(row.MemoryKb),
 		FirstFailedCaseIndex: int4Value(row.FirstFailedCaseIndex),

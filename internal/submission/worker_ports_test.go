@@ -184,7 +184,7 @@ func (taskProcessStoreStub) GetEnabledLanguage(context.Context, int64) (Language
 	return LanguageRecord{}, nil
 }
 
-func (taskProcessStoreStub) CompleteSubmissionWithResult(context.Context, int64, judge.Result, int32) (SubmissionRecord, error) {
+func (taskProcessStoreStub) CompleteSubmissionWithResult(context.Context, int64, judge.Result) (SubmissionRecord, error) {
 	return SubmissionRecord{}, nil
 }
 

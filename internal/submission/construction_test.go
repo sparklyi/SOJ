@@ -57,7 +57,11 @@ func newServiceForTest(options serviceTestOptions) *Service {
 		ContestPolicy: options.ContestSubmissionPolicy,
 		Now:           options.Now,
 	})
-	reader := NewSubmissionReader(options.Repository, options.ContestVisibilityPolicy)
+	var sources sourceReader
+	if store, ok := sourceStore.(sourceReader); ok {
+		sources = store
+	}
+	reader := NewSubmissionReader(options.Repository, options.ContestVisibilityPolicy, sources)
 	var runEngine runExecutor = judgeEngine
 	if options.RunQueued {
 		runEngine = nil

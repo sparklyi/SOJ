@@ -26,7 +26,7 @@ import (
 
 func TestCompleteSubmissionSkipsExistingTerminalStatus(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.submissions[1] = SubmissionRecord{ID: 1, Status: StatusAccepted, Score: 100}
+	repo.submissions[1] = SubmissionRecord{ID: 1, Status: StatusAccepted}
 	service := newServiceForTest(serviceTestOptions{Repository: repo})
 
 	got, err := service.CompleteSubmission(context.Background(), 1, judge.Result{Verdict: judge.VerdictWrongAnswer})
@@ -70,7 +70,7 @@ func TestCompleteSubmissionPersistsJudgeEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteSubmission returned error: %v", err)
 	}
-	if got.Status != StatusWrongAnswer || got.Score != 0 || got.TimeMS == nil || *got.TimeMS != 12 {
+	if got.Status != StatusWrongAnswer || got.TimeMS == nil || *got.TimeMS != 12 {
 		t.Fatalf("submission = %+v", got)
 	}
 
@@ -1067,10 +1067,9 @@ func seedSubmissionListSummaries(repo *memoryRepo, userID, contestID int64) {
 			ContestID:   &contestID,
 			LanguageID:  71,
 			Status:      StatusAccepted,
-			Score:       100,
 			SubmittedAt: time.Unix(id, 0).UTC(),
 		}
-		repo.results[submissionID] = SubmissionResultRecord{SubmissionID: submissionID, AttemptID: attemptID, Status: StatusAccepted, Score: 100}
+		repo.results[submissionID] = SubmissionResultRecord{SubmissionID: submissionID, AttemptID: attemptID, Status: StatusAccepted}
 		repo.attempts[attemptID] = JudgeAttemptRecord{ID: attemptID, SubmissionID: &submissionID, AttemptNo: 1, Status: StatusAccepted}
 		repo.cases[attemptID] = []JudgeCaseResultRecord{{ID: attemptID + 100, AttemptID: attemptID, CaseIndex: 1, Status: StatusAccepted, Score: 100}}
 	}

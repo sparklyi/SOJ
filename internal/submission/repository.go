@@ -43,7 +43,6 @@ type SubmissionRecord struct {
 	SourceArtifactID int64
 	TimeMS           *int32
 	MemoryKB         *int32
-	Score            int32
 	ErrorMessage     *string
 	SubmittedAt      time.Time
 	JudgedAt         *time.Time
@@ -120,7 +119,6 @@ type JudgeAttemptRecord struct {
 	ValidatorHash        *string
 	Status               string
 	Verdict              *string
-	Score                int32
 	TimeMS               *int32
 	MemoryKB             *int32
 	FirstFailedCaseIndex *int32
@@ -163,7 +161,6 @@ type SubmissionResultRecord struct {
 	SubmissionID         int64
 	AttemptID            int64
 	Status               string
-	Score                int32
 	TimeMS               *int32
 	MemoryKB             *int32
 	FirstFailedCaseIndex *int32

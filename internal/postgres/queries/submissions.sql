@@ -65,7 +65,6 @@ INSERT INTO judge_attempts (
     validator_hash,
     status,
     verdict,
-    score,
     time_ms,
     memory_kb,
     first_failed_case_index,
@@ -100,7 +99,6 @@ INSERT INTO judge_attempts (
     sqlc.narg('validator_hash'),
     sqlc.arg('status'),
     sqlc.narg('verdict'),
-    sqlc.arg('score'),
     sqlc.narg('time_ms'),
     sqlc.narg('memory_kb'),
     sqlc.narg('first_failed_case_index'),
@@ -165,7 +163,6 @@ ORDER BY id;
 UPDATE judge_attempts
 SET status = sqlc.arg('status'),
     verdict = sqlc.narg('verdict'),
-    score = sqlc.arg('score'),
     time_ms = sqlc.narg('time_ms'),
     memory_kb = sqlc.narg('memory_kb'),
     first_failed_case_index = sqlc.narg('first_failed_case_index'),
@@ -230,7 +227,6 @@ INSERT INTO submission_results (
     submission_id,
     attempt_id,
     status,
-    score,
     time_ms,
     memory_kb,
     first_failed_case_index,
@@ -241,7 +237,6 @@ INSERT INTO submission_results (
     sqlc.arg('submission_id'),
     sqlc.arg('attempt_id'),
     sqlc.arg('status'),
-    sqlc.arg('score'),
     sqlc.narg('time_ms'),
     sqlc.narg('memory_kb'),
     sqlc.narg('first_failed_case_index'),
@@ -252,7 +247,6 @@ INSERT INTO submission_results (
 ON CONFLICT (submission_id) DO UPDATE
 SET attempt_id = EXCLUDED.attempt_id,
     status = EXCLUDED.status,
-    score = EXCLUDED.score,
     time_ms = EXCLUDED.time_ms,
     memory_kb = EXCLUDED.memory_kb,
     first_failed_case_index = EXCLUDED.first_failed_case_index,
@@ -610,7 +604,6 @@ UPDATE submissions
 SET status = sqlc.arg('status'),
     time_ms = sqlc.narg('time_ms'),
     memory_kb = sqlc.narg('memory_kb'),
-    score = coalesce(sqlc.narg('score'), score),
     error_message = sqlc.narg('error_message'),
     judged_at = CASE
         WHEN judged_at IS NULL

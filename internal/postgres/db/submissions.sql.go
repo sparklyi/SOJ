@@ -445,7 +445,6 @@ INSERT INTO judge_attempts (
     validator_hash,
     status,
     verdict,
-    score,
     time_ms,
     memory_kb,
     first_failed_case_index,
@@ -493,8 +492,7 @@ INSERT INTO judge_attempts (
     $30,
     $31,
     $32,
-    $33,
-    $34
+    $33
 )
 RETURNING id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 `
@@ -519,7 +517,6 @@ type CreateJudgeAttemptParams struct {
 	ValidatorHash        pgtype.Text        `db:"validator_hash" json:"validator_hash"`
 	Status               string             `db:"status" json:"status"`
 	Verdict              pgtype.Text        `db:"verdict" json:"verdict"`
-	Score                int32              `db:"score" json:"score"`
 	TimeMs               pgtype.Int4        `db:"time_ms" json:"time_ms"`
 	MemoryKb             pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
 	FirstFailedCaseIndex pgtype.Int4        `db:"first_failed_case_index" json:"first_failed_case_index"`
@@ -557,7 +554,6 @@ func (q *Queries) CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttempt
 		arg.ValidatorHash,
 		arg.Status,
 		arg.Verdict,
-		arg.Score,
 		arg.TimeMs,
 		arg.MemoryKb,
 		arg.FirstFailedCaseIndex,
@@ -2529,29 +2525,27 @@ const markJudgeAttemptFinished = `-- name: MarkJudgeAttemptFinished :one
 UPDATE judge_attempts
 SET status = $1,
     verdict = $2,
-    score = $3,
-    time_ms = $4,
-    memory_kb = $5,
-    first_failed_case_index = $6,
-    first_failed_group = $7,
-    compile_output_summary = $8,
-    stderr_summary = $9,
-    checker_message = $10,
-    error_class = $11,
-    error_message = $12,
-    manifest = $13,
-    metrics = $14,
-    trace_id = $15,
-    finished_at = coalesce($16, finished_at, now()),
+    time_ms = $3,
+    memory_kb = $4,
+    first_failed_case_index = $5,
+    first_failed_group = $6,
+    compile_output_summary = $7,
+    stderr_summary = $8,
+    checker_message = $9,
+    error_class = $10,
+    error_message = $11,
+    manifest = $12,
+    metrics = $13,
+    trace_id = $14,
+    finished_at = coalesce($15, finished_at, now()),
     updated_at = now()
-WHERE id = $17
+WHERE id = $16
 RETURNING id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
 `
 
 type MarkJudgeAttemptFinishedParams struct {
 	Status               string             `db:"status" json:"status"`
 	Verdict              pgtype.Text        `db:"verdict" json:"verdict"`
-	Score                int32              `db:"score" json:"score"`
 	TimeMs               pgtype.Int4        `db:"time_ms" json:"time_ms"`
 	MemoryKb             pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
 	FirstFailedCaseIndex pgtype.Int4        `db:"first_failed_case_index" json:"first_failed_case_index"`
@@ -2572,7 +2566,6 @@ func (q *Queries) MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAtt
 	row := q.db.QueryRow(ctx, markJudgeAttemptFinished,
 		arg.Status,
 		arg.Verdict,
-		arg.Score,
 		arg.TimeMs,
 		arg.MemoryKb,
 		arg.FirstFailedCaseIndex,
@@ -3492,20 +3485,19 @@ UPDATE submissions
 SET status = $1,
     time_ms = $2,
     memory_kb = $3,
-    score = coalesce($4, score),
-    error_message = $5,
+    error_message = $4,
     judged_at = CASE
         WHEN judged_at IS NULL
-          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce($6, now())
+          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce($5, now())
         ELSE judged_at
     END,
     first_judged_at = CASE
         WHEN first_judged_at IS NULL
-          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce($6, now())
+          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce($5, now())
         ELSE first_judged_at
     END,
     updated_at = now()
-WHERE id = $7
+WHERE id = $6
   AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
 RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
 `
@@ -3514,7 +3506,6 @@ type UpdateSubmissionStatusParams struct {
 	Status       string             `db:"status" json:"status"`
 	TimeMs       pgtype.Int4        `db:"time_ms" json:"time_ms"`
 	MemoryKb     pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
-	Score        pgtype.Int4        `db:"score" json:"score"`
 	ErrorMessage pgtype.Text        `db:"error_message" json:"error_message"`
 	JudgedAt     pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
 	ID           int64              `db:"id" json:"id"`
@@ -3525,7 +3516,6 @@ func (q *Queries) UpdateSubmissionStatus(ctx context.Context, arg UpdateSubmissi
 		arg.Status,
 		arg.TimeMs,
 		arg.MemoryKb,
-		arg.Score,
 		arg.ErrorMessage,
 		arg.JudgedAt,
 		arg.ID,
@@ -3557,7 +3547,6 @@ INSERT INTO submission_results (
     submission_id,
     attempt_id,
     status,
-    score,
     time_ms,
     memory_kb,
     first_failed_case_index,
@@ -3573,13 +3562,11 @@ INSERT INTO submission_results (
     $6,
     $7,
     $8,
-    $9,
-    $10
+    $9
 )
 ON CONFLICT (submission_id) DO UPDATE
 SET attempt_id = EXCLUDED.attempt_id,
     status = EXCLUDED.status,
-    score = EXCLUDED.score,
     time_ms = EXCLUDED.time_ms,
     memory_kb = EXCLUDED.memory_kb,
     first_failed_case_index = EXCLUDED.first_failed_case_index,
@@ -3594,7 +3581,6 @@ type UpsertSubmissionResultParams struct {
 	SubmissionID         int64       `db:"submission_id" json:"submission_id"`
 	AttemptID            int64       `db:"attempt_id" json:"attempt_id"`
 	Status               string      `db:"status" json:"status"`
-	Score                int32       `db:"score" json:"score"`
 	TimeMs               pgtype.Int4 `db:"time_ms" json:"time_ms"`
 	MemoryKb             pgtype.Int4 `db:"memory_kb" json:"memory_kb"`
 	FirstFailedCaseIndex pgtype.Int4 `db:"first_failed_case_index" json:"first_failed_case_index"`
@@ -3608,7 +3594,6 @@ func (q *Queries) UpsertSubmissionResult(ctx context.Context, arg UpsertSubmissi
 		arg.SubmissionID,
 		arg.AttemptID,
 		arg.Status,
-		arg.Score,
 		arg.TimeMs,
 		arg.MemoryKb,
 		arg.FirstFailedCaseIndex,
