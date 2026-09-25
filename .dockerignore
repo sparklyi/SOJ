@@ -1,8 +1,16 @@
 .git
 .idea
+.worktrees
 logs
 *.out
 *.test
 .env
 tmp
 deploy/.env
+# Not needed by any image build; keeping them out of the context means a
+# commit that only touches them does not invalidate the compiled layers.
+.github
+docs
+api
+deploy/frontend
+scripts
