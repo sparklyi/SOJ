@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -221,28 +222,23 @@ func buildListSubmissionsByCursorQuery(arg ListSubmissionsByCursorParams) (strin
 	)
 }
 
-func (q *Queries) ListUsersByCursor(ctx context.Context, arg ListUsersByCursorParams) ([]User, error) {
-	query, args := buildListUsersByCursorQuery(arg)
+// listCursorRows runs a cursor query and scans every row through scanRow.
+//
+// The ListXByCursor methods below differ only in their row type and field list.
+// Sharing the query/close/iterate/error handling keeps that sequence from
+// drifting between them: a missing rows.Err() would otherwise be four bugs
+// waiting to happen, not one.
+func listCursorRows[T any](ctx context.Context, q *Queries, query string, args []any, scanRow func(pgx.Rows) (T, error)) ([]T, error) {
 	rows, err := q.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var items []User
+	var items []T
 	for rows.Next() {
-		var item User
-		if err := rows.Scan(
-			&item.ID,
-			&item.Email,
-			&item.PasswordHash,
-			&item.Username,
-			&item.AvatarUrl,
-			&item.Bio,
-			&item.Status,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
+		item, err := scanRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -253,18 +249,30 @@ func (q *Queries) ListUsersByCursor(ctx context.Context, arg ListUsersByCursorPa
 	return items, nil
 }
 
+func (q *Queries) ListUsersByCursor(ctx context.Context, arg ListUsersByCursorParams) ([]User, error) {
+	query, args := buildListUsersByCursorQuery(arg)
+	return listCursorRows(ctx, q, query, args, func(rows pgx.Rows) (User, error) {
+		var item User
+		err := rows.Scan(
+			&item.ID,
+			&item.Email,
+			&item.PasswordHash,
+			&item.Username,
+			&item.AvatarUrl,
+			&item.Bio,
+			&item.Status,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		)
+		return item, err
+	})
+}
+
 func (q *Queries) ListProblemsByCursor(ctx context.Context, arg ListProblemsByCursorParams) ([]ListProblemsByCursorRow, error) {
 	query, args := buildListProblemsByCursorQuery(arg)
-	rows, err := q.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []ListProblemsByCursorRow
-	for rows.Next() {
+	return listCursorRows(ctx, q, query, args, func(rows pgx.Rows) (ListProblemsByCursorRow, error) {
 		var item ListProblemsByCursorRow
-		if err := rows.Scan(
+		err := rows.Scan(
 			&item.ID,
 			&item.OwnerUserID,
 			&item.Title,
@@ -280,29 +288,16 @@ func (q *Queries) ListProblemsByCursor(ctx context.Context, arg ListProblemsByCu
 			&item.CurrentStatementID,
 			&item.CurrentTestcaseSetID,
 			&item.CurrentTestcaseStatus,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+		)
+		return item, err
+	})
 }
 
 func (q *Queries) ListContestsByCursor(ctx context.Context, arg ListContestsByCursorParams) ([]Contest, error) {
 	query, args := buildListContestsByCursorQuery(arg)
-	rows, err := q.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []Contest
-	for rows.Next() {
+	return listCursorRows(ctx, q, query, args, func(rows pgx.Rows) (Contest, error) {
 		var item Contest
-		if err := rows.Scan(
+		err := rows.Scan(
 			&item.ID,
 			&item.OwnerUserID,
 			&item.Title,
@@ -315,29 +310,16 @@ func (q *Queries) ListContestsByCursor(ctx context.Context, arg ListContestsByCu
 			&item.InviteCodeHash,
 			&item.CreatedAt,
 			&item.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+		)
+		return item, err
+	})
 }
 
 func (q *Queries) ListSubmissionsByCursor(ctx context.Context, arg ListSubmissionsByCursorParams) ([]Submission, error) {
 	query, args := buildListSubmissionsByCursorQuery(arg)
-	rows, err := q.db.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []Submission
-	for rows.Next() {
+	return listCursorRows(ctx, q, query, args, func(rows pgx.Rows) (Submission, error) {
 		var item Submission
-		if err := rows.Scan(
+		err := rows.Scan(
 			&item.ID,
 			&item.UserID,
 			&item.ProblemID,
@@ -353,13 +335,7 @@ func (q *Queries) ListSubmissionsByCursor(ctx context.Context, arg ListSubmissio
 			&item.SubmittedAt,
 			&item.JudgedAt,
 			&item.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+		)
+		return item, err
+	})
 }
