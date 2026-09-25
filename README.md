@@ -18,27 +18,7 @@ This repository is the Go backend. The Next.js frontend lives in
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    web["SOJ-web<br/>Next.js"]
-    api["<b>soj-api</b><br/>REST /api/v1"]
-    pg[("PostgreSQL<br/>submissions · tasks · verdicts")]
-    worker["<b>soj-worker</b><br/>dispatch · consume · reconcile"]
-    redis[("Redis Streams<br/>requests · results")]
-    agent["<b>soj-judge-agent</b><br/>consume requests · control slots"]
-    core["<b>judgecore</b><br/>compile · run · check"]
-    sandbox["sandbox<br/>fake · process · docker"]
-    s3[("S3 · MinIO<br/>source code · test cases")]
-
-    web -->|HTTPS| api
-    api -->|write task| pg
-    pg -->|claim| worker
-    worker <-->|request / result| redis
-    redis <-->|request / result| agent
-    agent --> core --> sandbox
-    worker -.->|persist| pg
-    agent -.->|read source| s3
-```
+![SOJ backend architecture](docs/architecture.svg)
 
 | Process | Responsibility |
 | --- | --- |
