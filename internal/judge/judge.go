@@ -81,44 +81,50 @@ func (r RunRequest) Validate() error {
 	return nil
 }
 
+// The json tags below are the `judge.result.v1` wire contract, not a style
+// choice. Result travels embedded in judgeevents.ResultEvent over Redis Streams
+// between the worker and the judge agent, and without an explicit tag the wire
+// name would be the Go field name -- so renaming TimeMS to TimeMs would silently
+// rename a protocol field and a mixed-version deploy would read zeroes. Keep
+// these names stable and change them only with a protocol version bump.
 type Result struct {
-	Verdict       Verdict
-	TimeMS        int
-	MemoryKB      int
-	Stdout        string
-	Stderr        string
-	CompileOutput string
-	ErrorMessage  string
-	Cases         []CaseResult
-	Manifest      Manifest
-	JudgedAt      time.Time
+	Verdict       Verdict      `json:"Verdict"`
+	TimeMS        int          `json:"TimeMS"`
+	MemoryKB      int          `json:"MemoryKB"`
+	Stdout        string       `json:"Stdout"`
+	Stderr        string       `json:"Stderr"`
+	CompileOutput string       `json:"CompileOutput"`
+	ErrorMessage  string       `json:"ErrorMessage"`
+	Cases         []CaseResult `json:"Cases"`
+	Manifest      Manifest     `json:"Manifest"`
+	JudgedAt      time.Time    `json:"JudgedAt"`
 }
 
 type CaseResult struct {
-	Index             int
-	GroupName         string
-	TestcaseKey       string
-	Verdict           Verdict
-	Score             int32
-	TimeMS            int
-	MemoryKB          int
-	ExitCode          *int32
-	Signal            string
-	CheckerMessage    string
-	OutputDiffSummary string
+	Index             int     `json:"Index"`
+	GroupName         string  `json:"GroupName"`
+	TestcaseKey       string  `json:"TestcaseKey"`
+	Verdict           Verdict `json:"Verdict"`
+	Score             int32   `json:"Score"`
+	TimeMS            int     `json:"TimeMS"`
+	MemoryKB          int     `json:"MemoryKB"`
+	ExitCode          *int32  `json:"ExitCode"`
+	Signal            string  `json:"Signal"`
+	CheckerMessage    string  `json:"CheckerMessage"`
+	OutputDiffSummary string  `json:"OutputDiffSummary"`
 }
 
 type Manifest struct {
-	JudgeCoreVersion string
-	JudgeAgentID     string
-	LanguageRuntime  string
-	SandboxBackend   string
-	SandboxProfile   string
-	TestcaseSetHash  string
-	CheckerHash      string
-	ValidatorHash    string
-	TraceID          string
-	Raw              map[string]any
+	JudgeCoreVersion string         `json:"JudgeCoreVersion"`
+	JudgeAgentID     string         `json:"JudgeAgentID"`
+	LanguageRuntime  string         `json:"LanguageRuntime"`
+	SandboxBackend   string         `json:"SandboxBackend"`
+	SandboxProfile   string         `json:"SandboxProfile"`
+	TestcaseSetHash  string         `json:"TestcaseSetHash"`
+	CheckerHash      string         `json:"CheckerHash"`
+	ValidatorHash    string         `json:"ValidatorHash"`
+	TraceID          string         `json:"TraceID"`
+	Raw              map[string]any `json:"Raw"`
 }
 
 // RunEngine executes scratch runs.

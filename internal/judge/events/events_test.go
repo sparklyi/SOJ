@@ -2,6 +2,8 @@ package events
 
 import (
 	"encoding/json"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -251,5 +253,86 @@ func TestRequestEventValidateRequiresASubject(t *testing.T) {
 	}
 	if err := event.Validate(); err == nil {
 		t.Fatal("Validate accepted a request with neither submission_id nor run_id")
+	}
+}
+
+// TestResultEventWireFormatIsTheProtocolContract pins the field names of the
+// embedded judge.Result payload. That payload is the `judge.result.v1` contract
+// carried over Redis Streams, so a rename here is a protocol break rather than a
+// refactor: an old worker reading a new agent would decode zero values instead
+// of failing loudly.
+func TestResultEventWireFormatIsTheProtocolContract(t *testing.T) {
+	event := ResultEvent{
+		ProtocolVersion: ResultEventType,
+		EventID:         "evt-result-1",
+		RequestEventID:  "evt-request-1",
+		AttemptID:       "attempt-1",
+		TraceID:         "trace-1",
+		Status:          judge.VerdictAccepted,
+		Result: judge.Result{
+			Verdict:  judge.VerdictAccepted,
+			TimeMS:   12,
+			MemoryKB: 3456,
+			Cases:    []judge.CaseResult{{Index: 1, Verdict: judge.VerdictAccepted}},
+			Manifest: judge.Manifest{JudgeCoreVersion: "1.0"},
+			JudgedAt: time.Unix(0, 0).UTC(),
+		},
+		JudgedAt: time.Unix(0, 0).UTC(),
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		t.Fatalf("Unmarshal raw event: %v", err)
+	}
+
+	result, ok := raw["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("result = %v, want object", raw["result"])
+	}
+	assertWireKeys(t, "result", result, []string{
+		"Verdict", "TimeMS", "MemoryKB", "Stdout", "Stderr",
+		"CompileOutput", "ErrorMessage", "Cases", "Manifest", "JudgedAt",
+	})
+
+	cases, ok := result["Cases"].([]any)
+	if !ok || len(cases) != 1 {
+		t.Fatalf("result.Cases = %v, want one case", result["Cases"])
+	}
+	firstCase, ok := cases[0].(map[string]any)
+	if !ok {
+		t.Fatalf("result.Cases[0] = %v, want object", cases[0])
+	}
+	assertWireKeys(t, "result.Cases[0]", firstCase, []string{
+		"Index", "GroupName", "TestcaseKey", "Verdict", "Score", "TimeMS",
+		"MemoryKB", "ExitCode", "Signal", "CheckerMessage", "OutputDiffSummary",
+	})
+
+	manifest, ok := result["Manifest"].(map[string]any)
+	if !ok {
+		t.Fatalf("result.Manifest = %v, want object", result["Manifest"])
+	}
+	assertWireKeys(t, "result.Manifest", manifest, []string{
+		"JudgeCoreVersion", "JudgeAgentID", "LanguageRuntime", "SandboxBackend",
+		"SandboxProfile", "TestcaseSetHash", "CheckerHash", "ValidatorHash",
+		"TraceID", "Raw",
+	})
+}
+
+func assertWireKeys(t *testing.T, path string, object map[string]any, want []string) {
+	t.Helper()
+	got := make([]string, 0, len(object))
+	for key := range object {
+		got = append(got, key)
+	}
+	sort.Strings(got)
+	expected := slices.Clone(want)
+	sort.Strings(expected)
+
+	if !slices.Equal(got, expected) {
+		t.Fatalf("%s keys = %v, want %v", path, got, expected)
 	}
 }
