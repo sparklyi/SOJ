@@ -13,7 +13,7 @@ COPY . .
 ARG COMMAND=soj-api
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/${COMMAND} ./cmd/${COMMAND}
 
-FROM alpine:3.22
+FROM alpine:3.24
 
 ARG COMMAND=soj-api
 RUN apk add --no-cache ca-certificates tzdata \
