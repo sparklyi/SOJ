@@ -6,6 +6,8 @@
 
 English | [简体中文](README.zh-CN.md)
 
+**Live demo: <http://43.172.84.99/>**
+
 SOJ (Sundial Online Judge) is a self-hosted online judge for problem authoring, contests, and
 automatic judging.
 
