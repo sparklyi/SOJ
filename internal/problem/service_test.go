@@ -173,27 +173,32 @@ func TestProblemAuthoringStateReturnsCurrentValidCheck(t *testing.T) {
 	}
 }
 
-func TestProblemReadsRequireAuthentication(t *testing.T) {
-	// 站点策略：题库内容（列表、翻页、详情、题面、统计）一律要求登录。
+func TestAnonymousProblemReadsFollowPublicVisibility(t *testing.T) {
+	// 站点策略：题目是公共资产。`canReadProblem` 放行 published+public，
+	// 匿名访客因此只读得到公开题；列表/翻页不再有登录墙，可见性由存储层过滤。
 	repo := newFakeRepository()
-	repo.problems[1] = ProblemRecord{ID: 1, Title: "Public", Slug: "public", Status: StatusPublished, Visibility: VisibilityPublic}
+	repo.problems[1] = ProblemRecord{ID: 1, Title: "Public", Slug: "public", Status: StatusPublished, Visibility: VisibilityPublic, CurrentStatementID: 3, CurrentTestcaseSetID: 7, CurrentTestcaseStatus: TestcaseStatusReady}
+	repo.statements[3] = Statement{ID: 3, ProblemID: 1, IsCurrent: true}
+	repo.currentStatement[1] = 3
+	repo.problems[2] = ProblemRecord{ID: 2, Title: "Draft", Slug: "draft", Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
 	anonymous := auth.Anonymous("req")
 
-	_, err := service.ListProblems(t.Context(), anonymous, ListProblemsFilter{})
-	assertAppCode(t, err, "auth.required")
+	if _, err := service.ListProblems(t.Context(), anonymous, ListProblemsFilter{}); err != nil {
+		t.Fatalf("anonymous ListProblems returned error: %v", err)
+	}
+	if _, err := service.ListProblemsByCursor(t.Context(), anonymous, ListProblemsFilter{}); err != nil {
+		t.Fatalf("anonymous ListProblemsByCursor returned error: %v", err)
+	}
+	if _, err := service.GetProblem(t.Context(), anonymous, 1); err != nil {
+		t.Fatalf("anonymous GetProblem(public) returned error: %v", err)
+	}
+	if _, err := service.CurrentStatement(t.Context(), anonymous, 1); err != nil {
+		t.Fatalf("anonymous CurrentStatement(public) returned error: %v", err)
+	}
 
-	_, err = service.ListProblemsByCursor(t.Context(), anonymous, ListProblemsFilter{})
-	assertAppCode(t, err, "auth.required")
-
-	_, err = service.GetProblem(t.Context(), anonymous, 1)
-	assertAppCode(t, err, "auth.required")
-
-	_, err = service.CurrentStatement(t.Context(), anonymous, 1)
-	assertAppCode(t, err, "auth.required")
-
-	_, err = service.Stats(t.Context(), anonymous, 1)
-	assertAppCode(t, err, "auth.required")
+	_, err := service.GetProblem(t.Context(), anonymous, 2)
+	assertAppCode(t, err, "problem.not_found")
 }
 
 func TestNormalizeListFilterScopesMineToActor(t *testing.T) {
@@ -1100,6 +1105,10 @@ func (r *fakeRepository) CreateArtifact(ctx context.Context, artifact ArtifactRe
 
 func (r *fakeRepository) GetProblemStats(ctx context.Context, problemID int64) (ProblemStats, error) {
 	return ProblemStats{}, errors.New("not implemented")
+}
+
+func (r *fakeRepository) ListProblemSubmissionCounts(ctx context.Context, problemIDs []int64) (map[int64]ProblemSubmissionCounts, error) {
+	return map[int64]ProblemSubmissionCounts{}, nil
 }
 
 type fakeStorage struct {

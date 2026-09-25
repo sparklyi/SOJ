@@ -21,6 +21,7 @@ type problemReaderStore interface {
 	GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error)
 	ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error)
 	GetProblemStats(ctx context.Context, problemID int64) (ProblemStats, error)
+	ListProblemSubmissionCounts(ctx context.Context, problemIDs []int64) (map[int64]ProblemSubmissionCounts, error)
 }
 
 // ProblemReader serves all non-mutating problem workflows.
@@ -39,10 +40,8 @@ func NewProblemReader(store problemReaderStore, archives testcaseArchiveReader) 
 }
 
 func (r *ProblemReader) GetProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
-	// 站点策略：题库内容（含详情）一律要求登录，匿名访客只保留首页的站级统计。
-	if err := requireAuthenticated(actor); err != nil {
-		return ProblemRecord{}, err
-	}
+	// 站点策略：题目是公共资产。`canReadProblem` 已放行 published+public，
+	// 匿名访客因此只读得到公开题；私有/未发布题对非 owner/admin 仍是 404。
 	p, err := r.store.GetProblem(ctx, id)
 	if err != nil {
 		return ProblemRecord{}, err
@@ -50,13 +49,15 @@ func (r *ProblemReader) GetProblem(ctx context.Context, actor auth.Actor, id int
 	if err := canReadProblem(actor, p); err != nil {
 		return ProblemRecord{}, err
 	}
-	return p, nil
+	records := []ProblemRecord{p}
+	if err := r.fillSubmissionCounts(ctx, records); err != nil {
+		return ProblemRecord{}, err
+	}
+	return records[0], nil
 }
 
 func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemList, error) {
-	if err := requireAuthenticated(actor); err != nil {
-		return ProblemList{}, err
-	}
+	// 匿名与普通用户都只看到 published+public；owner/admin 由 normalizeListFilter 扩展。
 	filter = normalizeListFilter(actor, filter)
 	items, err := r.store.ListProblems(ctx, filter)
 	if err != nil {
@@ -64,6 +65,9 @@ func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filt
 	}
 	total, err := r.store.CountProblems(ctx, filter)
 	if err != nil {
+		return ProblemList{}, err
+	}
+	if err := r.fillSubmissionCounts(ctx, items); err != nil {
 		return ProblemList{}, err
 	}
 	responses := make([]ProblemResponse, 0, len(items))
@@ -78,9 +82,6 @@ func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filt
 }
 
 func (r *ProblemReader) ListProblemsByCursor(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemCursorPage, error) {
-	if err := requireAuthenticated(actor); err != nil {
-		return ProblemCursorPage{}, err
-	}
 	filter = normalizeListFilter(actor, filter)
 	limit := filter.PageSize
 	cursor := ProblemCursor{
@@ -103,6 +104,9 @@ func (r *ProblemReader) ListProblemsByCursor(ctx context.Context, actor auth.Act
 	hasMore := len(items) > int(limit)
 	if hasMore {
 		items = items[:limit]
+	}
+	if err := r.fillSubmissionCounts(ctx, items); err != nil {
+		return ProblemCursorPage{}, err
 	}
 	responses := make([]ProblemResponse, 0, len(items))
 	for _, item := range items {
@@ -147,9 +151,6 @@ func (r *ProblemReader) GetProblemAuthoringState(ctx context.Context, actor auth
 }
 
 func (r *ProblemReader) CurrentStatement(ctx context.Context, actor auth.Actor, problemID int64) (Statement, error) {
-	if err := requireAuthenticated(actor); err != nil {
-		return Statement{}, err
-	}
 	p, err := r.store.GetProblem(ctx, problemID)
 	if err != nil {
 		return Statement{}, err
@@ -158,6 +159,30 @@ func (r *ProblemReader) CurrentStatement(ctx context.Context, actor auth.Actor, 
 		return Statement{}, err
 	}
 	return r.store.GetCurrentProblemStatement(ctx, problemID)
+}
+
+// fillSubmissionCounts projects submission totals onto a page of problems with a
+// single batched query. It is deliberately not part of the problem row query:
+// the cursor read is keyset paginated and must stay free of aggregates.
+func (r *ProblemReader) fillSubmissionCounts(ctx context.Context, items []ProblemRecord) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(items))
+	for i := range items {
+		ids = append(ids, items[i].ID)
+	}
+	counts, err := r.store.ListProblemSubmissionCounts(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if count, ok := counts[items[i].ID]; ok {
+			items[i].SubmissionCount = count.SubmissionCount
+			items[i].AcceptedCount = count.AcceptedCount
+		}
+	}
+	return nil
 }
 
 func (r *ProblemReader) ProblemResponse(ctx context.Context, p ProblemRecord) (ProblemResponse, error) {
@@ -181,10 +206,12 @@ func (r *ProblemReader) ProblemResponse(ctx context.Context, p ProblemRecord) (P
 			TimeLimitMS:   p.TimeLimitMS,
 			MemoryLimitKB: p.MemoryLimitKB,
 		},
-		OwnerUserID: p.OwnerUserID,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
-		PublishedAt: p.PublishedAt,
+		SubmissionCount: p.SubmissionCount,
+		AcceptedCount:   p.AcceptedCount,
+		OwnerUserID:     p.OwnerUserID,
+		CreatedAt:       p.CreatedAt,
+		UpdatedAt:       p.UpdatedAt,
+		PublishedAt:     p.PublishedAt,
 	}, nil
 }
 
@@ -267,9 +294,6 @@ func (r *ProblemReader) AuthorizeProblemRejudge(ctx context.Context, actor auth.
 }
 
 func (r *ProblemReader) Stats(ctx context.Context, actor auth.Actor, problemID int64) (ProblemStats, error) {
-	if err := requireAuthenticated(actor); err != nil {
-		return ProblemStats{}, err
-	}
 	p, err := r.store.GetProblem(ctx, problemID)
 	if err != nil {
 		return ProblemStats{}, err

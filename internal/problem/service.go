@@ -62,6 +62,8 @@ type ProblemRecord struct {
 	CurrentStatementID    int64     `json:"current_statement_id,omitempty"`
 	CurrentTestcaseSetID  int64     `json:"current_testcase_set_id,omitempty"`
 	CurrentTestcaseStatus string    `json:"current_testcase_status,omitempty"`
+	SubmissionCount       int64     `json:"submission_count"`
+	AcceptedCount         int64     `json:"accepted_count"`
 	CreatedAt             time.Time `json:"created_at,omitempty"`
 	UpdatedAt             time.Time `json:"updated_at,omitempty"`
 	PublishedAt           time.Time `json:"published_at,omitempty"`
@@ -121,24 +123,37 @@ type ProblemStats struct {
 	AcceptanceRate      float64          `json:"acceptance_rate"`
 }
 
+// ProblemSubmissionCounts is one row of the batched submission projection for a
+// page of problems. The reader keys them by problem id, so a list view pays for
+// one counts query per page instead of one per problem.
+type ProblemSubmissionCounts struct {
+	ProblemID       int64
+	SubmissionCount int64
+	AcceptedCount   int64
+}
+
 type ProblemLimits struct {
 	TimeLimitMS   int32 `json:"time_limit_ms"`
 	MemoryLimitKB int32 `json:"memory_limit_kb"`
 }
 
 type ProblemResponse struct {
-	ID          int64         `json:"id"`
-	Title       string        `json:"title"`
-	Slug        string        `json:"slug"`
-	Difficulty  string        `json:"difficulty"`
-	Visibility  string        `json:"visibility"`
-	Status      string        `json:"status"`
-	Tags        []string      `json:"tags"`
-	Limits      ProblemLimits `json:"limits"`
-	OwnerUserID int64         `json:"owner_user_id"`
-	CreatedAt   time.Time     `json:"created_at,omitempty"`
-	UpdatedAt   time.Time     `json:"updated_at,omitempty"`
-	PublishedAt time.Time     `json:"published_at,omitempty"`
+	ID         int64         `json:"id"`
+	Title      string        `json:"title"`
+	Slug       string        `json:"slug"`
+	Difficulty string        `json:"difficulty"`
+	Visibility string        `json:"visibility"`
+	Status     string        `json:"status"`
+	Tags       []string      `json:"tags"`
+	Limits     ProblemLimits `json:"limits"`
+	// SubmissionCount and AcceptedCount come from the batched submission
+	// projection, not from the problem row itself.
+	SubmissionCount int64     `json:"submission_count"`
+	AcceptedCount   int64     `json:"accepted_count"`
+	OwnerUserID     int64     `json:"owner_user_id"`
+	CreatedAt       time.Time `json:"created_at,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+	PublishedAt     time.Time `json:"published_at,omitempty"`
 }
 
 type CreateProblemInput struct {
@@ -646,13 +661,6 @@ func problemCheckNotFoundErr(err error) error {
 		return apperror.NotFound("problem_check.not_found", "problem check not found")
 	}
 	return err
-}
-
-func requireAuthenticated(actor auth.Actor) error {
-	if !actor.Authenticated() {
-		return apperror.Unauthorized("auth.required", "authentication required")
-	}
-	return nil
 }
 
 func canWriteProblem(actor auth.Actor, p ProblemRecord) error {

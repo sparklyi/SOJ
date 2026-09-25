@@ -337,3 +337,14 @@ LEFT JOIN (
 ) status_counts ON true
 WHERE p.id = $1
 GROUP BY p.id;
+
+-- name: ListProblemSubmissionCounts :many
+-- Batched submission counts for a page of problems, so a list view never
+-- issues one stats query per row. Hits submissions_problem_status_idx.
+SELECT
+    s.problem_id,
+    count(*)::bigint AS submission_count,
+    count(*) FILTER (WHERE s.status = 'accepted')::bigint AS accepted_count
+FROM submissions s
+WHERE s.problem_id = ANY(sqlc.arg('problem_ids')::bigint[])
+GROUP BY s.problem_id;

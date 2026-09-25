@@ -68,6 +68,10 @@ func (problemReaderStoreStub) GetProblemStats(context.Context, int64) (ProblemSt
 	return ProblemStats{}, nil
 }
 
+func (problemReaderStoreStub) ListProblemSubmissionCounts(context.Context, []int64) (map[int64]ProblemSubmissionCounts, error) {
+	return map[int64]ProblemSubmissionCounts{}, nil
+}
+
 func TestProblemReaderUsesOnlyReadStore(t *testing.T) {
 	reader := NewProblemReader(problemReaderStoreStub{}, testcaseArchiveReaderStub{})
 

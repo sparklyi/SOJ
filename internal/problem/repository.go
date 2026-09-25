@@ -255,6 +255,25 @@ func (r *PostgresRepository) GetProblemStats(ctx context.Context, problemID int6
 	return statsFromDB(stats), mapDBErr(err)
 }
 
+func (r *PostgresRepository) ListProblemSubmissionCounts(ctx context.Context, problemIDs []int64) (map[int64]ProblemSubmissionCounts, error) {
+	if len(problemIDs) == 0 {
+		return map[int64]ProblemSubmissionCounts{}, nil
+	}
+	rows, err := r.queries.ListProblemSubmissionCounts(ctx, problemIDs)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	counts := make(map[int64]ProblemSubmissionCounts, len(rows))
+	for _, row := range rows {
+		counts[row.ProblemID] = ProblemSubmissionCounts{
+			ProblemID:       row.ProblemID,
+			SubmissionCount: row.SubmissionCount,
+			AcceptedCount:   row.AcceptedCount,
+		}
+	}
+	return counts, nil
+}
+
 func (r *PostgresRepository) ListProblemsForReview(ctx context.Context, filter ProblemReviewQueueFilter) ([]ProblemRecord, int64, error) {
 	limit := filter.PageSize
 	if limit <= 0 {
