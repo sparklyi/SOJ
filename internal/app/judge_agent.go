@@ -32,16 +32,23 @@ import (
 func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("soj-judge-agent", flag.ContinueOnError)
 	fs.SetOutput(stdout)
-	healthAddr := fs.String("health-addr", envOr("SOJ_JUDGE_AGENT_HEALTH_ADDR", ":8082"), "judge agent health HTTP listen address")
+	configFlags := config.RegisterFlags(fs)
+	healthAddr := fs.String("health-addr", "", "judge agent health HTTP listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if configFlags.Print {
+		return config.Print(stdout, configFlags.File)
+	}
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(config.Options{Role: config.RoleJudgeAgent, File: configFlags.File})
 	if err != nil {
 		return err
 	}
-	sandboxBackend, err := sandbox.SelectBackend(cfg.Env, envOr("SOJ_JUDGE_SANDBOX_BACKEND", ""), cfg.Judge.Endpoint)
+	if *healthAddr != "" {
+		cfg.Agent.HealthAddr = *healthAddr
+	}
+	sandboxBackend, err := sandbox.SelectBackend(cfg.Env, cfg.Judge.SandboxBackend, cfg.Judge.Endpoint)
 	if err != nil {
 		return err
 	}
@@ -62,17 +69,17 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		_ = redisClient.Close()
 	}()
 
-	agentStreams, err := parseJudgeAgentStreams(envOr("SOJ_JUDGE_AGENT_STREAMS", judgeAgentStreamsAll))
+	agentStreams, err := parseJudgeAgentStreams(cfg.Redis.AgentStreams)
 	if err != nil {
 		return err
 	}
 	requestQueues := judgeAgentRequestQueues(redisClient, cfg, agentStreams)
 	if len(requestQueues) == 0 {
-		return fmt.Errorf("SOJ_JUDGE_AGENT_STREAMS=%q leaves the agent with no stream to consume", envOr("SOJ_JUDGE_AGENT_STREAMS", judgeAgentStreamsAll))
+		return fmt.Errorf("redis.agent_streams=%q leaves the agent with no stream to consume", cfg.Redis.AgentStreams)
 	}
 	resultQueue := queue.NewRedisStreamQueue(redisClient, queue.RedisStreamConfig{
-		Stream:     envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"),
-		Group:      envOr("SOJ_JUDGE_RESULT_GROUP", "judge-result-consumers"),
+		Stream:     cfg.Redis.ResultStream,
+		Group:      cfg.Redis.ResultGroup,
 		Consumer:   judgeAgentConsumerName(),
 		StartID:    "0",
 		MaxLen:     cfg.Redis.StreamMaxLen,
@@ -87,19 +94,11 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 
-	parallelism, err := envInt("SOJ_JUDGE_PARALLELISM", 1)
+	languageSlots, err := parseJudgeAgentLanguageSlots(cfg.Judge.LanguageSlots)
 	if err != nil {
 		return err
 	}
-	languageSlots, err := parseJudgeAgentLanguageSlots(envOr("SOJ_JUDGE_LANGUAGE_SLOTS", ""))
-	if err != nil {
-		return err
-	}
-	maxBatch, err := envInt("SOJ_JUDGE_MAX_BATCH", cfg.Redis.BatchSize)
-	if err != nil {
-		return err
-	}
-	slotLimiter := newJudgeAgentSlotLimiter(parallelism, languageSlots)
+	slotLimiter := newJudgeAgentSlotLimiter(cfg.Judge.Parallelism, languageSlots)
 
 	agent, sandboxReady, err := newJudgeAgentProcessor(ctx, sandboxBackend, cfg, objectStore, metrics, logger, queueResultPublisher{queue: resultQueue})
 	if err != nil {
@@ -114,13 +113,13 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 		TracingService: tracing.ServiceName(),
 	})
 	server := &http.Server{
-		Addr:         *healthAddr,
+		Addr:         cfg.Agent.HealthAddr,
 		Handler:      router,
 		ReadTimeout:  cfg.HTTP.ReadTimeout,
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
 
-	logger.InfoContext(ctx, "starting soj judge agent", "health_addr", *healthAddr, "request_streams", judgeRequestStreamNames(requestQueues), "result_stream", envOr("SOJ_JUDGE_RESULT_STREAM", cfg.Redis.Stream+":results"), "sandbox_backend", sandboxBackend, "parallelism", parallelism)
+	logger.InfoContext(ctx, "starting soj judge agent", "health_addr", cfg.Agent.HealthAddr, "request_streams", judgeRequestStreamNames(requestQueues), "result_stream", cfg.Redis.ResultStream, "sandbox_backend", sandboxBackend, "parallelism", cfg.Judge.Parallelism)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 1+len(requestQueues))
@@ -129,7 +128,7 @@ func RunJudgeAgent(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}()
 	for _, stream := range requestQueues {
 		go func(stream judgeRequestStream) {
-			errCh <- runJudgeAgentLoop(runCtx, agent, stream.Queue, maxBatch, cfg.Redis.Block, slotLimiter, metrics)
+			errCh <- runJudgeAgentLoop(runCtx, agent, stream.Queue, cfg.Judge.MaxBatch, cfg.Redis.Block, slotLimiter, metrics)
 		}(stream)
 	}
 
@@ -271,7 +270,7 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 			ResultPublisher: publisher,
 		}), nil, nil
 	}
-	runtimeSandbox, err := newJudgeAgentSandbox(backend, cfg.Judge.CleanupTimeout, metrics, logger)
+	runtimeSandbox, err := newJudgeAgentSandbox(backend, cfg.Agent.Runner, cfg.Judge.CleanupTimeout, metrics, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -298,21 +297,21 @@ func newJudgeAgentProcessor(ctx context.Context, backend string, cfg config.Conf
 	}), sandboxReady, nil
 }
 
-func newJudgeAgentSandbox(backend string, cleanupTimeout time.Duration, observer sandbox.SandboxObserver, logger *slog.Logger) (sandbox.Sandbox, error) {
+func newJudgeAgentSandbox(backend string, runner config.RunnerConfig, cleanupTimeout time.Duration, observer sandbox.SandboxObserver, logger *slog.Logger) (sandbox.Sandbox, error) {
 	switch backend {
 	case sandbox.BackendProcess:
 		return sandbox.NewProcessSandbox(), nil
 	case sandbox.BackendDocker:
 		return sandbox.NewDockerSandbox(sandbox.DockerSandboxOptions{
-			Runtime:        envOr("SOJ_DOCKER_RUNNER_RUNTIME", ""),
-			TempDir:        envOr("SOJ_DOCKER_RUNNER_WORKDIR", ""),
-			User:           envOr("SOJ_DOCKER_RUNNER_USER", ""),
+			Runtime:        runner.Runtime,
+			TempDir:        runner.Workdir,
+			User:           runner.User,
 			CleanupTimeout: cleanupTimeout,
 			Observer:       observer,
 			Logger:         logger,
 			Images: map[string]string{
-				"go":    envOr("SOJ_DOCKER_RUNNER_IMAGE_GO", "ghcr.io/sparklyi/soj-runner-go:main"),
-				"cpp17": envOr("SOJ_DOCKER_RUNNER_IMAGE_CPP17", "ghcr.io/sparklyi/soj-runner-cpp17:main"),
+				"go":    runner.ImageGo,
+				"cpp17": runner.ImageCpp17,
 			},
 		}), nil
 	case sandbox.BackendIsolate:
@@ -365,23 +364,4 @@ func judgeAgentConsumerName() string {
 		return hostname
 	}
 	return "judge-agent"
-}
-
-func envOr(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func envInt(key string, fallback int) (int, error) {
-	raw := envOr(key, "")
-	if raw == "" {
-		return fallback, nil
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, err
-	}
-	return value, nil
 }

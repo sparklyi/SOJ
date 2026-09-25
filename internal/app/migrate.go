@@ -19,27 +19,28 @@ import (
 func RunMigrate(ctx context.Context, args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("soj-migrate", flag.ContinueOnError)
 	fs.SetOutput(stdout)
+	configFlags := config.RegisterFlags(fs)
 	dir := fs.String("dir", "", "migration directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if configFlags.Print {
+		return config.Print(stdout, configFlags.File)
+	}
 	if fs.NArg() == 0 {
-		_, _ = fmt.Fprintln(stdout, "usage: soj-migrate [--dir internal/migrations] up")
+		_, _ = fmt.Fprintln(stdout, "usage: soj-migrate [--config config.yaml] [--dir internal/migrations] up")
 		return flag.ErrHelp
 	}
 	if fs.Arg(0) != "up" {
 		return fmt.Errorf("unsupported migration command %q", fs.Arg(0))
 	}
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(config.Options{Role: config.RoleMigrate, File: configFlags.File})
 	if err != nil {
 		return err
 	}
 	if *dir != "" {
 		cfg.Migrations.Dir = *dir
-	}
-	if cfg.Database.DSN == "" {
-		return errors.New("SOJ_DATABASE_DSN is required")
 	}
 
 	conn, err := pgx.Connect(ctx, cfg.Database.DSN)

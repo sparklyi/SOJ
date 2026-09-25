@@ -1,0 +1,100 @@
+# Sundial Online Judge runtime configuration.
+#
+# This file is the configuration. Defaults live in internal/config, this file
+# overrides them, and values written as ${NAME} or ${NAME:-default} are filled
+# from the environment when the file is loaded. That is how secrets and
+# per-deployment overrides stay out of the repository: paste
+# `deploy/env/api.env.example` into the deployment's environment and the
+# placeholders below resolve.
+#
+# Every command accepts --config <file> (default: $SOJ_CONFIG_FILE, then
+# ./config.yaml) and --print-config, which prints the effective configuration
+# with secrets masked.
+
+env: ${SOJ_ENV:-docker}
+
+http:
+  addr: ":8080"
+  read_timeout: 10s
+  write_timeout: 10s
+
+worker:
+  health_addr: ":8081"
+  shutdown_timeout: 10s
+
+log:
+  level: info
+
+database:
+  dsn: ${SOJ_DATABASE_DSN:-}
+
+redis:
+  addr: redis:6379
+  stream: soj:judge:tasks
+  group: judge-workers
+  batch_size: 16
+  block: 5s
+  stream_max_len: 100000
+  dead_stream_max_len: 10000
+  # Self-runs travel on their own request stream so playground traffic cannot
+  # queue in front of a formal submission. Their consumer group is separate so
+  # a second judge agent can be dedicated to runs.
+  run_stream: soj:judge:runs
+  run_group: judge-run-agents
+  result_stream: soj:judge:results
+  result_group: judge-result-consumers
+  # all, submissions, or runs: which request streams a judge agent consumes.
+  agent_streams: ${SOJ_JUDGE_AGENT_STREAMS:-all}
+  agent_group: judge-agents
+
+storage:
+  endpoint: http://minio:9000
+  bucket: soj
+  region: us-east-1
+  access_key: ${SOJ_STORAGE_ACCESS_KEY:-}
+  secret_key: ${SOJ_STORAGE_SECRET_KEY:-}
+  path_style: true
+
+judge:
+  endpoint: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
+  sandbox_backend: ${SOJ_JUDGE_SANDBOX_BACKEND:-fake}
+  timeout: 30s
+  cleanup_timeout: ${SOJ_JUDGE_CLEANUP_TIMEOUT:-5s}
+  parallelism: ${SOJ_JUDGE_PARALLELISM:-1}
+  language_slots: ${SOJ_JUDGE_LANGUAGE_SLOTS:-}
+  max_batch: ${SOJ_JUDGE_MAX_BATCH:-16}
+  run_parallelism: ${SOJ_JUDGE_RUN_PARALLELISM:-1}
+  run_per_user: ${SOJ_JUDGE_RUN_PER_USER:-2}
+  run_stdin_max_bytes: ${SOJ_JUDGE_RUN_STDIN_MAX_BYTES:-65536}
+
+agent:
+  health_addr: ":8082"
+  runner:
+    # Filled by the docker-runner overlay, the Makefile, or the production
+    # compose file; the defaults target the published runner images.
+    runtime: ${SOJ_DOCKER_RUNNER_RUNTIME:-}
+    workdir: ${SOJ_DOCKER_RUNNER_WORKDIR:-}
+    user: ${SOJ_DOCKER_RUNNER_USER:-}
+    go_image: ${SOJ_DOCKER_RUNNER_IMAGE_GO:-ghcr.io/sparklyi/soj-runner-go:main}
+    cpp17_image: ${SOJ_DOCKER_RUNNER_IMAGE_CPP17:-ghcr.io/sparklyi/soj-runner-cpp17:main}
+
+retention:
+  # Self-runs are drafts: after run_days the worker removes the source object
+  # and then the rows. 0 turns the sweep off.
+  run_days: ${SOJ_RUN_RETENTION_DAYS:-7}
+  run_interval: ${SOJ_RUN_RETENTION_INTERVAL:-10m}
+  run_batch: ${SOJ_RUN_RETENTION_BATCH:-200}
+
+auth:
+  jwt_secret: ${SOJ_JWT_SECRET:-}
+  access_token_ttl: 15m
+  refresh_token_ttl: 720h
+
+migrations:
+  dir: internal/migrations
+
+tracing:
+  enabled: ${SOJ_TRACING_ENABLED:-false}
+  service_name: ${OTEL_SERVICE_NAME:-}
+  resource_attributes: ${OTEL_RESOURCE_ATTRIBUTES:-}
+  exporter_endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}

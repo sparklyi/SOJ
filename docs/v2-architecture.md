@@ -35,7 +35,7 @@ API, worker, and judge-agent processes expose Prometheus metrics at `/metrics`. 
 
 Prometheus alert rules are checked in under `deploy/prometheus-rules/soj-alerts.yml` and loaded by the local Prometheus configuration. Dashboard queries are documented in `docs/observability-trial-loop.md` instead of requiring a default Grafana service.
 
-Distributed tracing uses OpenTelemetry and OTLP/HTTP export when explicitly enabled with `SOJ_TRACING_ENABLED=true`. It remains disabled by default even if generic `OTEL_*` variables are present. Trace context is carried across HTTP, worker dispatch, Redis judge request/result events, judge-agent execution, sandbox phases, result consumption, and final persistence. Existing API `request_id` values and persisted judge attempt `trace_id` values remain the operator pivots.
+Distributed tracing uses OpenTelemetry and OTLP/HTTP export when explicitly enabled with `tracing.enabled: true`. It remains disabled by default even if generic `OTEL_*` variables are present. Trace context is carried across HTTP, worker dispatch, Redis judge request/result events, judge-agent execution, sandbox phases, result consumption, and final persistence. Existing API `request_id` values and persisted judge attempt `trace_id` values remain the operator pivots.
 
 ## Legacy Boundary
 

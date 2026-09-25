@@ -26,24 +26,43 @@ This mode runs real Go/C++ toolchains in the judge-agent container, but it is no
 
 ## Judge Event Flow
 
-The worker process has two production loops: a dispatcher that claims `judge_tasks` and publishes `judge.request.v2` references to `SOJ_REDIS_STREAM`, and a result consumer that reads `judge.result.v1` from `SOJ_JUDGE_RESULT_STREAM`. The result consumer acknowledges Redis only after the PostgreSQL transaction updates `judge_attempts`, `submission_results`, `judge_tasks`, and contest projections.
+The worker process has two production loops: a dispatcher that claims `judge_tasks` and publishes `judge.request.v2` references to the `redis.stream`, and a result consumer that reads `judge.result.v1` from `redis.result_stream`. The result consumer acknowledges Redis only after the PostgreSQL transaction updates `judge_attempts`, `submission_results`, `judge_tasks`, and contest projections.
 
-`soj-judge-agent` consumes requests from `SOJ_JUDGE_REQUEST_STREAM` and publishes results to `SOJ_JUDGE_RESULT_STREAM`. The agent does not receive business database credentials. The result consumer group is created from Redis stream ID `0` so already-published result events are not skipped during first startup or recovery.
+`soj-judge-agent` consumes requests from `redis.stream` and publishes results to `redis.result_stream`. The agent does not receive business database credentials. The result consumer group is created from Redis stream ID `0` so already-published result events are not skipped during first startup or recovery.
 
-Every request and result `XADD` uses approximate `MAXLEN` retention. `SOJ_REDIS_STREAM_MAX_LEN` defaults to `100000` entries per stream and `SOJ_REDIS_DEAD_STREAM_MAX_LEN` defaults to `10000` entries per dead-letter stream; both must be positive. Size these limits above the expected outage backlog and recovery window, then use the queue depth and pending-age metrics to alert before trimming is reached. PostgreSQL remains the source of truth for task recovery.
+Every request and result `XADD` uses approximate `MAXLEN` retention. `redis.stream_max_len` defaults to `100000` entries per stream and `redis.dead_stream_max_len` defaults to `10000` entries per dead-letter stream; both must be positive. Size these limits above the expected outage backlog and recovery window, then use the queue depth and pending-age metrics to alert before trimming is reached. PostgreSQL remains the source of truth for task recovery.
 
 ## Files
 
 - `Dockerfile.v2`: multi-stage image for `soj-api`, `soj-worker`, `soj-judge-agent`, and `soj-migrate`.
+- `deploy/config.yaml`: the runtime configuration; the Compose files mount it into every Go service.
 - `deploy/docker-compose.yaml`: local v2 stack.
 - `deploy/prometheus.yml`: local Prometheus scrape config for API and worker metrics.
-- `deploy/env/api.env.example`: environment variable reference.
+- `deploy/env/api.env.example`: the environment values the configuration file references.
 - `deploy/smoke.sh`: end-to-end local smoke test against the running stack.
-- `deploy/config.example.yaml`: human-readable config reference. The current runtime reads `SOJ_*` environment variables.
+
+## Configuration
+
+The runtime reads `deploy/config.yaml` (or the file named by `SOJ_CONFIG_FILE`, or
+`--config`). Defaults live in `internal/config`; the file overrides them, and
+values written as `${NAME}` or `${NAME:-default}` are filled from the environment
+when the file is read. Secrets and per-deployment knobs therefore stay out of
+the repository while the file remains the single schema. Comments may contain
+placeholders freely -- they document, they do not resolve.
+
+Every command accepts `--print-config`, which prints the effective configuration
+with secrets masked:
+
+```bash
+docker compose -f deploy/docker-compose.yaml exec api /app/soj --print-config
+# or from a checkout:
+go run ./cmd/soj-api --config deploy/config.yaml --print-config
+```
 
 ## Required Secrets
 
-Set these through environment variables in real deployments:
+Set these through environment variables in real deployments; they fill the
+placeholders in `deploy/config.yaml`:
 
 - `SOJ_DATABASE_DSN`
 - `SOJ_JWT_SECRET`
@@ -140,7 +159,7 @@ Judge-agent runner metrics to watch during Docker/gVisor rollout:
 
 Dashboard queries and alert interpretation are documented in `docs/observability-trial-loop.md`.
 
-Distributed tracing is optional and disabled by default. Generic `OTEL_*` variables alone do not enable tracing; set `SOJ_TRACING_ENABLED=true` for each process that should export spans. The OTLP/HTTP exporter follows standard OpenTelemetry variables such as `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES`. The default Compose stack does not include or require a collector, Jaeger, Tempo, Grafana, or Alertmanager service.
+Distributed tracing is optional and disabled by default. Generic `OTEL_*` variables alone do not enable tracing; set `tracing.enabled: true` for each process that should export spans. The OTLP/HTTP exporter follows standard OpenTelemetry variables such as `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES`. The default Compose stack does not include or require a collector, Jaeger, Tempo, Grafana, or Alertmanager service.
 
 ## Judge Sandbox
 
@@ -193,11 +212,11 @@ The process backend exists only for development tests and local real-code smoke.
 
 ## Troubleshooting
 
-- Queue backlog: check Redis stream length for `SOJ_REDIS_STREAM`, worker logs, and `soj_worker_judge_task_dispatch_total`.
+- Queue backlog: check Redis stream length for `redis.stream`, worker logs, and `soj_worker_judge_task_dispatch_total`.
 - Queue backlog in Prometheus: check `soj_queue_depth`, `soj_queue_pending_messages`, and `soj_queue_oldest_pending_age_seconds` by logical queue (`request` or `result`).
-- No result events: check judge-agent readiness, `SOJ_JUDGE_REQUEST_STREAM`, `SOJ_JUDGE_RESULT_STREAM`, and object storage credentials.
+- No result events: check judge-agent readiness, `redis.stream`, `redis.result_stream`, and object storage credentials.
 - Result events not persisted: check `soj_worker_result_consumer_messages_total{result="error"}`, PostgreSQL readiness, and worker logs.
-- Agent startup failure: verify `SOJ_REDIS_ADDR`, object storage credentials, Docker socket access, runner images, `SOJ_JUDGE_SANDBOX_BACKEND`, and `SOJ_DOCKER_RUNNER_RUNTIME` safety rules.
+- Agent startup failure: verify `redis.addr`, object storage credentials, Docker socket access, runner images, `judge.sandbox_backend`, and `agent.runner.runtime` safety rules.
 - Sandbox verdict anomalies: compare the attempt manifest fields for judge core version, sandbox backend/profile, language runtime, testcase set hash, and trace id.
 - Traced submission diagnosis: when tracing is enabled, pivot from an alert time window to `request_id`, persisted `trace_id`, and the corresponding API/worker/judge-agent spans.
 - Local Docker runner smoke fails with wrong answers on input-reading programs: confirm Docker run uses the current code and `--interactive` is present in the runner args.

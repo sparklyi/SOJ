@@ -1,3 +1,16 @@
+# Shared by every Go service in this stack. The configuration file is the
+# source of truth; these environment variables only fill its ${...}
+# placeholders, which keeps secrets and per-deployment knobs out of the file.
+x-soj-common: &soj-common
+  SOJ_CONFIG_FILE: /etc/soj/config.yaml
+  SOJ_ENV: ${SOJ_ENV:-docker}
+  SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-}
+  SOJ_JUDGE_SANDBOX_BACKEND: ${SOJ_JUDGE_SANDBOX_BACKEND:-}
+  SOJ_JUDGE_AGENT_STREAMS: ${SOJ_JUDGE_AGENT_STREAMS:-}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
+  OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -164,8 +177,11 @@ services:
       args:
         COMMAND: soj-migrate
     environment:
-      SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
-      SOJ_MIGRATIONS_DIR: /app/internal/migrations
+      <<: *soj-common
+      SOJ_DATABASE_DSN: ${SOJ_DATABASE_DSN:-postgres://soj:soj@postgres:5432/soj?sslmode=disable}
+    configs:
+      - source: soj-config
+        target: /etc/soj/config.yaml
     command: ["up"]
     depends_on:
       postgres:
@@ -178,20 +194,14 @@ services:
       args:
         COMMAND: soj-api
     environment:
-      SOJ_ENV: ${SOJ_ENV:-docker}
-      SOJ_HTTP_ADDR: ":8080"
-      SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
-      SOJ_REDIS_ADDR: redis:6379
-      SOJ_STORAGE_ENDPOINT: http://minio:9000
-      SOJ_STORAGE_BUCKET: soj
-      SOJ_STORAGE_ACCESS_KEY: minioadmin
-      SOJ_STORAGE_SECRET_KEY: minioadmin
-      SOJ_STORAGE_PATH_STYLE: "true"
-      SOJ_JWT_SECRET: local-dev-secret-change-me
-      SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
-      SOJ_JUDGE_RUN_PARALLELISM: ${SOJ_JUDGE_RUN_PARALLELISM:-1}
-      SOJ_JUDGE_RUN_PER_USER: ${SOJ_JUDGE_RUN_PER_USER:-2}
-      SOJ_JUDGE_RUN_STDIN_MAX_BYTES: ${SOJ_JUDGE_RUN_STDIN_MAX_BYTES:-65536}
+      <<: *soj-common
+      SOJ_DATABASE_DSN: ${SOJ_DATABASE_DSN:-postgres://soj:soj@postgres:5432/soj?sslmode=disable}
+      SOJ_JWT_SECRET: ${SOJ_JWT_SECRET:-local-dev-secret-change-me}
+      SOJ_STORAGE_ACCESS_KEY: ${SOJ_STORAGE_ACCESS_KEY:-minioadmin}
+      SOJ_STORAGE_SECRET_KEY: ${SOJ_STORAGE_SECRET_KEY:-minioadmin}
+    configs:
+      - source: soj-config
+        target: /etc/soj/config.yaml
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -216,29 +226,13 @@ services:
       args:
         COMMAND: soj-worker
     environment:
-      SOJ_ENV: ${SOJ_ENV:-docker}
-      SOJ_WORKER_HEALTH_ADDR: ":8081"
-      SOJ_DATABASE_DSN: postgres://soj:soj@postgres:5432/soj?sslmode=disable
-      SOJ_REDIS_ADDR: redis:6379
-      SOJ_REDIS_STREAM: soj:judge:tasks
-      SOJ_REDIS_GROUP: judge-workers
-      SOJ_REDIS_STREAM_MAX_LEN: ${SOJ_REDIS_STREAM_MAX_LEN:-100000}
-      SOJ_REDIS_DEAD_STREAM_MAX_LEN: ${SOJ_REDIS_DEAD_STREAM_MAX_LEN:-10000}
-      SOJ_JUDGE_RUN_STREAM: soj:judge:runs
-      SOJ_JUDGE_RUN_GROUP: judge-run-agents
-      SOJ_JUDGE_RESULT_STREAM: soj:judge:results
-      SOJ_JUDGE_RESULT_GROUP: judge-result-consumers
-      # 自测运行是草稿：保留期满后连同源码对象一起删除。0 表示关闭。
-      SOJ_RUN_RETENTION_DAYS: ${SOJ_RUN_RETENTION_DAYS:-7}
-      SOJ_RUN_RETENTION_INTERVAL: ${SOJ_RUN_RETENTION_INTERVAL:-10m}
-      SOJ_RUN_RETENTION_BATCH: ${SOJ_RUN_RETENTION_BATCH:-200}
-      SOJ_STORAGE_ENDPOINT: http://minio:9000
-      SOJ_STORAGE_BUCKET: soj
-      SOJ_STORAGE_ACCESS_KEY: minioadmin
-      SOJ_STORAGE_SECRET_KEY: minioadmin
-      SOJ_STORAGE_PATH_STYLE: "true"
-      SOJ_JWT_SECRET: local-dev-secret-change-me
-      SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
+      <<: *soj-common
+      SOJ_DATABASE_DSN: ${SOJ_DATABASE_DSN:-postgres://soj:soj@postgres:5432/soj?sslmode=disable}
+      SOJ_STORAGE_ACCESS_KEY: ${SOJ_STORAGE_ACCESS_KEY:-minioadmin}
+      SOJ_STORAGE_SECRET_KEY: ${SOJ_STORAGE_SECRET_KEY:-minioadmin}
+    configs:
+      - source: soj-config
+        target: /etc/soj/config.yaml
     depends_on:
       postgres:
         condition: service_healthy
@@ -267,31 +261,12 @@ services:
       args:
         COMMAND: soj-judge-agent
     environment:
-      SOJ_ENV: ${SOJ_ENV:-docker}
-      SOJ_JUDGE_AGENT_HEALTH_ADDR: ":8082"
-      SOJ_REDIS_ADDR: redis:6379
-      SOJ_REDIS_STREAM_MAX_LEN: ${SOJ_REDIS_STREAM_MAX_LEN:-100000}
-      SOJ_REDIS_DEAD_STREAM_MAX_LEN: ${SOJ_REDIS_DEAD_STREAM_MAX_LEN:-10000}
-      SOJ_STORAGE_ENDPOINT: http://minio:9000
-      SOJ_STORAGE_BUCKET: soj
-      SOJ_STORAGE_ACCESS_KEY: minioadmin
-      SOJ_STORAGE_SECRET_KEY: minioadmin
-      SOJ_STORAGE_PATH_STYLE: "true"
-      SOJ_JUDGE_ENDPOINT: ${SOJ_JUDGE_ENDPOINT:-fake://accepted}
-      SOJ_JUDGE_CLEANUP_TIMEOUT: ${SOJ_JUDGE_CLEANUP_TIMEOUT:-5s}
-      SOJ_JUDGE_SANDBOX_BACKEND: ${SOJ_JUDGE_SANDBOX_BACKEND:-fake}
-      SOJ_JUDGE_REQUEST_STREAM: soj:judge:tasks
-      SOJ_JUDGE_AGENT_GROUP: judge-agents
-      SOJ_JUDGE_RUN_STREAM: soj:judge:runs
-      SOJ_JUDGE_RUN_GROUP: judge-run-agents
-      # all 时同一个 agent 消费两个流并共享沙箱槽；runs 可以单跑一个只服务
-      # 自测运行的 agent，从而与正式提交互不影响。
-      SOJ_JUDGE_AGENT_STREAMS: ${SOJ_JUDGE_AGENT_STREAMS:-all}
-      SOJ_JUDGE_RESULT_STREAM: soj:judge:results
-      SOJ_JUDGE_RESULT_GROUP: judge-result-consumers
-      SOJ_JUDGE_PARALLELISM: ${SOJ_JUDGE_PARALLELISM:-1}
-      SOJ_JUDGE_LANGUAGE_SLOTS: ${SOJ_JUDGE_LANGUAGE_SLOTS:-}
-      SOJ_JUDGE_MAX_BATCH: ${SOJ_JUDGE_MAX_BATCH:-16}
+      <<: *soj-common
+      SOJ_STORAGE_ACCESS_KEY: ${SOJ_STORAGE_ACCESS_KEY:-minioadmin}
+      SOJ_STORAGE_SECRET_KEY: ${SOJ_STORAGE_SECRET_KEY:-minioadmin}
+    configs:
+      - source: soj-config
+        target: /etc/soj/config.yaml
     depends_on:
       redis:
         condition: service_healthy
@@ -321,6 +296,10 @@ services:
         condition: service_healthy
     ports:
       - "9090:9090"
+
+configs:
+  soj-config:
+    file: ./config.yaml
 
 volumes:
   soj-postgres-data:

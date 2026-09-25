@@ -111,7 +111,7 @@ Local services:
 | MinIO console | `http://localhost:9001` |
 | Prometheus | `http://localhost:9090` |
 
-The default stack uses `SOJ_JUDGE_SANDBOX_BACKEND=fake` and `fake://accepted`, so the full
+The default stack runs `judge.sandbox_backend: fake` with `fake://accepted`, so the full
 async judge flow runs before a privileged sandbox runtime is available.
 
 ### Backend: run processes directly
@@ -174,9 +174,9 @@ pipeline as submissions: the API writes a judge task, the worker publishes it to
 stream, and the judge-agent executes it. The default `agent://local` endpoint is therefore
 enough, and it is the production path -- the API never runs untrusted code.
 
-Runs travel on their own request stream (`SOJ_JUDGE_RUN_STREAM`) so playground traffic cannot
+Runs travel on their own request stream (`redis.run_stream`) so playground traffic cannot
 queue in front of a formal submission. By default one agent consumes both streams and shares
-its sandbox slots; set `SOJ_JUDGE_AGENT_STREAMS=runs` on a second agent to give the playground
+its sandbox slots; set `redis.agent_streams: runs` on a second agent to give the playground
 its own capacity.
 
 For single-node deployments and local development there is also `local://`, which compiles and
@@ -192,7 +192,7 @@ the async path when worker and agent are running.
 ### Self-run retention
 
 A self-run is scratch work, but every one of them writes a source object to storage. The worker
-therefore sweeps finished self-runs past `SOJ_RUN_RETENTION_DAYS` and removes the object before
+therefore sweeps finished self-runs past `retention.run_days` and removes the object before
 the row, so a failure leaves the row for the next sweep instead of orphaning an object that
 nothing could ever find again. Submissions are untouched: their source is needed for rejudge.
 
@@ -232,68 +232,47 @@ require Grafana, Alertmanager, Jaeger, Tempo, or an OpenTelemetry collector.
 
 ## Configuration
 
-The runtime is configured through `SOJ_*` environment variables. See
-[deploy/env/api.env.example](deploy/env/api.env.example) and
-[deploy/config.example.yaml](deploy/config.example.yaml) for complete examples.
+[deploy/config.yaml](deploy/config.yaml) is the configuration. It carries the
+full schema with the values the Compose stack uses; the defaults for every key
+live in [internal/config](internal/config), and this file is what a deployment
+overrides.
 
-Runtime and data stores:
+Values written as placeholders (`${NAME}` or `${NAME:-default}`) are resolved
+from the environment when the file is read. That is the whole environment
+interface: secrets and per-deployment knobs are declared in the file, and the
+loader reads nothing else from the environment except the file's own path.
 
-| Variable | Purpose |
+Every command accepts:
+
+| Flag | Purpose |
 | --- | --- |
-| `SOJ_ENV` | Runtime environment name, defaults to `dev`. |
-| `SOJ_HTTP_ADDR` | API listen address, defaults to `:8080`. |
-| `SOJ_WORKER_HEALTH_ADDR` | Worker health server address, defaults to `:8081`. |
-| `SOJ_DATABASE_DSN` | PostgreSQL connection string. Required outside trivial local tests. |
-| `SOJ_REDIS_ADDR` | Redis address. |
-| `SOJ_REDIS_STREAM` | Judge request stream, defaults to `soj:judge:tasks`. |
-| `SOJ_REDIS_GROUP` | Worker consumer group, defaults to `judge-workers`. |
-| `SOJ_REDIS_STREAM_MAX_LEN` | Approximate maximum retained entries per request/result stream, default `100000`. |
-| `SOJ_REDIS_DEAD_STREAM_MAX_LEN` | Approximate maximum retained entries per dead-letter stream, default `10000`. |
-| `SOJ_STORAGE_ENDPOINT` | S3-compatible object storage endpoint. |
-| `SOJ_STORAGE_BUCKET` | Object storage bucket. |
+| `--config <file>` | Configuration file. Defaults to `$SOJ_CONFIG_FILE`, then `./config.yaml` when it exists. |
+| `--print-config` | Print the effective configuration with secrets masked, then exit. |
+
+```bash
+go run ./cmd/soj-api --config deploy/config.yaml --print-config
+```
+
+The shipped file references these variables
+(`grep -o '\${[A-Z_]*' deploy/config.yaml` lists them straight from the file):
+
+| Placeholder | Purpose |
+| --- | --- |
+| `SOJ_DATABASE_DSN` | PostgreSQL connection string; required by the api, worker, and migrate commands. |
+| `SOJ_JWT_SECRET` | JWT signing secret; required by the api command. |
 | `SOJ_STORAGE_ACCESS_KEY` / `SOJ_STORAGE_SECRET_KEY` | Object storage credentials. |
-| `SOJ_JWT_SECRET` | JWT signing secret. Must be changed for real deployments. |
+| `SOJ_ENV` | Environment name, defaults to `docker`. |
+| `SOJ_JUDGE_ENDPOINT` / `SOJ_JUDGE_SANDBOX_BACKEND` | Judge routing and sandbox backend. |
+| `SOJ_JUDGE_AGENT_STREAMS` | Streams a judge agent consumes: `all` (default), `submissions`, or `runs`. |
+| `SOJ_JUDGE_PARALLELISM` / `SOJ_JUDGE_LANGUAGE_SLOTS` / `SOJ_JUDGE_MAX_BATCH` | Judge agent capacity. |
+| `SOJ_JUDGE_RUN_PARALLELISM` / `SOJ_JUDGE_RUN_PER_USER` / `SOJ_JUDGE_RUN_STDIN_MAX_BYTES` | Self-run limits. |
+| `SOJ_RUN_RETENTION_DAYS` / `SOJ_RUN_RETENTION_INTERVAL` / `SOJ_RUN_RETENTION_BATCH` | Self-run retention sweep. |
+| `SOJ_DOCKER_RUNNER_*` | Runner runtime, workdir, and images for the docker sandbox. |
+| `OTEL_*` | OpenTelemetry service name, resource attributes, and trace endpoint. |
 
-Judge and sandbox:
-
-| Variable | Purpose |
-| --- | --- |
-| `SOJ_JUDGE_ENDPOINT` | `fake://accepted` returns canned results; `agent://local` delegates judging **and** self-runs to the judge-agent (production path); `local://` executes self-runs in the API process (single-node/local only, refuses the `docker` backend). |
-| `SOJ_JUDGE_TIMEOUT` | Judge timeout, defaults to `30s`. |
-| `SOJ_JUDGE_SANDBOX_BACKEND` | Judge-agent sandbox backend: `fake`, `process`, or `docker`. |
-| `SOJ_JUDGE_PARALLELISM` | Global judge-agent sandbox slots. |
-| `SOJ_JUDGE_LANGUAGE_SLOTS` | Per-language slot limits, such as `go=4,cpp17=4`. |
-| `SOJ_JUDGE_CLEANUP_TIMEOUT` | Independent timeout for judge workspace and container cleanup, defaults to `5s`. |
-
-Self-runs:
-
-| Variable | Purpose |
-| --- | --- |
-| `SOJ_JUDGE_RUN_STREAM` | Request stream for self-runs, defaults to `<SOJ_REDIS_STREAM>:runs`. |
-| `SOJ_JUDGE_RUN_GROUP` | Consumer group on the run stream, default `judge-run-agents`. |
-| `SOJ_JUDGE_AGENT_STREAMS` | Streams a judge-agent consumes: `all` (default), `submissions`, or `runs`. |
-| `SOJ_JUDGE_RUN_PER_USER` | In-flight self-run cap per user, default `2`. Counted in the database, exact across API replicas. |
-| `SOJ_JUDGE_RUN_STDIN_MAX_BYTES` | Maximum stdin a run may carry, default `65536`. Rejected with `422 run.stdin_too_large`. |
-| `SOJ_JUDGE_RUN_PARALLELISM` | Global self-run slots on the API side, default `1`. Only applies to `local://`. |
-| `SOJ_RUN_RETENTION_DAYS` | Retention for finished self-runs and their source objects, default `7`. `0` disables the sweep. |
-| `SOJ_RUN_RETENTION_INTERVAL` / `SOJ_RUN_RETENTION_BATCH` | Sweep interval (`10m`) and per-sweep delete cap (`200`). |
-
-Docker runner:
-
-| Variable | Purpose |
-| --- | --- |
-| `SOJ_DOCKER_RUNNER_RUNTIME` | Docker runtime for runner containers; production should use `runsc`. |
-| `SOJ_DOCKER_RUNNER_IMAGE_GO` | Go runner image, defaults to `ghcr.io/sparklyi/soj-runner-go:main` for local smoke. |
-| `SOJ_DOCKER_RUNNER_IMAGE_CPP17` | C++17 runner image, defaults to `ghcr.io/sparklyi/soj-runner-cpp17:main` for local smoke. |
-
-Tracing (disabled by default):
-
-| Variable | Purpose |
-| --- | --- |
-| `SOJ_TRACING_ENABLED` | Enables OpenTelemetry tracing when set to `true`. |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | OTLP/HTTP trace endpoint, such as `http://collector:4318/v1/traces`. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Generic OTLP endpoint fallback when the traces endpoint is not set. |
-| `OTEL_SERVICE_NAME` / `OTEL_RESOURCE_ATTRIBUTES` | Optional service name override and resource attributes. |
+Copy [deploy/env/api.env.example](deploy/env/api.env.example) to supply them.
+The production overlay and its required variables are documented in
+[docs/v2-deploy.md](docs/v2-deploy.md).
 
 ## API
 
@@ -365,14 +344,14 @@ Before exposing SOJ outside local development:
 - Use production PostgreSQL, Redis, and S3-compatible object storage credentials.
 - Keep `/metrics` on a private network or protect it at the ingress layer.
 - Keep tracing backends and collectors private; tracing is off by default and must be enabled
-  with `SOJ_TRACING_ENABLED=true`.
+  with `tracing.enabled: true`.
 - Run `soj-judge-agent` without business database credentials.
-- Treat `SOJ_JUDGE_SANDBOX_BACKEND=docker` with Docker runtime `runsc`/gVisor as the production
+- Treat `judge.sandbox_backend: docker` with the `runsc`/gVisor runtime as the production
   sandbox target.
-- Set `SOJ_ENV=prod` and `SOJ_DOCKER_RUNNER_RUNTIME=runsc` on production judge nodes; startup
+- Set `env: prod` and `agent.runner.runtime: runsc` on production judge nodes; startup
   fails if runsc or the no-op runner probe is unavailable.
-- Pin `SOJ_DOCKER_RUNNER_IMAGE_GO` and `SOJ_DOCKER_RUNNER_IMAGE_CPP17` to release or `sha-*`
-  runner image tags.
+- Pin the runner images (`agent.runner.go_image` and `agent.runner.cpp17_image`) to release or
+  `sha-*` tags.
 - Make GHCR runner packages public or log in to `ghcr.io` on private judge nodes before pulling.
 - Do not use the `process` sandbox backend outside development, tests, and local real-code smoke.
 - Do not reuse the local fake language seed as production language data.

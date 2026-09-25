@@ -29,12 +29,16 @@ import (
 func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("soj-api", flag.ContinueOnError)
 	fs.SetOutput(stdout)
+	configFlags := config.RegisterFlags(fs)
 	addr := fs.String("addr", "", "HTTP listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if configFlags.Print {
+		return config.Print(stdout, configFlags.File)
+	}
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(config.Options{Role: config.RoleAPI, File: configFlags.File})
 	if err != nil {
 		return err
 	}
