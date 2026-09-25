@@ -593,12 +593,18 @@ func int64Query(c *gin.Context, raw string, code string) (int64, bool) {
 	return value, true
 }
 
+// maxPage bounds the offset arithmetic below. page and page_size are both
+// int32 and repositories derive Offset as (page-1)*page_size, so an unbounded
+// page would overflow int32 into a negative SQL OFFSET (a 500 instead of a
+// 400).
+const maxPage = 1_000_000
+
 func pageQuery(c *gin.Context) (int32, int32, bool) {
 	page := int32(1)
 	if raw := c.Query("page"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 {
-			httpapi.Error(c, apperror.BadRequest("invalid_page", "page must be a positive integer"))
+		parsed, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || parsed <= 0 || parsed > maxPage {
+			httpapi.Error(c, apperror.BadRequest("invalid_page", "page must be between 1 and 1000000"))
 			return 0, 0, false
 		}
 		page = int32(parsed)
