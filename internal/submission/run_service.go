@@ -42,6 +42,11 @@ type RunService struct {
 	runTimeout time.Duration
 	maxStdin   int
 	maxPerUser int
+	// runCtx is the service's own lifecycle context, derived once from
+	// RunServiceOptions.Context. It is the one context the struct is allowed to
+	// hold: inline executions are started from a request goroutine but outlive
+	// the request, so they cannot inherit its cancellation. Close cancels it ahead
+	// of waiting on runWG, which is what unblocks the in-flight runs.
 	runCtx     context.Context
 	runCancel  context.CancelFunc
 	runSlots   chan struct{}
@@ -63,6 +68,9 @@ type RunServiceOptions struct {
 	Now     func() time.Time
 	Wait    time.Duration
 	Timeout time.Duration
+	// Context is the parent of the service's lifecycle context, not a per-request
+	// context: inline runs outlive the request that admitted them, so cancelling
+	// this value is what stops them. RunService.Close owns the shutdown sequence.
 	Context context.Context
 	// Parallelism caps inline executions in this process. It is irrelevant in
 	// queued mode, where the agent owns capacity.

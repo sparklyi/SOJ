@@ -42,6 +42,10 @@ func newRunEngine(cfg config.Config, languages *language.Catalog, logger *slog.L
 	case strings.HasPrefix(endpoint, judge.LocalEndpointPrefix):
 		return newLocalRunEngine(cfg, languages, logger)
 	case strings.HasPrefix(endpoint, judge.AgentEndpointPrefix):
+		// nil, nil is the enqueue answer, not an oversight: submission.RunService
+		// decides inline versus queued by testing this interface for nil
+		// (run_service.go: `inline := s.runner != nil`), so an empty stand-in engine
+		// would silently turn queued runs into in-process executions.
 		return nil, nil
 	default:
 		return unsupportedJudgeEndpoint(endpoint), nil

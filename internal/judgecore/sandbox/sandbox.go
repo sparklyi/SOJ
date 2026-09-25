@@ -277,8 +277,10 @@ func outputSizeExceeded(output commandOutput, limit int64) bool {
 // can keep shell syntax while the sandbox still ends up exec'ing the real
 // binary, which is what makes the run timeout and its signal report accurate.
 //
-// Memory is deliberately not limited here: the process backend is dev-only, and
-// the docker backend applies limits at the container level.
+// Memory is deliberately not bounded here, and `ulimit -v` is not the missing
+// piece: the process backend only runs in dev/test environments (see
+// SelectBackend), macOS sh rejects `ulimit -v`, and the docker backend enforces
+// memory at the container level.
 func resourceWrappedArgs(args []string) []string {
 	wrapped := make([]string, 0, 4+len(args))
 	wrapped = append(wrapped, "sh", "-c", `exec "$@"`, "soj-command")
