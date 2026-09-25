@@ -15,7 +15,13 @@ COPY . .
 # once instead of once per service. The runtime stage below picks its binary by
 # COMMAND; the argument is deliberately not read here, or it would split this
 # stage into one copy per service and bring the duplicate builds back.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/...
+#
+# The build cache lives in a cache mount, not in the layer: it is hundreds of
+# megabytes, and it can only be reused while the source tree is byte-identical,
+# so exporting it to the CI cache costs more than it saves. The mount still
+# makes repeated local builds incremental.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/...
 
 FROM alpine:3.22
 
