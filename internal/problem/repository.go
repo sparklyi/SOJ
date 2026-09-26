@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -215,8 +216,8 @@ func (r *PostgresRepository) CreateTestcaseSet(ctx context.Context, problemID in
 	return createTestcaseSet(ctx, r.queries, problemID, version, storageKey, checksum, sizeBytes, caseCount, createdBy)
 }
 
-func (r *PostgresRepository) GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error) {
-	set, err := r.queries.GetCurrentReadyTestcaseSet(ctx, problemID)
+func (r *PostgresRepository) GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error) {
+	set, err := r.queries.GetCurrentTestcaseSet(ctx, problemID)
 	return testcaseSetFromDB(set), mapDBErr(err)
 }
 
@@ -238,16 +239,12 @@ func (r *PostgresRepository) CompleteProblemCheckRun(ctx context.Context, input 
 	return completeProblemCheckRun(ctx, r.queries, input)
 }
 
-func (r *PostgresRepository) CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
-	return createProblemCheckFinding(ctx, r.queries, input)
+func (r *PostgresRepository) CreateProblemCheckFindings(ctx context.Context, inputs []CreateProblemCheckFindingInput) ([]ProblemCheckFindingRecord, error) {
+	return createProblemCheckFindings(ctx, r.queries, inputs)
 }
 
 func (r *PostgresRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
 	return listProblemCheckFindings(ctx, r.queries, runID)
-}
-
-func (r *PostgresRepository) CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error) {
-	return createArtifact(ctx, r.queries, artifact)
 }
 
 func (r *PostgresRepository) GetProblemStats(ctx context.Context, problemID int64) (ProblemStats, error) {
@@ -272,6 +269,22 @@ func (r *PostgresRepository) ListProblemSubmissionCounts(ctx context.Context, pr
 		}
 	}
 	return counts, nil
+}
+
+// ListProblemTagsByProblemIDs batches tag lookups for a page of problems.
+func (r *PostgresRepository) ListProblemTagsByProblemIDs(ctx context.Context, problemIDs []int64) (map[int64][]Tag, error) {
+	if len(problemIDs) == 0 {
+		return map[int64][]Tag{}, nil
+	}
+	rows, err := r.queries.ListProblemTagsByProblemIDs(ctx, problemIDs)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	grouped := make(map[int64][]Tag, len(problemIDs))
+	for _, row := range rows {
+		grouped[row.ProblemID] = append(grouped[row.ProblemID], Tag{ID: row.ID, Name: row.Name, Slug: row.Slug})
+	}
+	return grouped, nil
 }
 
 func (r *PostgresRepository) ListProblemsForReview(ctx context.Context, filter ProblemReviewQueueFilter) ([]ProblemRecord, int64, error) {
@@ -472,8 +485,8 @@ func (r *txRepository) CreateTestcaseSet(ctx context.Context, problemID int64, v
 	return createTestcaseSet(ctx, r.queries, problemID, version, storageKey, checksum, sizeBytes, caseCount, createdBy)
 }
 
-func (r *txRepository) GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error) {
-	set, err := r.queries.GetCurrentReadyTestcaseSet(ctx, problemID)
+func (r *txRepository) GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error) {
+	set, err := r.queries.GetCurrentTestcaseSet(ctx, problemID)
 	return testcaseSetFromDB(set), mapDBErr(err)
 }
 
@@ -495,16 +508,12 @@ func (r *txRepository) CompleteProblemCheckRun(ctx context.Context, input Comple
 	return completeProblemCheckRun(ctx, r.queries, input)
 }
 
-func (r *txRepository) CreateProblemCheckFinding(ctx context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
-	return createProblemCheckFinding(ctx, r.queries, input)
+func (r *txRepository) CreateProblemCheckFindings(ctx context.Context, inputs []CreateProblemCheckFindingInput) ([]ProblemCheckFindingRecord, error) {
+	return createProblemCheckFindings(ctx, r.queries, inputs)
 }
 
 func (r *txRepository) ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error) {
 	return listProblemCheckFindings(ctx, r.queries, runID)
-}
-
-func (r *txRepository) CreateArtifact(ctx context.Context, artifact ArtifactRecord) (ArtifactRecord, error) {
-	return createArtifact(ctx, r.queries, artifact)
 }
 
 func (r *txRepository) GetProblemStats(ctx context.Context, problemID int64) (ProblemStats, error) {
@@ -515,7 +524,6 @@ func (r *txRepository) GetProblemStats(ctx context.Context, problemID int64) (Pr
 func updateProblem(ctx context.Context, q *db.Queries, id int64, input UpdateProblemInput) (ProblemRecord, error) {
 	p, err := q.UpdateProblem(ctx, db.UpdateProblemParams{
 		Title:         textPtr(input.Title),
-		Slug:          textPtr(input.Slug),
 		Difficulty:    textPtr(input.Difficulty),
 		Visibility:    textPtr(input.Visibility),
 		Status:        textPtr(input.Status),
@@ -527,9 +535,13 @@ func updateProblem(ctx context.Context, q *db.Queries, id int64, input UpdatePro
 }
 
 func createProblemStatement(ctx context.Context, q *db.Queries, problemID int64, version int32, input CreateStatementInput) (Statement, error) {
-	samples := input.Samples
-	if len(samples) == 0 {
-		samples = []byte("[]")
+	samples := []byte("[]")
+	if len(input.Samples) > 0 {
+		marshaled, err := json.Marshal(input.Samples)
+		if err != nil {
+			return Statement{}, err
+		}
+		samples = marshaled
 	}
 	statement, err := q.CreateProblemStatement(ctx, db.CreateProblemStatementParams{
 		ProblemID:         problemID,
@@ -584,7 +596,6 @@ func createTestcaseSet(ctx context.Context, q *db.Queries, problemID int64, vers
 		ChecksumSha256: checksum,
 		SizeBytes:      sizeBytes,
 		CaseCount:      caseCount,
-		Status:         TestcaseStatusReady,
 		IsCurrent:      true,
 		CreatedBy:      createdBy,
 	})
@@ -616,17 +627,58 @@ func completeProblemCheckRun(ctx context.Context, q *db.Queries, input CompleteP
 	return problemCheckRunFromDB(run), mapDBErr(err)
 }
 
-func createProblemCheckFinding(ctx context.Context, q *db.Queries, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
-	finding, err := q.CreateProblemCheckFinding(ctx, db.CreateProblemCheckFindingParams{
-		RunID:       input.RunID,
-		Severity:    input.Severity,
-		Code:        input.Code,
-		Message:     input.Message,
-		CaseIndex:   int4Value(input.CaseIndex),
-		TestcaseKey: textValue(input.TestcaseKey),
-		Details:     jsonbArg(input.Details),
-	})
-	return problemCheckFindingFromDB(finding), mapDBErr(err)
+func createProblemCheckFindings(ctx context.Context, q *db.Queries, inputs []CreateProblemCheckFindingInput) ([]ProblemCheckFindingRecord, error) {
+	if len(inputs) == 0 {
+		return []ProblemCheckFindingRecord{}, nil
+	}
+	payload, err := json.Marshal(toProblemCheckFindingJSON(inputs))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := q.CreateProblemCheckFindings(ctx, payload)
+	if err != nil {
+		return nil, mapDBErr(err)
+	}
+	findings := make([]ProblemCheckFindingRecord, 0, len(rows))
+	for _, row := range rows {
+		findings = append(findings, problemCheckFindingFromDB(row))
+	}
+	sort.Slice(findings, func(i, j int) bool { return findings[i].ID < findings[j].ID })
+	return findings, nil
+}
+
+// problemCheckFindingJSON is the wire shape handed to the batched JSONB insert.
+type problemCheckFindingJSON struct {
+	RunID       int64           `json:"run_id"`
+	Severity    string          `json:"severity"`
+	Code        string          `json:"code"`
+	Message     string          `json:"message"`
+	CaseIndex   *int32          `json:"case_index,omitempty"`
+	TestcaseKey *string         `json:"testcase_key,omitempty"`
+	Details     json.RawMessage `json:"details"`
+}
+
+func toProblemCheckFindingJSON(inputs []CreateProblemCheckFindingInput) []problemCheckFindingJSON {
+	rows := make([]problemCheckFindingJSON, 0, len(inputs))
+	for _, input := range inputs {
+		row := problemCheckFindingJSON{
+			RunID:    input.RunID,
+			Severity: input.Severity,
+			Code:     input.Code,
+			Message:  input.Message,
+			Details:  jsonbArg(input.Details),
+		}
+		if input.CaseIndex > 0 {
+			caseIndex := input.CaseIndex
+			row.CaseIndex = &caseIndex
+		}
+		if input.TestcaseKey != "" {
+			testcaseKey := input.TestcaseKey
+			row.TestcaseKey = &testcaseKey
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func listProblemCheckFindings(ctx context.Context, q *db.Queries, runID int64) ([]ProblemCheckFindingRecord, error) {
@@ -639,23 +691,6 @@ func listProblemCheckFindings(ctx context.Context, q *db.Queries, runID int64) (
 		findings = append(findings, problemCheckFindingFromDB(row))
 	}
 	return findings, nil
-}
-
-func createArtifact(ctx context.Context, q *db.Queries, artifact ArtifactRecord) (ArtifactRecord, error) {
-	created, err := q.CreateArtifact(ctx, db.CreateArtifactParams{
-		OwnerType:      artifact.OwnerType,
-		OwnerID:        artifact.OwnerID,
-		Kind:           artifact.Kind,
-		StorageKey:     artifact.StorageKey,
-		ChecksumSha256: artifact.ChecksumSHA256,
-		SizeBytes:      artifact.SizeBytes,
-		ContentType:    artifact.ContentType,
-	})
-	if err != nil {
-		return ArtifactRecord{}, mapDBErr(err)
-	}
-	artifact.ID = created.ID
-	return artifact, nil
 }
 
 func problemFromDB(p db.Problem) ProblemRecord {
@@ -690,81 +725,77 @@ func problemReviewEventFromDB(event db.ProblemReviewEvent) ProblemReviewEvent {
 
 func problemFromGetRow(p db.GetProblemByIDRow) ProblemRecord {
 	return ProblemRecord{
-		ID:                    p.ID,
-		OwnerUserID:           p.OwnerUserID,
-		Title:                 p.Title,
-		Slug:                  p.Slug,
-		Difficulty:            p.Difficulty,
-		Visibility:            p.Visibility,
-		Status:                p.Status,
-		TimeLimitMS:           p.TimeLimitMs,
-		MemoryLimitKB:         p.MemoryLimitKb,
-		CurrentStatementID:    p.CurrentStatementID,
-		CurrentTestcaseSetID:  p.CurrentTestcaseSetID,
-		CurrentTestcaseStatus: p.CurrentTestcaseStatus,
-		CreatedAt:             p.CreatedAt.Time,
-		UpdatedAt:             p.UpdatedAt.Time,
-		PublishedAt:           p.PublishedAt.Time,
+		ID:                   p.ID,
+		OwnerUserID:          p.OwnerUserID,
+		Title:                p.Title,
+		Slug:                 p.Slug,
+		Difficulty:           p.Difficulty,
+		Visibility:           p.Visibility,
+		Status:               p.Status,
+		TimeLimitMS:          p.TimeLimitMs,
+		MemoryLimitKB:        p.MemoryLimitKb,
+		CurrentStatementID:   p.CurrentStatementID,
+		CurrentTestcaseSetID: p.CurrentTestcaseSetID,
+		CreatedAt:            p.CreatedAt.Time,
+		UpdatedAt:            p.UpdatedAt.Time,
+		PublishedAt:          p.PublishedAt.Time,
 	}
 }
 
 func problemFromListRow(p db.ListProblemsRow) ProblemRecord {
 	return ProblemRecord{
-		ID:                    p.ID,
-		OwnerUserID:           p.OwnerUserID,
-		Title:                 p.Title,
-		Slug:                  p.Slug,
-		Difficulty:            p.Difficulty,
-		Visibility:            p.Visibility,
-		Status:                p.Status,
-		TimeLimitMS:           p.TimeLimitMs,
-		MemoryLimitKB:         p.MemoryLimitKb,
-		CurrentStatementID:    p.CurrentStatementID,
-		CurrentTestcaseSetID:  p.CurrentTestcaseSetID,
-		CurrentTestcaseStatus: p.CurrentTestcaseStatus,
-		CreatedAt:             p.CreatedAt.Time,
-		UpdatedAt:             p.UpdatedAt.Time,
-		PublishedAt:           p.PublishedAt.Time,
+		ID:                   p.ID,
+		OwnerUserID:          p.OwnerUserID,
+		Title:                p.Title,
+		Slug:                 p.Slug,
+		Difficulty:           p.Difficulty,
+		Visibility:           p.Visibility,
+		Status:               p.Status,
+		TimeLimitMS:          p.TimeLimitMs,
+		MemoryLimitKB:        p.MemoryLimitKb,
+		CurrentStatementID:   p.CurrentStatementID,
+		CurrentTestcaseSetID: p.CurrentTestcaseSetID,
+		CreatedAt:            p.CreatedAt.Time,
+		UpdatedAt:            p.UpdatedAt.Time,
+		PublishedAt:          p.PublishedAt.Time,
 	}
 }
 
 func problemFromListCursorRow(p db.ListProblemsByCursorRow) ProblemRecord {
 	return ProblemRecord{
-		ID:                    p.ID,
-		OwnerUserID:           p.OwnerUserID,
-		Title:                 p.Title,
-		Slug:                  p.Slug,
-		Difficulty:            p.Difficulty,
-		Visibility:            p.Visibility,
-		Status:                p.Status,
-		TimeLimitMS:           p.TimeLimitMs,
-		MemoryLimitKB:         p.MemoryLimitKb,
-		CurrentStatementID:    p.CurrentStatementID,
-		CurrentTestcaseSetID:  p.CurrentTestcaseSetID,
-		CurrentTestcaseStatus: p.CurrentTestcaseStatus,
-		CreatedAt:             p.CreatedAt.Time,
-		UpdatedAt:             p.UpdatedAt.Time,
-		PublishedAt:           p.PublishedAt.Time,
+		ID:                   p.ID,
+		OwnerUserID:          p.OwnerUserID,
+		Title:                p.Title,
+		Slug:                 p.Slug,
+		Difficulty:           p.Difficulty,
+		Visibility:           p.Visibility,
+		Status:               p.Status,
+		TimeLimitMS:          p.TimeLimitMs,
+		MemoryLimitKB:        p.MemoryLimitKb,
+		CurrentStatementID:   p.CurrentStatementID,
+		CurrentTestcaseSetID: p.CurrentTestcaseSetID,
+		CreatedAt:            p.CreatedAt.Time,
+		UpdatedAt:            p.UpdatedAt.Time,
+		PublishedAt:          p.PublishedAt.Time,
 	}
 }
 
 func problemFromLockRow(p db.LockProblemForUpdateRow) ProblemRecord {
 	return ProblemRecord{
-		ID:                    p.ID,
-		OwnerUserID:           p.OwnerUserID,
-		Title:                 p.Title,
-		Slug:                  p.Slug,
-		Difficulty:            p.Difficulty,
-		Visibility:            p.Visibility,
-		Status:                p.Status,
-		TimeLimitMS:           p.TimeLimitMs,
-		MemoryLimitKB:         p.MemoryLimitKb,
-		CurrentStatementID:    p.CurrentStatementID,
-		CurrentTestcaseSetID:  p.CurrentTestcaseSetID,
-		CurrentTestcaseStatus: p.CurrentTestcaseStatus,
-		CreatedAt:             p.CreatedAt.Time,
-		UpdatedAt:             p.UpdatedAt.Time,
-		PublishedAt:           p.PublishedAt.Time,
+		ID:                   p.ID,
+		OwnerUserID:          p.OwnerUserID,
+		Title:                p.Title,
+		Slug:                 p.Slug,
+		Difficulty:           p.Difficulty,
+		Visibility:           p.Visibility,
+		Status:               p.Status,
+		TimeLimitMS:          p.TimeLimitMs,
+		MemoryLimitKB:        p.MemoryLimitKb,
+		CurrentStatementID:   p.CurrentStatementID,
+		CurrentTestcaseSetID: p.CurrentTestcaseSetID,
+		CreatedAt:            p.CreatedAt.Time,
+		UpdatedAt:            p.UpdatedAt.Time,
+		PublishedAt:          p.PublishedAt.Time,
 	}
 }
 
@@ -794,7 +825,6 @@ func testcaseSetFromDB(set db.TestcaseSet) TestcaseSetRecord {
 		ChecksumSHA256: set.ChecksumSha256,
 		SizeBytes:      set.SizeBytes,
 		CaseCount:      set.CaseCount,
-		Status:         set.Status,
 		IsCurrent:      set.IsCurrent,
 		CreatedBy:      set.CreatedBy,
 		CreatedAt:      set.CreatedAt.Time,
@@ -915,13 +945,6 @@ func int4Ptr(value *int32) pgtype.Int4 {
 		return pgtype.Int4{}
 	}
 	return pgtype.Int4{Int32: *value, Valid: true}
-}
-
-func int4Value(value int32) pgtype.Int4 {
-	if value <= 0 {
-		return pgtype.Int4{}
-	}
-	return pgtype.Int4{Int32: value, Valid: true}
 }
 
 func int4FromDB(value pgtype.Int4) int32 {

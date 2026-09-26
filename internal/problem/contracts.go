@@ -2,7 +2,6 @@ package problem
 
 import (
 	"context"
-	"time"
 )
 
 type Problem struct {
@@ -19,18 +18,7 @@ type TestcaseSet struct {
 	ID        int64
 	ProblemID int64
 	Version   int
-	Status    string
 	Cases     []Testcase
-}
-
-type Testcase struct {
-	ID               int64
-	InputArtifactID  int64
-	OutputArtifactID int64
-	InputKey         string
-	OutputKey        string
-	TimeLimit        time.Duration
-	MemoryKB         int64
 }
 
 type Reader interface {

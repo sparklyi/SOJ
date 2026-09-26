@@ -1,21 +1,15 @@
 package problem
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -36,8 +30,6 @@ const (
 	StatusPublished = "published"
 	StatusArchived  = "archived"
 
-	TestcaseStatusReady = "ready"
-
 	ProblemCheckStatusQueued    = "queued"
 	ProblemCheckStatusRunning   = "running"
 	ProblemCheckStatusCompleted = "completed"
@@ -50,23 +42,22 @@ const (
 )
 
 type ProblemRecord struct {
-	ID                    int64     `json:"id"`
-	OwnerUserID           int64     `json:"owner_user_id"`
-	Title                 string    `json:"title"`
-	Slug                  string    `json:"slug"`
-	Difficulty            string    `json:"difficulty"`
-	Visibility            string    `json:"visibility"`
-	Status                string    `json:"status"`
-	TimeLimitMS           int32     `json:"time_limit_ms"`
-	MemoryLimitKB         int32     `json:"memory_limit_kb"`
-	CurrentStatementID    int64     `json:"current_statement_id,omitempty"`
-	CurrentTestcaseSetID  int64     `json:"current_testcase_set_id,omitempty"`
-	CurrentTestcaseStatus string    `json:"current_testcase_status,omitempty"`
-	SubmissionCount       int64     `json:"submission_count"`
-	AcceptedCount         int64     `json:"accepted_count"`
-	CreatedAt             time.Time `json:"created_at,omitempty"`
-	UpdatedAt             time.Time `json:"updated_at,omitempty"`
-	PublishedAt           time.Time `json:"published_at,omitempty"`
+	ID                   int64     `json:"id"`
+	OwnerUserID          int64     `json:"owner_user_id"`
+	Title                string    `json:"title"`
+	Slug                 string    `json:"slug"`
+	Difficulty           string    `json:"difficulty"`
+	Visibility           string    `json:"visibility"`
+	Status               string    `json:"status"`
+	TimeLimitMS          int32     `json:"time_limit_ms"`
+	MemoryLimitKB        int32     `json:"memory_limit_kb"`
+	CurrentStatementID   int64     `json:"current_statement_id,omitempty"`
+	CurrentTestcaseSetID int64     `json:"current_testcase_set_id,omitempty"`
+	SubmissionCount      int64     `json:"submission_count"`
+	AcceptedCount        int64     `json:"accepted_count"`
+	CreatedAt            time.Time `json:"created_at,omitempty"`
+	UpdatedAt            time.Time `json:"updated_at,omitempty"`
+	PublishedAt          time.Time `json:"published_at,omitempty"`
 }
 
 type Statement struct {
@@ -98,21 +89,37 @@ type TestcaseSetRecord struct {
 	ChecksumSHA256 string    `json:"checksum_sha256"`
 	SizeBytes      int64     `json:"size_bytes"`
 	CaseCount      int32     `json:"case_count"`
-	Status         string    `json:"status"`
 	IsCurrent      bool      `json:"is_current"`
 	CreatedBy      int64     `json:"created_by"`
 	CreatedAt      time.Time `json:"created_at,omitempty"`
 }
 
-type ArtifactRecord struct {
-	ID             int64
-	OwnerType      string
-	OwnerID        int64
-	Kind           string
-	StorageKey     string
-	ChecksumSHA256 string
-	SizeBytes      int64
-	ContentType    string
+// TestcaseSetResponse is the authoring-facing projection of a stored testcase
+// set. Storage keys stay server-side; upload responses additionally carry the
+// transient validation warnings.
+type TestcaseSetResponse struct {
+	ID             int64     `json:"id"`
+	ProblemID      int64     `json:"problem_id"`
+	Version        int32     `json:"version"`
+	CaseCount      int32     `json:"case_count"`
+	SizeBytes      int64     `json:"size_bytes"`
+	ChecksumSHA256 string    `json:"checksum_sha256"`
+	IsCurrent      bool      `json:"is_current"`
+	Warnings       []Finding `json:"warnings,omitempty"`
+	CreatedAt      time.Time `json:"created_at,omitempty"`
+}
+
+func testcaseSetResponseFromRecord(record TestcaseSetRecord) TestcaseSetResponse {
+	return TestcaseSetResponse{
+		ID:             record.ID,
+		ProblemID:      record.ProblemID,
+		Version:        record.Version,
+		CaseCount:      record.CaseCount,
+		SizeBytes:      record.SizeBytes,
+		ChecksumSHA256: record.ChecksumSHA256,
+		IsCurrent:      record.IsCurrent,
+		CreatedAt:      record.CreatedAt,
+	}
 }
 
 type ProblemStats struct {
@@ -158,7 +165,7 @@ type ProblemResponse struct {
 
 type CreateProblemInput struct {
 	Title         string   `json:"title"`
-	Slug          string   `json:"slug"`
+	Slug          string   `json:"-"`
 	Difficulty    string   `json:"difficulty"`
 	Visibility    string   `json:"visibility"`
 	TimeLimitMS   int32    `json:"time_limit_ms"`
@@ -168,7 +175,6 @@ type CreateProblemInput struct {
 
 type UpdateProblemInput struct {
 	Title         *string  `json:"title"`
-	Slug          *string  `json:"slug"`
 	Difficulty    *string  `json:"difficulty"`
 	Visibility    *string  `json:"visibility"`
 	Status        *string  `json:"-"`
@@ -212,14 +218,22 @@ type ProblemCursorPage struct {
 }
 
 type CreateStatementInput struct {
-	Title             string          `json:"title"`
-	Description       string          `json:"description"`
-	InputDescription  string          `json:"input_description"`
-	OutputDescription string          `json:"output_description"`
-	Samples           json.RawMessage `json:"samples"`
-	Hint              string          `json:"hint"`
-	Source            string          `json:"source"`
-	MakeCurrent       bool            `json:"make_current"`
+	Title             string        `json:"-"`
+	Description       string        `json:"description"`
+	InputDescription  string        `json:"input_description"`
+	OutputDescription string        `json:"output_description"`
+	Samples           []SampleInput `json:"samples"`
+	Hint              string        `json:"hint"`
+	Source            string        `json:"source"`
+	MakeCurrent       bool          `json:"make_current"`
+}
+
+// SampleInput is one typed statement sample. The write boundary rejects empty
+// input/output fields and oversized single fields.
+type SampleInput struct {
+	Input       string `json:"input"`
+	Output      string `json:"output"`
+	Explanation string `json:"explanation,omitempty"`
 }
 
 type AssignTagsInput struct {
@@ -232,22 +246,20 @@ type TagInput struct {
 }
 
 type UploadTestcaseInput struct {
-	Content        []byte `json:"-"`
-	CaseCount      int32  `json:"case_count"`
-	ChecksumSHA256 string `json:"checksum_sha256"`
-	ContentType    string `json:"content_type"`
+	Source      io.ReaderAt
+	Size        int64
+	ContentType string
 }
 
 type ProblemCheckSummary struct {
-	FindingCount      int   `json:"finding_count"`
-	ErrorCount        int   `json:"error_count"`
-	WarningCount      int   `json:"warning_count"`
-	InfoCount         int   `json:"info_count"`
-	ExpectedCaseCount int32 `json:"expected_case_count"`
-	CaseCount         int   `json:"case_count"`
-	StorageReadable   bool  `json:"storage_readable"`
-	ZipReadable       bool  `json:"zip_readable"`
-	Valid             bool  `json:"valid"`
+	FindingCount    int  `json:"finding_count"`
+	ErrorCount      int  `json:"error_count"`
+	WarningCount    int  `json:"warning_count"`
+	InfoCount       int  `json:"info_count"`
+	CaseCount       int  `json:"case_count"`
+	StorageReadable bool `json:"storage_readable"`
+	ZipReadable     bool `json:"zip_readable"`
+	Valid           bool `json:"valid"`
 }
 
 type ProblemCheckRun struct {
@@ -286,13 +298,15 @@ type ProblemCheckResult struct {
 type ProblemAuthoringBlocker struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Step    string `json:"step"`
 }
 
 type ProblemAuthoringState struct {
 	Problem     ProblemResponse           `json:"problem"`
 	Statement   *Statement                `json:"statement"`
-	TestcaseSet *TestcaseSetRecord        `json:"testcase_set"`
+	TestcaseSet *TestcaseSetResponse      `json:"testcase_set"`
 	LatestCheck *ProblemCheckRun          `json:"latest_check"`
+	Flow        ProblemAuthoringFlow      `json:"flow"`
 	Publishable bool                      `json:"publishable"`
 	Blockers    []ProblemAuthoringBlocker `json:"blockers"`
 }
@@ -364,7 +378,7 @@ func (s *Service) AssignTags(ctx context.Context, actor auth.Actor, problemID in
 	return s.authoring.AssignTags(ctx, actor, problemID, input)
 }
 
-func (s *Service) UploadTestcaseArchive(ctx context.Context, actor auth.Actor, problemID int64, input UploadTestcaseInput) (TestcaseSetRecord, error) {
+func (s *Service) UploadTestcaseArchive(ctx context.Context, actor auth.Actor, problemID int64, input UploadTestcaseInput) (TestcaseSetRecord, []Finding, error) {
 	return s.authoring.UploadTestcaseArchive(ctx, actor, problemID, input)
 }
 
@@ -441,187 +455,12 @@ type problemCheckFindingDraft struct {
 	details     json.RawMessage
 }
 
-type problemCheckArchiveValidationResult struct {
-	findings    []problemCheckFindingDraft
-	caseCount   int
-	zipReadable bool
-}
-
-func validateProblemCheckArchive(data []byte, set TestcaseSetRecord) problemCheckArchiveValidationResult {
-	result := problemCheckArchiveValidationResult{}
-	if err := verifyTestcaseArchiveContents(data, defaultTestcaseArchiveLimits); err != nil {
-		code := "testcase.zip_invalid"
-		message := "testcase archive must be a valid zip file"
-		var resourceErr *testcaseArchiveResourceError
-		if errors.As(err, &resourceErr) {
-			code = resourceErr.code
-			message = resourceErr.message
-		}
-		result.findings = append(result.findings, problemCheckFindingDraft{
-			severity: ProblemCheckSeverityError,
-			code:     code,
-			message:  message,
-			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
-		})
-		return result
-	}
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		result.findings = append(result.findings, problemCheckFindingDraft{
-			severity: ProblemCheckSeverityError,
-			code:     "testcase.zip_invalid",
-			message:  "testcase archive must be a valid zip file",
-			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
-		})
-		return result
-	}
-	result.zipReadable = true
-
-	inputs := map[string]string{}
-	outputs := map[string]string{}
-	for _, file := range reader.File {
-		if file.FileInfo().IsDir() {
-			continue
-		}
-		name := path.Base(file.Name)
-		lower := strings.ToLower(name)
-		matches := caseNameRE.FindStringSubmatch(lower)
-		if len(matches) != 2 {
-			continue
-		}
-		if strings.HasPrefix(lower, "input") {
-			inputs[matches[1]] = name
-		} else {
-			outputs[matches[1]] = name
-		}
-	}
-
-	if len(inputs) == 0 && len(outputs) == 0 {
-		result.findings = append(result.findings, problemCheckFindingDraft{
-			severity: ProblemCheckSeverityError,
-			code:     "testcase.archive_empty",
-			message:  "testcase archive has no input/output pairs",
-			details:  problemCheckDetails(map[string]any{"storage_key": set.StorageKey}),
-		})
-	}
-
-	ids := sortedProblemCheckCaseIDs(inputs)
-	for _, id := range ids {
-		if _, ok := outputs[id]; ok {
-			result.caseCount++
-			continue
-		}
-		result.findings = append(result.findings, problemCheckFindingDraft{
-			severity:    ProblemCheckSeverityError,
-			code:        "testcase.output_missing",
-			message:     "each input must have a matching output",
-			caseIndex:   problemCheckCaseIndex(id),
-			testcaseKey: inputs[id],
-			details:     problemCheckDetails(map[string]any{"case_id": id, "input": inputs[id]}),
-		})
-	}
-
-	ids = sortedProblemCheckCaseIDs(outputs)
-	for _, id := range ids {
-		if _, ok := inputs[id]; ok {
-			continue
-		}
-		result.findings = append(result.findings, problemCheckFindingDraft{
-			severity:    ProblemCheckSeverityError,
-			code:        "testcase.input_missing",
-			message:     "each output must have a matching input",
-			caseIndex:   problemCheckCaseIndex(id),
-			testcaseKey: outputs[id],
-			details:     problemCheckDetails(map[string]any{"case_id": id, "output": outputs[id]}),
-		})
-	}
-
-	if int32(result.caseCount) != set.CaseCount {
-		result.findings = append(result.findings, problemCheckFindingDraft{
-			severity: ProblemCheckSeverityError,
-			code:     "testcase.case_count_mismatch",
-			message:  "case_count does not match input/output pairs",
-			details: problemCheckDetails(map[string]any{
-				"expected_case_count": set.CaseCount,
-				"actual_case_count":   result.caseCount,
-			}),
-		})
-	}
-	return result
-}
-
-func validateProblemCheckStatementSamples(statement Statement) []problemCheckFindingDraft {
-	samplesJSON := strings.TrimSpace(string(statement.Samples))
-	if samplesJSON == "" {
-		return nil
-	}
-	if !strings.HasPrefix(samplesJSON, "[") {
-		return []problemCheckFindingDraft{statementSamplesInvalidFinding(0)}
-	}
-
-	var samples []map[string]json.RawMessage
-	if err := json.Unmarshal(statement.Samples, &samples); err != nil {
-		return []problemCheckFindingDraft{statementSamplesInvalidFinding(0)}
-	}
-	for index, sample := range samples {
-		if !problemCheckSampleStringField(sample, "input") || !problemCheckSampleStringField(sample, "output") {
-			return []problemCheckFindingDraft{statementSamplesInvalidFinding(index + 1)}
-		}
-	}
-	return nil
-}
-
-func statementSamplesInvalidFinding(sampleIndex int) problemCheckFindingDraft {
-	details := map[string]any{}
-	if sampleIndex > 0 {
-		details["sample_index"] = sampleIndex
-	}
-	return problemCheckFindingDraft{
-		severity: ProblemCheckSeverityError,
-		code:     "statement.samples_invalid",
-		message:  "statement samples must be a JSON array with string input and output fields",
-		details:  problemCheckDetails(details),
-	}
-}
-
-func problemCheckSampleStringField(sample map[string]json.RawMessage, key string) bool {
-	raw, ok := sample[key]
-	if !ok {
-		return false
-	}
-	var value string
-	return json.Unmarshal(raw, &value) == nil
-}
-
-func sortedProblemCheckCaseIDs(files map[string]string) []string {
-	ids := make([]string, 0, len(files))
-	for id := range files {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool {
-		if len(ids[i]) != len(ids[j]) {
-			return len(ids[i]) < len(ids[j])
-		}
-		return ids[i] < ids[j]
-	})
-	return ids
-}
-
-func problemCheckCaseIndex(id string) int32 {
-	value, err := strconv.ParseInt(id, 10, 32)
-	if err != nil {
-		return 0
-	}
-	return int32(value)
-}
-
-func problemCheckSummary(expectedCaseCount int32, caseCount int, storageReadable, zipReadable bool, findings []problemCheckFindingDraft) ProblemCheckSummary {
+func problemCheckSummary(caseCount int, storageReadable, zipReadable bool, findings []problemCheckFindingDraft) ProblemCheckSummary {
 	summary := ProblemCheckSummary{
-		FindingCount:      len(findings),
-		ExpectedCaseCount: expectedCaseCount,
-		CaseCount:         caseCount,
-		StorageReadable:   storageReadable,
-		ZipReadable:       zipReadable,
+		FindingCount:    len(findings),
+		CaseCount:       caseCount,
+		StorageReadable: storageReadable,
+		ZipReadable:     zipReadable,
 	}
 	for _, finding := range findings {
 		switch finding.severity {
@@ -700,9 +539,6 @@ func validateCreateProblem(input CreateProblemInput) error {
 }
 
 func validateUpdateProblem(input UpdateProblemInput) error {
-	if input.Slug != nil && !validSlug(*input.Slug) {
-		return apperror.BadRequest("problem.slug_invalid", "slug is invalid")
-	}
 	if input.Difficulty != nil && !validDifficulty(*input.Difficulty) {
 		return apperror.BadRequest("problem.difficulty_invalid", "difficulty is invalid")
 	}
@@ -718,18 +554,21 @@ func validateUpdateProblem(input UpdateProblemInput) error {
 	return nil
 }
 
+const maxSampleFieldBytes = 64 << 10
+
 func validateStatement(input CreateStatementInput) error {
-	if strings.TrimSpace(input.Title) == "" {
-		return apperror.BadRequest("statement.title_required", "title is required")
-	}
 	if strings.TrimSpace(input.Description) == "" {
 		return apperror.BadRequest("statement.description_required", "description is required")
 	}
-	if len(input.Samples) == 0 {
-		return nil
-	}
-	if !json.Valid(input.Samples) {
-		return apperror.BadRequest("statement.samples_invalid", "samples must be valid JSON")
+	for _, sample := range input.Samples {
+		if strings.TrimSpace(sample.Input) == "" || strings.TrimSpace(sample.Output) == "" {
+			return apperror.BadRequest("statement.sample_invalid", "sample input and output are required")
+		}
+		for _, field := range []string{sample.Input, sample.Output, sample.Explanation} {
+			if len(field) > maxSampleFieldBytes {
+				return apperror.BadRequest("statement.sample_too_large", "sample field must not exceed 64 KiB")
+			}
+		}
 	}
 	return nil
 }
@@ -839,12 +678,12 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func testcaseArchiveKey(problemID int64, checksum string) (string, error) {
+func testcaseArchiveKey(problemID int64) (string, error) {
 	var random [8]byte
 	if _, err := crand.Read(random[:]); err != nil {
 		return "", fmt.Errorf("generate testcase object key: %w", err)
 	}
-	return fmt.Sprintf("problems/%d/testcases/%s-%s.zip", problemID, checksum, hex.EncodeToString(random[:])), nil
+	return fmt.Sprintf("problems/%d/testcases/%s.zip", problemID, hex.EncodeToString(random[:])), nil
 }
 
 func readAllAndClose(body io.ReadCloser, maxBytes int64) ([]byte, error) {
@@ -858,7 +697,7 @@ func readAllAndClose(body io.ReadCloser, maxBytes int64) ([]byte, error) {
 		return nil, err
 	}
 	if maxBytes > 0 && int64(len(data)) > maxBytes {
-		return nil, testcaseArchiveLimitError("testcase.archive_too_large", "testcase archive is too large")
+		return nil, apperror.New(codeArchiveTooLarge, "testcase archive is too large", http.StatusRequestEntityTooLarge)
 	}
 	return data, nil
 }

@@ -19,6 +19,7 @@ type Envelope struct {
 type ErrorBody struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Details any    `json:"details,omitempty"`
 }
 
 func OK(c *gin.Context, data any) {
@@ -56,6 +57,7 @@ func RenderError(c *gin.Context, err error) {
 		Error: &ErrorBody{
 			Code:    appErr.Code,
 			Message: appErr.Message,
+			Details: appErr.Details,
 		},
 		RequestID: requestID(c),
 	})

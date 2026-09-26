@@ -149,7 +149,7 @@ func TestGetProblemCheckRejectsInvalidCheckID(t *testing.T) {
 	}
 }
 
-func TestUploadTestcasesMissingArchiveReturnsTestcaseNotReady(t *testing.T) {
+func TestUploadTestcasesMissingArchiveReturnsBadRequest(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
@@ -162,12 +162,108 @@ func TestUploadTestcasesMissingArchiveReturnsTestcaseNotReady(t *testing.T) {
 
 	router.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"testcase.zip_invalid"`) {
+		t.Fatalf("body missing testcase.zip_invalid: %s", rec.Body.String())
+	}
+}
+
+func TestUploadTestcasesReturnsCreatedSetWithWarnings(t *testing.T) {
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
+	service := newProblemService(repo, &fakeStorage{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+
+	body, contentType := testcaseMultipartBody(t, zipArchive(t, map[string]string{
+		"1.in":      "1\n",
+		"1.ans":     "1\n",
+		".DS_Store": "metadata",
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", body)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-User-ID", "10")
+	req.Header.Set("X-User-Role", "author")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var envelope struct {
+		Data TestcaseSetResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Data.CaseCount != 1 || envelope.Data.Version != 1 || !envelope.Data.IsCurrent {
+		t.Fatalf("unexpected data: %+v", envelope.Data)
+	}
+	if len(envelope.Data.Warnings) != 1 || envelope.Data.Warnings[0].Code != "testcase.file_ignored" {
+		t.Fatalf("warnings = %+v", envelope.Data.Warnings)
+	}
+	if strings.Contains(rec.Body.String(), "storage_key") {
+		t.Fatalf("response must not expose storage_key: %s", rec.Body.String())
+	}
+}
+
+func TestUploadTestcasesReturnsFindingsDetails(t *testing.T) {
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
+	service := newProblemService(repo, &fakeStorage{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+
+	body, contentType := testcaseMultipartBody(t, zipArchive(t, map[string]string{"3.in": "3\n"}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", body)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-User-ID", "10")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"code":"problem.testcase_not_ready"`) {
-		t.Fatalf("body missing problem.testcase_not_ready: %s", rec.Body.String())
+	var envelope struct {
+		Error *httpapi.ErrorBody `json:"error"`
 	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Error == nil || envelope.Error.Code != "testcase.archive_invalid" {
+		t.Fatalf("error = %+v", envelope.Error)
+	}
+	details, ok := envelope.Error.Details.(map[string]any)
+	if !ok {
+		t.Fatalf("details = %#v", envelope.Error.Details)
+	}
+	findings, ok := details["findings"].([]any)
+	if !ok || len(findings) == 0 {
+		t.Fatalf("details findings = %#v", details["findings"])
+	}
+	first, ok := findings[0].(map[string]any)
+	if !ok || first["code"] != "testcase.output_missing" || first["file"] != "3.in" {
+		t.Fatalf("first finding = %#v", findings[0])
+	}
+}
+
+func testcaseMultipartBody(t *testing.T, archive []byte) (*bytes.Buffer, string) {
+	t.Helper()
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("archive", "cases.zip")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(archive); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return body, writer.FormDataContentType()
 }
 
 func TestUploadTestcasesRejectsOversizedContentLengthBeforeMultipartParsing(t *testing.T) {

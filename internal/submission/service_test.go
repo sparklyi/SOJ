@@ -1373,11 +1373,11 @@ func (fakeProblemReader) GetForJudge(ctx context.Context, problemID int64) (prob
 type fakeTestcaseResolver struct{}
 
 func (fakeTestcaseResolver) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (problem.TestcaseSet, error) {
-	return problem.TestcaseSet{ID: 3, ProblemID: problemID, Status: "ready", Cases: []problem.Testcase{{InputKey: "in", OutputKey: "out", TimeLimit: time.Second, MemoryKB: 262144}}}, nil
+	return problem.TestcaseSet{ID: 3, ProblemID: problemID, Cases: []problem.Testcase{{InputKey: "in", OutputKey: "out", TimeLimit: time.Second, MemoryKB: 262144}}}, nil
 }
 
 func (fakeTestcaseResolver) ReadyTestcaseSet(ctx context.Context, problemID, testcaseSetID int64) (problem.TestcaseSet, error) {
-	return problem.TestcaseSet{ID: testcaseSetID, ProblemID: problemID, Status: "ready", Cases: []problem.Testcase{{InputKey: "in", OutputKey: "out", TimeLimit: time.Second, MemoryKB: 262144}}}, nil
+	return problem.TestcaseSet{ID: testcaseSetID, ProblemID: problemID, Cases: []problem.Testcase{{InputKey: "in", OutputKey: "out", TimeLimit: time.Second, MemoryKB: 262144}}}, nil
 }
 
 func (fakeTestcaseResolver) ReadyTestcaseMetadata(ctx context.Context, problemID, testcaseSetID int64) (testcaseMetadata, error) {

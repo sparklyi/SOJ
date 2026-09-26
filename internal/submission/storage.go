@@ -108,16 +108,15 @@ func (r *TestcaseSnapshotResolver) ReadyTestcaseSet(ctx context.Context, problem
 	if err != nil {
 		return problem.TestcaseSet{}, err
 	}
-	cases, err := problem.ParseTestcaseArchive(data, problem.TestcaseArchiveOptions{
-		ExpectedCaseCount: row.CaseCount,
-		ExpectedSHA256:    row.ChecksumSha256,
-		TimeLimit:         time.Duration(problemRow.TimeLimitMs) * time.Millisecond,
-		MemoryKB:          int64(problemRow.MemoryLimitKb),
+	cases, findings := problem.LoadArchive(bytes.NewReader(data), int64(len(data)), problem.ArchiveOptions{
+		ExpectedSHA256: row.ChecksumSha256,
+		TimeLimit:      time.Duration(problemRow.TimeLimitMs) * time.Millisecond,
+		MemoryKB:       int64(problemRow.MemoryLimitKb),
 	})
-	if err != nil {
+	if err := problem.ArchiveFindingsError(findings); err != nil {
 		return problem.TestcaseSet{}, err
 	}
-	return problem.TestcaseSet{ID: row.ID, ProblemID: row.ProblemID, Version: int(row.Version), Status: row.Status, Cases: cases}, nil
+	return problem.TestcaseSet{ID: row.ID, ProblemID: row.ProblemID, Version: int(row.Version), Cases: cases}, nil
 }
 
 type testcaseMetadata struct {

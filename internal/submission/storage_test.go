@@ -24,15 +24,15 @@ func TestObjectSourceStoreGetReturnsCloseError(t *testing.T) {
 	}
 }
 
-func TestParseTestcaseArchiveAppliesProblemLimits(t *testing.T) {
+func TestLoadArchiveAppliesProblemLimits(t *testing.T) {
 	archive := snapshotZipArchive(t, map[string]string{
-		"input1.txt":  "1 1\n",
-		"output1.txt": "2\n",
+		"1.in":  "1 1\n",
+		"1.ans": "2\n",
 	})
 
-	cases, err := problem.ParseTestcaseArchive(archive, problem.TestcaseArchiveOptions{TimeLimit: 10 * time.Second, MemoryKB: 262144})
-	if err != nil {
-		t.Fatalf("ParseTestcaseArchive returned error: %v", err)
+	cases, findings := problem.LoadArchive(bytes.NewReader(archive), int64(len(archive)), problem.ArchiveOptions{TimeLimit: 10 * time.Second, MemoryKB: 262144})
+	if err := problem.ArchiveFindingsError(findings); err != nil {
+		t.Fatalf("LoadArchive returned error: %v", err)
 	}
 	if len(cases) != 1 {
 		t.Fatalf("cases = %d, want 1", len(cases))

@@ -265,7 +265,7 @@ func TestProblemCheckSchemaAndQueriesExposeRunsAndFindings(t *testing.T) {
 		"ListProblemCheckRunsByProblemID":   listProblemCheckRunsByProblemID,
 		"CompleteProblemCheckRun":           completeProblemCheckRun,
 		"FailProblemCheckRun":               failProblemCheckRun,
-		"CreateProblemCheckFinding":         createProblemCheckFinding,
+		"CreateProblemCheckFindings":        createProblemCheckFindings,
 		"GetProblemCheckFindingByID":        getProblemCheckFindingByID,
 		"ListProblemCheckFindingsByRunID":   listProblemCheckFindingsByRunID,
 	} {

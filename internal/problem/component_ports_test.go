@@ -52,8 +52,12 @@ func (problemReaderStoreStub) ListProblemTags(context.Context, int64) ([]Tag, er
 	return nil, nil
 }
 
-func (problemReaderStoreStub) GetCurrentReadyTestcaseSet(context.Context, int64) (TestcaseSetRecord, error) {
+func (problemReaderStoreStub) GetCurrentTestcaseSet(context.Context, int64) (TestcaseSetRecord, error) {
 	return TestcaseSetRecord{}, nil
+}
+
+func (problemReaderStoreStub) ListProblemTagsByProblemIDs(context.Context, []int64) (map[int64][]Tag, error) {
+	return map[int64][]Tag{}, nil
 }
 
 func (problemReaderStoreStub) GetLatestCompletedProblemCheckRun(context.Context, int64, int64, int64) (ProblemCheckRunRecord, error) {
@@ -149,16 +153,11 @@ func (*problemAuthoringTxStub) CreateTestcaseSet(_ context.Context, problemID in
 	return TestcaseSetRecord{ID: 1, ProblemID: problemID, Version: version, StorageKey: storageKey, ChecksumSHA256: checksum, SizeBytes: sizeBytes, CaseCount: caseCount, CreatedBy: createdBy}, nil
 }
 
-func (*problemAuthoringTxStub) CreateArtifact(_ context.Context, artifact ArtifactRecord) (ArtifactRecord, error) {
-	artifact.ID = 1
-	return artifact, nil
-}
-
 func (*problemAuthoringTxStub) GetCurrentProblemStatement(context.Context, int64) (Statement, error) {
 	return Statement{}, nil
 }
 
-func (*problemAuthoringTxStub) GetCurrentReadyTestcaseSet(context.Context, int64) (TestcaseSetRecord, error) {
+func (*problemAuthoringTxStub) GetCurrentTestcaseSet(context.Context, int64) (TestcaseSetRecord, error) {
 	return TestcaseSetRecord{}, nil
 }
 
@@ -200,7 +199,7 @@ func (problemCheckStoreStub) GetCurrentProblemStatement(context.Context, int64) 
 	return Statement{}, nil
 }
 
-func (problemCheckStoreStub) GetCurrentReadyTestcaseSet(context.Context, int64) (TestcaseSetRecord, error) {
+func (problemCheckStoreStub) GetCurrentTestcaseSet(context.Context, int64) (TestcaseSetRecord, error) {
 	return TestcaseSetRecord{}, nil
 }
 
@@ -222,8 +221,12 @@ func (problemCheckTxStub) CreateProblemCheckRun(_ context.Context, input CreateP
 	return ProblemCheckRunRecord{ID: 1, ProblemID: input.ProblemID}, nil
 }
 
-func (problemCheckTxStub) CreateProblemCheckFinding(_ context.Context, input CreateProblemCheckFindingInput) (ProblemCheckFindingRecord, error) {
-	return ProblemCheckFindingRecord{ID: 1, RunID: input.RunID}, nil
+func (problemCheckTxStub) CreateProblemCheckFindings(_ context.Context, inputs []CreateProblemCheckFindingInput) ([]ProblemCheckFindingRecord, error) {
+	records := make([]ProblemCheckFindingRecord, 0, len(inputs))
+	for index, input := range inputs {
+		records = append(records, ProblemCheckFindingRecord{ID: int64(index + 1), RunID: input.RunID, Code: input.Code})
+	}
+	return records, nil
 }
 
 func (problemCheckTxStub) CompleteProblemCheckRun(_ context.Context, input CompleteProblemCheckRunInput) (ProblemCheckRunRecord, error) {

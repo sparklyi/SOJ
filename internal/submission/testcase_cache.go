@@ -1,6 +1,7 @@
 package submission
 
 import (
+	"bytes"
 	"container/list"
 	"context"
 	"errors"
@@ -97,12 +98,12 @@ func (c *TestcaseCache) Load(ctx context.Context, ref judgeevents.TestcaseSetRef
 			return nil, err
 		}
 		started := time.Now()
-		cases, err := problem.ParseTestcaseArchive(data, problem.TestcaseArchiveOptions{
-			ExpectedCaseCount: ref.CaseCount,
-			ExpectedSHA256:    ref.ChecksumSHA256,
-			TimeLimit:         time.Duration(ref.TimeLimitMS) * time.Millisecond,
-			MemoryKB:          ref.MemoryKB,
+		cases, findings := problem.LoadArchive(bytes.NewReader(data), int64(len(data)), problem.ArchiveOptions{
+			ExpectedSHA256: ref.ChecksumSHA256,
+			TimeLimit:      time.Duration(ref.TimeLimitMS) * time.Millisecond,
+			MemoryKB:       ref.MemoryKB,
 		})
+		err = problem.ArchiveFindingsError(findings)
 		if c.metrics != nil {
 			result := "success"
 			if err != nil {

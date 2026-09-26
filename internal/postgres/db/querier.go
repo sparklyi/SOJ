@@ -52,7 +52,7 @@ type Querier interface {
 	CreateJudgeTask(ctx context.Context, arg CreateJudgeTaskParams) (JudgeTask, error)
 	// Owner: WP3 Problem/Storage
 	CreateProblem(ctx context.Context, arg CreateProblemParams) (Problem, error)
-	CreateProblemCheckFinding(ctx context.Context, arg CreateProblemCheckFindingParams) (ProblemCheckFinding, error)
+	CreateProblemCheckFindings(ctx context.Context, findings []byte) ([]ProblemCheckFinding, error)
 	CreateProblemCheckRun(ctx context.Context, arg CreateProblemCheckRunParams) (ProblemCheckRun, error)
 	// Problem review workflow.
 	CreateProblemReviewEvent(ctx context.Context, arg CreateProblemReviewEventParams) (ProblemReviewEvent, error)
@@ -82,7 +82,7 @@ type Querier interface {
 	GetContestRegistration(ctx context.Context, arg GetContestRegistrationParams) (ContestRegistration, error)
 	GetContestScoreSnapshotByKey(ctx context.Context, arg GetContestScoreSnapshotByKeyParams) (ContestScoreSnapshot, error)
 	GetCurrentProblemStatement(ctx context.Context, problemID int64) (ProblemStatement, error)
-	GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error)
+	GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error)
 	GetEnabledLanguageByID(ctx context.Context, id int64) (Language, error)
 	GetJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttempt, error)
 	GetJudgeTaskByID(ctx context.Context, id int64) (JudgeTask, error)
@@ -154,6 +154,7 @@ type Querier interface {
 	// issues one stats query per row. Hits submissions_problem_status_idx.
 	ListProblemSubmissionCounts(ctx context.Context, problemIds []int64) ([]ListProblemSubmissionCountsRow, error)
 	ListProblemTags(ctx context.Context, problemID int64) ([]ProblemTag, error)
+	ListProblemTagsByProblemIDs(ctx context.Context, problemIds []int64) ([]ListProblemTagsByProblemIDsRow, error)
 	ListProblems(ctx context.Context, arg ListProblemsParams) ([]ListProblemsRow, error)
 	ListProblemsForReview(ctx context.Context, arg ListProblemsForReviewParams) ([]Problem, error)
 	ListRejudgeBatchItems(ctx context.Context, batchID int64) ([]RejudgeBatchItem, error)

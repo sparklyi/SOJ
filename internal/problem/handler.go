@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 
 	"SOJ/internal/apperror"
@@ -320,47 +321,56 @@ func (h *Handler) uploadTestcasesWithRequestLimit(c *gin.Context, maxRequestByte
 			httpapi.Error(c, testcaseUploadTooLarge())
 			return
 		}
-		httpapi.Error(c, testcaseNotReady("archive file is required"))
+		httpapi.Error(c, apperror.BadRequest(codeZipInvalid, "archive file is required"))
 		return
 	}
 	defer func() { _ = file.Close() }()
-	if header.Size > defaultMaxTestcaseArchiveBytes {
-		httpapi.Error(c, testcaseUploadTooLarge())
+
+	// The archive is streamed to a temp file so a 128 MiB upload never lives in
+	// memory. The service then validates and stores it from that file.
+	temp, err := os.CreateTemp("", "soj-testcase-*.zip")
+	if err != nil {
+		httpapi.Error(c, apperror.Internal())
 		return
 	}
-	content, err := io.ReadAll(io.LimitReader(file, defaultMaxTestcaseArchiveBytes+1))
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(temp.Name())
+	}()
+	written, err := io.Copy(temp, io.LimitReader(file, MaxTestcaseArchiveBytes+1))
 	if err != nil {
 		httpapi.Error(c, apperror.BadRequest("testcase.archive_read_failed", "failed to read archive"))
 		return
 	}
-	if len(content) > defaultMaxTestcaseArchiveBytes {
+	if written > MaxTestcaseArchiveBytes {
 		httpapi.Error(c, testcaseUploadTooLarge())
 		return
 	}
-	caseCount64, err := strconv.ParseInt(c.PostForm("case_count"), 10, 32)
-	if err != nil {
-		httpapi.Error(c, testcaseNotReady("case_count must be an integer"))
+	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+		httpapi.Error(c, apperror.Internal())
 		return
 	}
+
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/zip"
 	}
-	set, err := h.service.UploadTestcaseArchive(c.Request.Context(), actorFromContext(c), id, UploadTestcaseInput{
-		Content:        content,
-		CaseCount:      int32(caseCount64),
-		ChecksumSHA256: firstNonEmpty(c.PostForm("checksum_sha256"), c.PostForm("sha256")),
-		ContentType:    contentType,
+	set, warnings, err := h.service.UploadTestcaseArchive(c.Request.Context(), actorFromContext(c), id, UploadTestcaseInput{
+		Source:      temp,
+		Size:        written,
+		ContentType: contentType,
 	})
 	if err != nil {
 		httpapi.Error(c, err)
 		return
 	}
-	httpapi.Created(c, set)
+	response := testcaseSetResponseFromRecord(set)
+	response.Warnings = warnings
+	httpapi.Created(c, response)
 }
 
 func testcaseUploadTooLarge() error {
-	return apperror.New("testcase.archive_too_large", "testcase archive is too large", http.StatusRequestEntityTooLarge)
+	return apperror.New(codeArchiveTooLarge, "testcase archive is too large", http.StatusRequestEntityTooLarge)
 }
 
 func (h *Handler) runProblemCheck(c *gin.Context) {
@@ -409,15 +419,6 @@ func problemCheckRunResponse(result ProblemCheckResult) ProblemCheckRun {
 		run.Findings = result.Findings
 	}
 	return run
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func (h *Handler) stats(c *gin.Context) {

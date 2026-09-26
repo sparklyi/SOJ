@@ -9,7 +9,7 @@ import (
 
 type problemPublishReadStore interface {
 	GetCurrentProblemStatement(ctx context.Context, problemID int64) (Statement, error)
-	GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error)
+	GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error)
 	GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error)
 	ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error)
 }
@@ -53,17 +53,17 @@ func loadProblemAuthoringReadiness(ctx context.Context, store problemPublishRead
 		if !isNotFoundError(err) {
 			return problemAuthoringReadiness{}, err
 		}
-		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.statement_required", Message: "current statement is required before publishing"})
+		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.statement_required", Message: "current statement is required before publishing", Step: AuthoringStepStatement})
 	} else {
 		state.statement = &statement
 	}
 
-	testcaseSet, err := store.GetCurrentReadyTestcaseSet(ctx, problemID)
+	testcaseSet, err := store.GetCurrentTestcaseSet(ctx, problemID)
 	if err != nil {
 		if !isNotFoundError(err) {
 			return problemAuthoringReadiness{}, err
 		}
-		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.testcase_required", Message: "current ready testcase set is required before publishing"})
+		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.testcase_required", Message: "current testcase set is required before publishing", Step: AuthoringStepTestcase})
 		return state, nil
 	}
 	state.testcaseSet = &testcaseSet
@@ -76,7 +76,7 @@ func loadProblemAuthoringReadiness(ctx context.Context, store problemPublishRead
 		if !isNotFoundError(err) {
 			return problemAuthoringReadiness{}, err
 		}
-		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.check_required", Message: "run a problem check for the current testcase set before publishing"})
+		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.check_required", Message: "run a problem check for the current testcase set before publishing", Step: AuthoringStepCheck})
 		return state, nil
 	}
 	run := problemCheckRunFromRecord(runRecord)
@@ -90,7 +90,7 @@ func loadProblemAuthoringReadiness(ctx context.Context, store problemPublishRead
 	}
 	state.latestCheck = &run
 	if !run.Summary.Valid {
-		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.check_failed", Message: "the current testcase set has validation errors"})
+		state.blockers = append(state.blockers, ProblemAuthoringBlocker{Code: "problem.check_failed", Message: "the current testcase set has validation errors", Step: AuthoringStepCheck})
 	}
 	return state, nil
 }
