@@ -27,14 +27,6 @@ func archiveZipWithMethod(t *testing.T, method uint16, files map[string]string) 
 	return buffer.Bytes()
 }
 
-func findingCodes(findings []Finding) []string {
-	codes := make([]string, 0, len(findings))
-	for _, finding := range findings {
-		codes = append(codes, finding.Code)
-	}
-	return codes
-}
-
 func hasFindingCode(findings []Finding, code string) bool {
 	for _, finding := range findings {
 		if finding.Code == code {

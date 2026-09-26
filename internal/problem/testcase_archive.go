@@ -350,7 +350,7 @@ func readArchiveEntry(file *zip.File, options ArchiveOptions, maxBytes uint64) (
 	defer func() { _ = reader.Close() }()
 
 	var kept bytes.Buffer
-	writer := io.Writer(io.Discard)
+	writer := io.Discard
 	if options.KeepContents {
 		writer = &kept
 	}
