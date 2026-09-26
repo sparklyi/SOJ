@@ -1515,7 +1515,15 @@ components:
             - testcase.output_missing
             - testcase.case_duplicate
             - testcase.archive_empty
+            - testcase.file_count_exceeded
+            - testcase.entry_too_large
+            - testcase.total_size_exceeded
+            - testcase.compression_ratio_exceeded
             - testcase.archive_too_large
+            - testcase.archive_corrupted
+            - testcase.case_count_mismatch
+            - statement.sample_invalid
+            - statement.sample_too_large
             - submission.not_found
             - submission.not_allowed
             - submission.language_disabled
