@@ -851,6 +851,35 @@ func TestCreateStatementValidatesSamplesAndMirrorsTitle(t *testing.T) {
 	}
 }
 
+func TestCreateProblemRetriesSlugConflict(t *testing.T) {
+	repo := newFakeRepository()
+	repo.slugConflicts = 2
+	service := newProblemService(repo, &fakeStorage{})
+
+	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, CreateProblemInput{Title: "Two Sum"})
+	if err != nil {
+		t.Fatalf("CreateProblem returned error: %v", err)
+	}
+	if repo.slugConflicts != 0 || len(repo.problems) != 1 {
+		t.Fatalf("expected a successful retry, conflicts=%d problems=%d", repo.slugConflicts, len(repo.problems))
+	}
+	if !validSlug(created.Slug) || !strings.HasPrefix(created.Slug, "two-sum-") {
+		t.Fatalf("generated slug = %q, want slugified title plus suffix", created.Slug)
+	}
+}
+
+func TestCreateProblemGivesUpAfterSlugConflicts(t *testing.T) {
+	repo := newFakeRepository()
+	repo.slugConflicts = problemSlugAttempts + 1
+	service := newProblemService(repo, &fakeStorage{})
+
+	_, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, CreateProblemInput{Title: "Two Sum"})
+	assertAppCode(t, err, "problem.slug_conflict")
+	if len(repo.problems) != 0 {
+		t.Fatalf("no problem should be persisted, got %+v", repo.problems)
+	}
+}
+
 type fakeRepository struct {
 	txMu                  sync.Mutex
 	mu                    sync.RWMutex
@@ -869,6 +898,7 @@ type fakeRepository struct {
 	nextCheckRunID        int64
 	nextCheckFindingID    int64
 	failCreateTestcaseSet bool
+	slugConflicts         int
 	lastListFilter        ListProblemsFilter
 	tagBatchCalls         int
 }
@@ -901,6 +931,11 @@ func (r *fakeRepository) WithProblemCheckTx(ctx context.Context, fn func(context
 func (r *fakeRepository) CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.slugConflicts > 0 {
+		r.slugConflicts--
+		return ProblemRecord{}, apperror.Conflict("problem.slug_conflict", "problem slug already exists")
+	}
 
 	r.nextProblemID++
 	p := ProblemRecord{

@@ -520,9 +520,6 @@ func validateCreateProblem(input CreateProblemInput) error {
 	if strings.TrimSpace(input.Title) == "" {
 		return apperror.BadRequest("problem.title_required", "title is required")
 	}
-	if !validSlug(input.Slug) {
-		return apperror.BadRequest("problem.slug_invalid", "slug is invalid")
-	}
 	if !validDifficulty(input.Difficulty) {
 		return apperror.BadRequest("problem.difficulty_invalid", "difficulty is invalid")
 	}
