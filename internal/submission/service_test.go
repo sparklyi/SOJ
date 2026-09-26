@@ -1372,7 +1372,7 @@ func (fakeProblemReader) GetForJudge(ctx context.Context, problemID int64) (prob
 
 type fakeTestcaseResolver struct{}
 
-func (fakeTestcaseResolver) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (problem.TestcaseSet, error) {
+func (fakeTestcaseResolver) GetCurrentTestcaseSet(ctx context.Context, problemID int64) (problem.TestcaseSet, error) {
 	return problem.TestcaseSet{ID: 3, ProblemID: problemID, Cases: []problem.Testcase{{InputKey: "in", OutputKey: "out", TimeLimit: time.Second, MemoryKB: 262144}}}, nil
 }
 
@@ -1389,7 +1389,7 @@ type fakeSnapshotTestcaseResolver struct {
 	byID    map[int64]problem.TestcaseSet
 }
 
-func (r fakeSnapshotTestcaseResolver) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (problem.TestcaseSet, error) {
+func (r fakeSnapshotTestcaseResolver) GetCurrentTestcaseSet(ctx context.Context, problemID int64) (problem.TestcaseSet, error) {
 	return r.current, nil
 }
 

@@ -26,5 +26,5 @@ type Reader interface {
 }
 
 type TestcaseResolver interface {
-	CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error)
+	GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error)
 }

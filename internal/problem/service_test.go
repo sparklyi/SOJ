@@ -403,7 +403,7 @@ func TestNormalizeListFilterKeepsOwnerPrivateVisibility(t *testing.T) {
 	}
 }
 
-func TestCurrentReadyTestcaseSetLoadsCasesFromArchive(t *testing.T) {
+func TestGetCurrentTestcaseSetLoadsCasesFromArchive(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic, TimeLimitMS: 10000, MemoryLimitKB: 262144}
 	archive := zipArchive(t, map[string]string{
@@ -417,9 +417,9 @@ func TestCurrentReadyTestcaseSetLoadsCasesFromArchive(t *testing.T) {
 	repo.currentTestcase[1] = 7
 	service := newProblemService(repo, store)
 
-	got, err := service.CurrentReadyTestcaseSet(context.Background(), 1)
+	got, err := service.GetCurrentTestcaseSet(context.Background(), 1)
 	if err != nil {
-		t.Fatalf("CurrentReadyTestcaseSet returned error: %v", err)
+		t.Fatalf("GetCurrentTestcaseSet returned error: %v", err)
 	}
 	if got.ID != 7 || len(got.Cases) != 2 {
 		t.Fatalf("set = %+v", got)
@@ -435,13 +435,13 @@ func TestCurrentReadyTestcaseSetLoadsCasesFromArchive(t *testing.T) {
 	}
 }
 
-func TestCurrentReadyTestcaseSetRequiresStorage(t *testing.T) {
+func TestGetCurrentTestcaseSetRequiresStorage(t *testing.T) {
 	repo := newFakeRepository()
 	repo.testcaseSets[7] = TestcaseSetRecord{ID: 7, ProblemID: 1, Version: 3, StorageKey: "cases.zip", CaseCount: 1, IsCurrent: true}
 	repo.currentTestcase[1] = 7
 	service := newProblemService(repo, nil)
 
-	_, err := service.CurrentReadyTestcaseSet(context.Background(), 1)
+	_, err := service.GetCurrentTestcaseSet(context.Background(), 1)
 	assertAppCode(t, err, "service_unavailable")
 }
 

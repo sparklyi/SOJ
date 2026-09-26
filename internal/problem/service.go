@@ -430,8 +430,8 @@ func (s *Service) ProblemResponse(ctx context.Context, p ProblemRecord) (Problem
 	return s.reader.ProblemResponse(ctx, p)
 }
 
-func (s *Service) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
-	return s.reader.CurrentReadyTestcaseSet(ctx, problemID)
+func (s *Service) GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
+	return s.reader.GetCurrentTestcaseSet(ctx, problemID)
 }
 
 func (s *Service) GetForJudge(ctx context.Context, problemID int64) (Problem, error) {

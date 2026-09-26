@@ -268,7 +268,7 @@ func problemResponseFromRecord(p ProblemRecord, tagNames []string) ProblemRespon
 	}
 }
 
-func (r *ProblemReader) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
+func (r *ProblemReader) GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
 	set, err := r.store.GetCurrentTestcaseSet(ctx, problemID)
 	if err != nil {
 		return TestcaseSet{}, err
