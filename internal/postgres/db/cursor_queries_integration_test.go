@@ -155,8 +155,10 @@ func seedCursorQueryIntegrationData(t *testing.T, ctx context.Context, tx integr
 			args: []any{fixture.languageID, fixture.token + "-go"},
 		},
 		{
-			query: `INSERT INTO testcase_sets (id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, status, is_current, created_by)
-				VALUES ($1, $2, 1, $3, repeat('a', 64), 1, 1, 'ready', true, $4)`,
+			// testcase_sets.status was dropped by migration 000008; currentness is
+			// is_current alone.
+			query: `INSERT INTO testcase_sets (id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, is_current, created_by)
+				VALUES ($1, $2, 1, $3, repeat('a', 64), 1, 1, true, $4)`,
 			args: []any{fixture.testcaseSetID, fixture.publicProblemID, fixture.token + "/testcases.zip", fixture.userOneID},
 		},
 		{
