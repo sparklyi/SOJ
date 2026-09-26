@@ -478,7 +478,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TestcaseSetEnvelope"
+                $ref: "#/components/schemas/TestcaseSetUploadEnvelope"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
@@ -1500,7 +1500,6 @@ components:
             - problem.not_found
             - problem.slug_conflict
             - problem.not_publishable
-            - problem.testcase_not_ready
             - problem.status_managed_by_review
             - problem.review_invalid_state
             - problem.review_decision_invalid
@@ -1508,7 +1507,23 @@ components:
             - problem.self_review_forbidden
             - problem_check.id_invalid
             - problem_check.not_found
-            - testcase.invalid_archive
+            - testcase.archive_invalid
+            - testcase.zip_invalid
+            - testcase.file_name_invalid
+            - testcase.entry_empty
+            - testcase.input_missing
+            - testcase.output_missing
+            - testcase.case_duplicate
+            - testcase.archive_empty
+            - testcase.file_count_exceeded
+            - testcase.entry_too_large
+            - testcase.total_size_exceeded
+            - testcase.compression_ratio_exceeded
+            - testcase.archive_too_large
+            - testcase.archive_corrupted
+            - testcase.case_count_mismatch
+            - statement.sample_invalid
+            - statement.sample_too_large
             - submission.not_found
             - submission.not_allowed
             - submission.language_disabled
@@ -1530,6 +1545,11 @@ components:
             - internal_error
         message:
           type: string
+        details:
+          type: object
+          nullable: true
+          description: Optional structured details, such as testcase validation findings.
+          additionalProperties: true
     PageMeta:
       x-owner: WP1 Data/API Contract
       type: object
@@ -1556,9 +1576,6 @@ components:
     ProblemStatus:
       type: string
       enum: [draft, in_review, changes_requested, published, archived]
-    TestcaseSetStatus:
-      type: string
-      enum: [uploading, ready, disabled]
     ProblemCheckStatus:
       type: string
       enum: [queued, running, completed, failed, canceled]
@@ -1696,10 +1713,9 @@ components:
         memory_limit_kb: { type: integer }
     ProblemCreateRequest:
       type: object
-      required: [title, slug, difficulty, visibility, time_limit_ms, memory_limit_kb]
+      required: [title]
       properties:
         title: { type: string }
-        slug: { type: string }
         difficulty: { $ref: "#/components/schemas/ProblemDifficulty" }
         visibility: { $ref: "#/components/schemas/ProblemVisibility" }
         time_limit_ms: { type: integer, minimum: 1 }
@@ -1711,7 +1727,6 @@ components:
       type: object
       properties:
         title: { type: string }
-        slug: { type: string }
         difficulty: { $ref: "#/components/schemas/ProblemDifficulty" }
         visibility: { $ref: "#/components/schemas/ProblemVisibility" }
         time_limit_ms: { type: integer, minimum: 1 }
@@ -1746,9 +1761,8 @@ components:
         explanation: { type: string }
     StatementUpsertRequest:
       type: object
-      required: [title, description, samples]
+      required: [description, samples]
       properties:
-        title: { type: string }
         description: { type: string }
         input_description: { type: string }
         output_description: { type: string }
@@ -1761,23 +1775,22 @@ components:
       allOf:
         - $ref: "#/components/schemas/StatementUpsertRequest"
         - type: object
-          required: [problem_id, version, created_at]
+          required: [title, problem_id, version, created_at]
           properties:
+            title: { type: string }
             problem_id: { type: integer, format: int64 }
             version: { type: integer }
             created_at: { type: string, format: date-time }
     TestcaseSetCreateRequest:
       type: object
-      required: [archive, checksum_sha256, case_count]
+      required: [archive]
       properties:
         archive:
           type: string
           format: binary
-        checksum_sha256: { type: string }
-        case_count: { type: integer, minimum: 1 }
     TestcaseSetResponse:
       type: object
-      required: [id, problem_id, version, checksum_sha256, size_bytes, case_count, status, is_current, created_at]
+      required: [id, problem_id, version, checksum_sha256, size_bytes, case_count, is_current, created_at]
       properties:
         id: { type: integer, format: int64 }
         problem_id: { type: integer, format: int64 }
@@ -1785,19 +1798,31 @@ components:
         checksum_sha256: { type: string }
         size_bytes: { type: integer, format: int64 }
         case_count: { type: integer }
-        status: { $ref: "#/components/schemas/TestcaseSetStatus" }
         is_current: { type: boolean }
         created_at: { type: string, format: date-time }
+    TestcaseArchiveFinding:
+      type: object
+      required: [severity, code, message]
+      properties:
+        severity: { type: string, enum: [warning, error] }
+        code: { type: string }
+        file: { type: string }
+        message: { type: string }
+    TestcaseSetUploadResponse:
+      allOf:
+        - $ref: "#/components/schemas/TestcaseSetResponse"
+        - type: object
+          properties:
+            warnings:
+              type: array
+              items: { $ref: "#/components/schemas/TestcaseArchiveFinding" }
     ProblemCheckSummary:
       type: object
-      required: [case_count, expected_case_count, finding_count, error_count, warning_count, info_count, storage_readable, zip_readable, valid]
+      required: [case_count, finding_count, error_count, warning_count, info_count, storage_readable, zip_readable, valid]
       properties:
         case_count:
           type: integer
           description: Number of input/output pairs found in the archive.
-        expected_case_count:
-          type: integer
-          description: Case count declared by the current testcase set.
         finding_count:
           type: integer
           minimum: 0
@@ -1876,13 +1901,29 @@ components:
         updated_at: { type: string, format: date-time }
     ProblemAuthoringBlocker:
       type: object
-      required: [code, message]
+      required: [code, message, step]
       properties:
         code: { type: string }
         message: { type: string }
+        step: { type: string, enum: [create, statement, testcase, check, review] }
+    ProblemAuthoringStep:
+      type: object
+      required: [key, status]
+      properties:
+        key: { type: string, enum: [create, statement, testcase, check, review] }
+        status: { type: string, enum: [done, todo] }
+    ProblemAuthoringFlow:
+      type: object
+      required: [current_step, remaining, steps]
+      properties:
+        current_step: { type: string }
+        remaining: { type: integer, minimum: 0 }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/ProblemAuthoringStep" }
     ProblemAuthoringState:
       type: object
-      required: [problem, publishable, blockers]
+      required: [problem, flow, publishable, blockers]
       properties:
         problem: { $ref: "#/components/schemas/ProblemResponse" }
         statement:
@@ -1897,6 +1938,7 @@ components:
           type: object
           allOf: [{ $ref: "#/components/schemas/ProblemCheckRun" }]
           nullable: true
+        flow: { $ref: "#/components/schemas/ProblemAuthoringFlow" }
         publishable: { type: boolean }
         blockers:
           type: array
@@ -2387,6 +2429,9 @@ components:
     TestcaseSetEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/TestcaseSetResponse" } }
+    TestcaseSetUploadEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/TestcaseSetUploadResponse" } }
     ProblemCheckRunEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/ProblemCheckRun" } }

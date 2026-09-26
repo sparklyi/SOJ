@@ -64,7 +64,6 @@ need curl
 need docker
 need grep
 need jq
-need shasum
 need zip
 
 wait_http "$API_URL/readyz"
@@ -139,23 +138,20 @@ SELECT user_id, role_code, NULL, 'granted', 'smoke bootstrap root'
 FROM granted;
 SQL
 
-PROBLEM_RESPONSE="$(api_json POST /api/v1/problems "{\"title\":\"Smoke A+B $RUN_ID\",\"slug\":\"smoke-ab-$RUN_ID\",\"difficulty\":\"easy\",\"visibility\":\"public\",\"time_limit_ms\":1000,\"memory_limit_kb\":65536}")"
+PROBLEM_RESPONSE="$(api_json POST /api/v1/problems "{\"title\":\"Smoke A+B $RUN_ID\",\"difficulty\":\"easy\",\"visibility\":\"public\",\"time_limit_ms\":1000,\"memory_limit_kb\":65536}")"
 PROBLEM_ID="$(jq -r '.data.id' <<<"$PROBLEM_RESPONSE")"
 
-api_json POST "/api/v1/problems/$PROBLEM_ID/statement" '{"title":"Smoke A+B","description":"Add two numbers","input_description":"two integers","output_description":"sum","samples":[{"input":"1 1\n","output":"2\n"}]}' >/dev/null
+api_json POST "/api/v1/problems/$PROBLEM_ID/statement" '{"description":"Add two numbers","input_description":"two integers","output_description":"sum","samples":[{"input":"1 1\n","output":"2\n"}]}' >/dev/null
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-printf '1 1\n' > "$TMP_DIR/input1.txt"
-printf '2\n' > "$TMP_DIR/output1.txt"
-(cd "$TMP_DIR" && zip -q cases.zip input1.txt output1.txt)
-SHA="$(shasum -a 256 "$TMP_DIR/cases.zip" | awk '{print $1}')"
+printf '1 1\n' > "$TMP_DIR/1.in"
+printf '2\n' > "$TMP_DIR/1.ans"
+(cd "$TMP_DIR" && zip -q cases.zip 1.in 1.ans)
 
 curl -fsS -X POST "$API_URL/api/v1/problems/$PROBLEM_ID/testcase-sets" \
   -H "authorization: Bearer $TOKEN" \
-  -F "archive=@$TMP_DIR/cases.zip;type=application/zip" \
-  -F "case_count=1" \
-  -F "checksum_sha256=$SHA" >/dev/null
+  -F "archive=@$TMP_DIR/cases.zip;type=application/zip" >/dev/null
 
 CHECK_RESPONSE="$(api_json POST "/api/v1/problems/$PROBLEM_ID/checks" '{}')"
 CHECK_VALID="$(jq -r '.data.summary.valid' <<<"$CHECK_RESPONSE")"

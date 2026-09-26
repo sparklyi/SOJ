@@ -19,8 +19,7 @@ RETURNING *;
 SELECT
     p.*,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
-    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
-    coalesce(ts.status, '')::text AS current_testcase_status
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
 LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
 LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
@@ -30,8 +29,7 @@ WHERE p.id = $1;
 SELECT
     p.*,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
-    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
-    coalesce(ts.status, '')::text AS current_testcase_status
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
 LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
 LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
@@ -41,8 +39,7 @@ WHERE p.slug = $1;
 SELECT
     p.*,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
-    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
-    coalesce(ts.status, '')::text AS current_testcase_status
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
 LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
 LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
@@ -130,8 +127,7 @@ RETURNING *;
 SELECT
     p.*,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
-    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
-    coalesce(ts.status, '')::text AS current_testcase_status
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
 LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
 LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
@@ -195,6 +191,13 @@ JOIN problem_tag_links ptl ON ptl.tag_id = pt.id
 WHERE ptl.problem_id = $1
 ORDER BY pt.name;
 
+-- name: ListProblemTagsByProblemIDs :many
+SELECT ptl.problem_id, pt.id, pt.name, pt.slug
+FROM problem_tag_links ptl
+JOIN problem_tags pt ON pt.id = ptl.tag_id
+WHERE ptl.problem_id = ANY(sqlc.arg('problem_ids')::bigint[])
+ORDER BY ptl.problem_id, pt.name;
+
 -- name: CreateTestcaseSet :one
 INSERT INTO testcase_sets (
     problem_id,
@@ -203,11 +206,10 @@ INSERT INTO testcase_sets (
     checksum_sha256,
     size_bytes,
     case_count,
-    status,
     is_current,
     created_by
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 RETURNING *;
 
@@ -217,12 +219,11 @@ SET is_current = false
 WHERE problem_id = $1
   AND is_current = true;
 
--- name: GetCurrentReadyTestcaseSet :one
+-- name: GetCurrentTestcaseSet :one
 SELECT *
 FROM testcase_sets
 WHERE problem_id = $1
-  AND is_current = true
-  AND status = 'ready';
+  AND is_current = true;
 
 -- name: NextTestcaseSetVersion :one
 SELECT coalesce(max(version), 0)::integer + 1 AS next_version
@@ -291,7 +292,7 @@ WHERE id = sqlc.arg('id')
   AND status IN ('queued', 'running')
 RETURNING *;
 
--- name: CreateProblemCheckFinding :one
+-- name: CreateProblemCheckFindings :many
 INSERT INTO problem_check_findings (
     run_id,
     severity,
@@ -300,15 +301,16 @@ INSERT INTO problem_check_findings (
     case_index,
     testcase_key,
     details
-) VALUES (
-    sqlc.arg('run_id'),
-    sqlc.arg('severity'),
-    sqlc.arg('code'),
-    sqlc.arg('message'),
-    sqlc.narg('case_index'),
-    sqlc.narg('testcase_key'),
-    sqlc.arg('details')
 )
+SELECT
+    (f->>'run_id')::bigint,
+    f->>'severity',
+    f->>'code',
+    f->>'message',
+    nullif(f->>'case_index', '')::integer,
+    nullif(f->>'testcase_key', ''),
+    coalesce(f->'details', '{}'::jsonb)
+FROM jsonb_array_elements(sqlc.arg('findings')::jsonb) AS f
 RETURNING *;
 
 -- name: GetProblemCheckFindingByID :one

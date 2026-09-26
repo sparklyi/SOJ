@@ -18,8 +18,8 @@ import (
 
 func TestTestcaseCacheReusesParsedCases(t *testing.T) {
 	archive := testcaseCacheArchive(t, map[string]string{
-		"input1.txt":  "1 2\n",
-		"output1.txt": "3\n",
+		"1.in":  "1 2\n",
+		"1.ans": "3\n",
 	})
 	store := &testcaseCacheStorage{objects: map[string][]byte{"cases.zip": archive}}
 	cache := NewTestcaseCache(store, TestcaseCacheOptions{MaxBytes: 64})
@@ -44,8 +44,8 @@ func TestTestcaseCacheReusesParsedCases(t *testing.T) {
 
 func TestTestcaseCacheSingleflightLoadsOnce(t *testing.T) {
 	archive := testcaseCacheArchive(t, map[string]string{
-		"input1.txt":  "1\n",
-		"output1.txt": "1\n",
+		"1.in":  "1\n",
+		"1.ans": "1\n",
 	})
 	store := &testcaseCacheStorage{
 		objects: map[string][]byte{"cases.zip": archive},
@@ -78,12 +78,12 @@ func TestTestcaseCacheSingleflightLoadsOnce(t *testing.T) {
 
 func TestTestcaseCacheEvictsLeastRecentlyUsedSet(t *testing.T) {
 	firstArchive := testcaseCacheArchive(t, map[string]string{
-		"input1.txt":  "1234",
-		"output1.txt": "5",
+		"1.in":  "1234",
+		"1.ans": "5",
 	})
 	secondArchive := testcaseCacheArchive(t, map[string]string{
-		"input1.txt":  "ab",
-		"output1.txt": "cde",
+		"1.in":  "ab",
+		"1.ans": "cde",
 	})
 	store := &testcaseCacheStorage{objects: map[string][]byte{
 		"first.zip":  firstArchive,
@@ -111,8 +111,8 @@ func TestTestcaseCacheEvictsLeastRecentlyUsedSet(t *testing.T) {
 
 func TestTestcaseCacheRejectsChecksumMismatch(t *testing.T) {
 	archive := testcaseCacheArchive(t, map[string]string{
-		"input1.txt":  "1\n",
-		"output1.txt": "1\n",
+		"1.in":  "1\n",
+		"1.ans": "1\n",
 	})
 	store := &testcaseCacheStorage{objects: map[string][]byte{"cases.zip": archive}}
 	cache := NewTestcaseCache(store, TestcaseCacheOptions{MaxBytes: 64})

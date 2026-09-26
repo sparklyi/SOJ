@@ -32,21 +32,20 @@ type ListProblemsByCursorParams struct {
 }
 
 type ListProblemsByCursorRow struct {
-	ID                    int64              `db:"id" json:"id"`
-	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
-	Title                 string             `db:"title" json:"title"`
-	Slug                  string             `db:"slug" json:"slug"`
-	Difficulty            string             `db:"difficulty" json:"difficulty"`
-	Visibility            string             `db:"visibility" json:"visibility"`
-	Status                string             `db:"status" json:"status"`
-	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
-	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
-	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
-	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
-	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
-	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+	ID                   int64              `db:"id" json:"id"`
+	OwnerUserID          int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                string             `db:"title" json:"title"`
+	Slug                 string             `db:"slug" json:"slug"`
+	Difficulty           string             `db:"difficulty" json:"difficulty"`
+	Visibility           string             `db:"visibility" json:"visibility"`
+	Status               string             `db:"status" json:"status"`
+	TimeLimitMs          int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb        int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
 
 type ListContestsByCursorParams struct {
@@ -153,7 +152,7 @@ func buildListProblemsByCursorQuery(arg ListProblemsByCursorParams) (string, []a
 	builder.add("(p.created_at, p.id) < (" + beforeArg + ", " + beforeIDArg + ")")
 
 	return builder.finish(
-		"SELECT\n    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,\n    coalesce(ps.id, 0)::bigint AS current_statement_id,\n    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,\n    coalesce(ts.status, '')::text AS current_testcase_status\nFROM problems p\nLEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true\nLEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true",
+		"SELECT\n    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,\n    coalesce(ps.id, 0)::bigint AS current_statement_id,\n    coalesce(ts.id, 0)::bigint AS current_testcase_set_id\nFROM problems p\nLEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true\nLEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true",
 		"p.created_at DESC, p.id DESC",
 		arg.Limit,
 	)
@@ -287,7 +286,6 @@ func (q *Queries) ListProblemsByCursor(ctx context.Context, arg ListProblemsByCu
 			&item.PublishedAt,
 			&item.CurrentStatementID,
 			&item.CurrentTestcaseSetID,
-			&item.CurrentTestcaseStatus,
 		)
 		return item, err
 	})

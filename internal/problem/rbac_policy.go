@@ -14,6 +14,22 @@ func (RBACProblemPolicy) CanCreate(actor auth.Actor) error {
 	return requireProblemPermission(actor, authz.PermissionProblemCreate)
 }
 
+// CanAccessAuthoring gates the authoring console entry. Reviewers and problem
+// managers use the console without creating drafts themselves, so any of the
+// authoring permissions is enough; an ordinary user has none of them.
+func (RBACProblemPolicy) CanAccessAuthoring(actor auth.Actor) error {
+	for _, permission := range []authz.Permission{
+		authz.PermissionProblemCreate,
+		authz.PermissionProblemReview,
+		authz.PermissionProblemManageAll,
+	} {
+		if hasProblemPermission(actor, permission) {
+			return nil
+		}
+	}
+	return problemForbidden("required problem permission is missing")
+}
+
 func (RBACProblemPolicy) CanEdit(actor auth.Actor, problem ProblemRecord) error {
 	if hasProblemPermission(actor, authz.PermissionProblemManageAll) {
 		return nil

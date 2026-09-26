@@ -30,7 +30,7 @@ func TestProblemReviewSubmitTransitionsDraftAndRecordsEvent(t *testing.T) {
 func TestProblemReviewApproveRequiresReadinessAndPublishesAtomically(t *testing.T) {
 	store := newReviewMemoryStore(ProblemRecord{ID: 1, OwnerUserID: 7, Status: StatusInReview})
 	store.statement = Statement{ID: 11, ProblemID: 1}
-	store.testcaseSet = TestcaseSetRecord{ID: 12, ProblemID: 1, Status: TestcaseStatusReady}
+	store.testcaseSet = TestcaseSetRecord{ID: 12, ProblemID: 1}
 	store.check = ProblemCheckRunRecord{ID: 13, ProblemID: 1, StatementID: 11, TestcaseSetID: 12, Status: ProblemCheckStatusCompleted, Summary: []byte(`{"valid":true}`)}
 	service := NewProblemReviewService(store, store, allowProblemReviewPolicy{})
 
@@ -153,7 +153,7 @@ func (s *reviewMemoryStore) GetCurrentProblemStatement(context.Context, int64) (
 	return s.statement, nil
 }
 
-func (s *reviewMemoryStore) GetCurrentReadyTestcaseSet(context.Context, int64) (TestcaseSetRecord, error) {
+func (s *reviewMemoryStore) GetCurrentTestcaseSet(context.Context, int64) (TestcaseSetRecord, error) {
 	if s.testcaseSet.ID == 0 {
 		return TestcaseSetRecord{}, apperror.NotFound("testcase_set.not_found", "testcase set not found")
 	}

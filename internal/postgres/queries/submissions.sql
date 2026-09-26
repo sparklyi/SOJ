@@ -270,8 +270,7 @@ WHERE submission_id = ANY(sqlc.arg('submission_ids')::bigint[]);
 SELECT *
 FROM testcase_sets
 WHERE id = $1
-  AND problem_id = $2
-  AND status = 'ready';
+  AND problem_id = $2;
 
 -- name: ListSubmissions :many
 SELECT *

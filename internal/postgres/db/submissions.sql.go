@@ -1427,11 +1427,10 @@ func (q *Queries) GetQueuedRejudgeBatchItemByTaskID(ctx context.Context, taskID 
 }
 
 const getReadyTestcaseSetByID = `-- name: GetReadyTestcaseSetByID :one
-SELECT id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, status, is_current, created_by, created_at
+SELECT id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, is_current, created_by, created_at
 FROM testcase_sets
 WHERE id = $1
   AND problem_id = $2
-  AND status = 'ready'
 `
 
 type GetReadyTestcaseSetByIDParams struct {
@@ -1450,7 +1449,6 @@ func (q *Queries) GetReadyTestcaseSetByID(ctx context.Context, arg GetReadyTestc
 		&i.ChecksumSha256,
 		&i.SizeBytes,
 		&i.CaseCount,
-		&i.Status,
 		&i.IsCurrent,
 		&i.CreatedBy,
 		&i.CreatedAt,

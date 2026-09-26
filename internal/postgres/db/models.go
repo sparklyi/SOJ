@@ -403,7 +403,6 @@ type TestcaseSet struct {
 	ChecksumSha256 string             `db:"checksum_sha256" json:"checksum_sha256"`
 	SizeBytes      int64              `db:"size_bytes" json:"size_bytes"`
 	CaseCount      int32              `db:"case_count" json:"case_count"`
-	Status         string             `db:"status" json:"status"`
 	IsCurrent      bool               `db:"is_current" json:"is_current"`
 	CreatedBy      int64              `db:"created_by" json:"created_by"`
 	CreatedAt      pgtype.Timestamptz `db:"created_at" json:"created_at"`

@@ -1,8 +1,8 @@
 package problem
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -17,7 +17,8 @@ type problemReaderStore interface {
 	CountProblems(ctx context.Context, filter ListProblemsFilter) (int64, error)
 	GetCurrentProblemStatement(ctx context.Context, problemID int64) (Statement, error)
 	ListProblemTags(ctx context.Context, problemID int64) ([]Tag, error)
-	GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error)
+	ListProblemTagsByProblemIDs(ctx context.Context, problemIDs []int64) (map[int64][]Tag, error)
+	GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSetRecord, error)
 	GetLatestCompletedProblemCheckRun(ctx context.Context, problemID, statementID, testcaseSetID int64) (ProblemCheckRunRecord, error)
 	ListProblemCheckFindings(ctx context.Context, runID int64) ([]ProblemCheckFindingRecord, error)
 	GetProblemStats(ctx context.Context, problemID int64) (ProblemStats, error)
@@ -57,6 +58,11 @@ func (r *ProblemReader) GetProblem(ctx context.Context, actor auth.Actor, id int
 }
 
 func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemList, error) {
+	if filter.Mine {
+		if err := (RBACProblemPolicy{}).CanAccessAuthoring(actor); err != nil {
+			return ProblemList{}, err
+		}
+	}
 	// 匿名与普通用户都只看到 published+public；owner/admin 由 normalizeListFilter 扩展。
 	filter = normalizeListFilter(actor, filter)
 	items, err := r.store.ListProblems(ctx, filter)
@@ -67,21 +73,19 @@ func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filt
 	if err != nil {
 		return ProblemList{}, err
 	}
-	if err := r.fillSubmissionCounts(ctx, items); err != nil {
+	responses, err := r.problemResponses(ctx, items)
+	if err != nil {
 		return ProblemList{}, err
-	}
-	responses := make([]ProblemResponse, 0, len(items))
-	for _, item := range items {
-		response, err := r.ProblemResponse(ctx, item)
-		if err != nil {
-			return ProblemList{}, err
-		}
-		responses = append(responses, response)
 	}
 	return ProblemList{Items: responses, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
 }
 
 func (r *ProblemReader) ListProblemsByCursor(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemCursorPage, error) {
+	if filter.Mine {
+		if err := (RBACProblemPolicy{}).CanAccessAuthoring(actor); err != nil {
+			return ProblemCursorPage{}, err
+		}
+	}
 	filter = normalizeListFilter(actor, filter)
 	limit := filter.PageSize
 	cursor := ProblemCursor{
@@ -105,16 +109,9 @@ func (r *ProblemReader) ListProblemsByCursor(ctx context.Context, actor auth.Act
 	if hasMore {
 		items = items[:limit]
 	}
-	if err := r.fillSubmissionCounts(ctx, items); err != nil {
+	responses, err := r.problemResponses(ctx, items)
+	if err != nil {
 		return ProblemCursorPage{}, err
-	}
-	responses := make([]ProblemResponse, 0, len(items))
-	for _, item := range items {
-		response, err := r.ProblemResponse(ctx, item)
-		if err != nil {
-			return ProblemCursorPage{}, err
-		}
-		responses = append(responses, response)
 	}
 	page := ProblemCursorPage{Items: responses}
 	if hasMore {
@@ -140,11 +137,30 @@ func (r *ProblemReader) GetProblemAuthoringState(ctx context.Context, actor auth
 	if err != nil {
 		return ProblemAuthoringState{}, err
 	}
+	var testcaseSet *TestcaseSetResponse
+	if readiness.testcaseSet != nil {
+		projected := testcaseSetResponseFromRecord(*readiness.testcaseSet)
+		testcaseSet = &projected
+	}
+	flowInput := authoringFlowInput{ProblemStatus: p.Status}
+	if readiness.statement != nil {
+		flowInput.StatementID = readiness.statement.ID
+	}
+	if readiness.testcaseSet != nil {
+		flowInput.TestcaseSetID = readiness.testcaseSet.ID
+	}
+	if readiness.latestCheck != nil {
+		flowInput.HasCheck = true
+		flowInput.CheckStatementID = readiness.latestCheck.StatementID
+		flowInput.CheckTestcaseSetID = readiness.latestCheck.TestcaseSetID
+		flowInput.CheckValid = readiness.latestCheck.Summary.Valid
+	}
 	return ProblemAuthoringState{
 		Problem:     response,
 		Statement:   readiness.statement,
-		TestcaseSet: readiness.testcaseSet,
+		TestcaseSet: testcaseSet,
 		LatestCheck: readiness.latestCheck,
+		Flow:        buildProblemAuthoringFlow(flowInput),
 		Publishable: len(readiness.blockers) == 0,
 		Blockers:    readiness.blockers,
 	}, nil
@@ -185,14 +201,61 @@ func (r *ProblemReader) fillSubmissionCounts(ctx context.Context, items []Proble
 	return nil
 }
 
+// fillProblemTags batches tag lookups for a page of problems so listing pays
+// for one tags query per page instead of one per problem.
+func (r *ProblemReader) fillProblemTags(ctx context.Context, items []ProblemRecord) (map[int64][]string, error) {
+	names := make(map[int64][]string, len(items))
+	if len(items) == 0 {
+		return names, nil
+	}
+	ids := make([]int64, 0, len(items))
+	for i := range items {
+		ids = append(ids, items[i].ID)
+	}
+	grouped, err := r.store.ListProblemTagsByProblemIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		names[items[i].ID] = tagNames(grouped[items[i].ID])
+	}
+	return names, nil
+}
+
+func (r *ProblemReader) problemResponses(ctx context.Context, items []ProblemRecord) ([]ProblemResponse, error) {
+	if err := r.fillSubmissionCounts(ctx, items); err != nil {
+		return nil, err
+	}
+	tags, err := r.fillProblemTags(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	responses := make([]ProblemResponse, 0, len(items))
+	for _, item := range items {
+		responses = append(responses, problemResponseFromRecord(item, tags[item.ID]))
+	}
+	return responses, nil
+}
+
 func (r *ProblemReader) ProblemResponse(ctx context.Context, p ProblemRecord) (ProblemResponse, error) {
 	tags, err := r.store.ListProblemTags(ctx, p.ID)
 	if err != nil {
 		return ProblemResponse{}, err
 	}
-	tagNames := make([]string, 0, len(tags))
+	return problemResponseFromRecord(p, tagNames(tags)), nil
+}
+
+func tagNames(tags []Tag) []string {
+	names := make([]string, 0, len(tags))
 	for _, tag := range tags {
-		tagNames = append(tagNames, tag.Name)
+		names = append(names, tag.Name)
+	}
+	return names
+}
+
+func problemResponseFromRecord(p ProblemRecord, tagNames []string) ProblemResponse {
+	if tagNames == nil {
+		tagNames = []string{}
 	}
 	return ProblemResponse{
 		ID:         p.ID,
@@ -212,11 +275,11 @@ func (r *ProblemReader) ProblemResponse(ctx context.Context, p ProblemRecord) (P
 		CreatedAt:       p.CreatedAt,
 		UpdatedAt:       p.UpdatedAt,
 		PublishedAt:     p.PublishedAt,
-	}, nil
+	}
 }
 
-func (r *ProblemReader) CurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
-	set, err := r.store.GetCurrentReadyTestcaseSet(ctx, problemID)
+func (r *ProblemReader) GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
+	set, err := r.store.GetCurrentTestcaseSet(ctx, problemID)
 	if err != nil {
 		return TestcaseSet{}, err
 	}
@@ -234,28 +297,22 @@ func (r *ProblemReader) CurrentReadyTestcaseSet(ctx context.Context, problemID i
 	if err != nil {
 		return TestcaseSet{}, err
 	}
-	data, err := readAllAndClose(body, defaultMaxTestcaseArchiveBytes)
+	data, err := readAllAndClose(body, MaxTestcaseArchiveBytes)
 	if err != nil {
-		var resourceErr *testcaseArchiveResourceError
-		if errors.As(err, &resourceErr) {
-			return TestcaseSet{}, testcaseArchiveBadRequest(err)
-		}
 		return TestcaseSet{}, err
 	}
-	cases, err := ParseTestcaseArchive(data, TestcaseArchiveOptions{
-		ExpectedCaseCount: set.CaseCount,
-		ExpectedSHA256:    set.ChecksumSHA256,
-		TimeLimit:         time.Duration(p.TimeLimitMS) * time.Millisecond,
-		MemoryKB:          int64(p.MemoryLimitKB),
+	cases, findings := LoadArchive(bytes.NewReader(data), int64(len(data)), ArchiveOptions{
+		ExpectedSHA256: set.ChecksumSHA256,
+		TimeLimit:      time.Duration(p.TimeLimitMS) * time.Millisecond,
+		MemoryKB:       int64(p.MemoryLimitKB),
 	})
-	if err != nil {
+	if err := ArchiveFindingsError(findings); err != nil {
 		return TestcaseSet{}, err
 	}
 	return TestcaseSet{
 		ID:        set.ID,
 		ProblemID: set.ProblemID,
 		Version:   int(set.Version),
-		Status:    set.Status,
 		Cases:     cases,
 	}, nil
 }
@@ -265,7 +322,7 @@ func (r *ProblemReader) GetForJudge(ctx context.Context, problemID int64) (Probl
 	if err != nil {
 		return Problem{}, err
 	}
-	if p.Status != StatusPublished || p.CurrentStatementID == 0 || p.CurrentTestcaseSetID == 0 || p.CurrentTestcaseStatus != TestcaseStatusReady {
+	if p.Status != StatusPublished || p.CurrentStatementID == 0 || p.CurrentTestcaseSetID == 0 {
 		return Problem{}, apperror.NotFound("problem.not_ready", "problem is not ready for judge")
 	}
 	return Problem{

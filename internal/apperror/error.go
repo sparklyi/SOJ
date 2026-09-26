@@ -9,10 +9,22 @@ type Error struct {
 	Code       string
 	Message    string
 	HTTPStatus int
+	Details    any
 }
 
 func New(code, message string, httpStatus int) *Error {
 	return &Error{Code: code, Message: message, HTTPStatus: httpStatus}
+}
+
+// WithDetails returns a copy of the error carrying structured details. The
+// receiver is left untouched so shared sentinel errors stay immutable.
+func (e *Error) WithDetails(details any) *Error {
+	if e == nil {
+		return nil
+	}
+	clone := *e
+	clone.Details = details
+	return &clone
 }
 
 func (e *Error) Error() string {

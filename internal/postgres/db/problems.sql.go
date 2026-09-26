@@ -225,7 +225,7 @@ func (q *Queries) CreateProblem(ctx context.Context, arg CreateProblemParams) (P
 	return i, err
 }
 
-const createProblemCheckFinding = `-- name: CreateProblemCheckFinding :one
+const createProblemCheckFindings = `-- name: CreateProblemCheckFindings :many
 INSERT INTO problem_check_findings (
     run_id,
     severity,
@@ -234,51 +234,47 @@ INSERT INTO problem_check_findings (
     case_index,
     testcase_key,
     details
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7
 )
+SELECT
+    (f->>'run_id')::bigint,
+    f->>'severity',
+    f->>'code',
+    f->>'message',
+    nullif(f->>'case_index', '')::integer,
+    nullif(f->>'testcase_key', ''),
+    coalesce(f->'details', '{}'::jsonb)
+FROM jsonb_array_elements($1::jsonb) AS f
 RETURNING id, run_id, severity, code, message, case_index, testcase_key, details, created_at
 `
 
-type CreateProblemCheckFindingParams struct {
-	RunID       int64       `db:"run_id" json:"run_id"`
-	Severity    string      `db:"severity" json:"severity"`
-	Code        string      `db:"code" json:"code"`
-	Message     string      `db:"message" json:"message"`
-	CaseIndex   pgtype.Int4 `db:"case_index" json:"case_index"`
-	TestcaseKey pgtype.Text `db:"testcase_key" json:"testcase_key"`
-	Details     []byte      `db:"details" json:"details"`
-}
-
-func (q *Queries) CreateProblemCheckFinding(ctx context.Context, arg CreateProblemCheckFindingParams) (ProblemCheckFinding, error) {
-	row := q.db.QueryRow(ctx, createProblemCheckFinding,
-		arg.RunID,
-		arg.Severity,
-		arg.Code,
-		arg.Message,
-		arg.CaseIndex,
-		arg.TestcaseKey,
-		arg.Details,
-	)
-	var i ProblemCheckFinding
-	err := row.Scan(
-		&i.ID,
-		&i.RunID,
-		&i.Severity,
-		&i.Code,
-		&i.Message,
-		&i.CaseIndex,
-		&i.TestcaseKey,
-		&i.Details,
-		&i.CreatedAt,
-	)
-	return i, err
+func (q *Queries) CreateProblemCheckFindings(ctx context.Context, findings []byte) ([]ProblemCheckFinding, error) {
+	rows, err := q.db.Query(ctx, createProblemCheckFindings, findings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProblemCheckFinding
+	for rows.Next() {
+		var i ProblemCheckFinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Severity,
+			&i.Code,
+			&i.Message,
+			&i.CaseIndex,
+			&i.TestcaseKey,
+			&i.Details,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const createProblemCheckRun = `-- name: CreateProblemCheckRun :one
@@ -426,13 +422,12 @@ INSERT INTO testcase_sets (
     checksum_sha256,
     size_bytes,
     case_count,
-    status,
     is_current,
     created_by
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
-RETURNING id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, status, is_current, created_by, created_at
+RETURNING id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, is_current, created_by, created_at
 `
 
 type CreateTestcaseSetParams struct {
@@ -442,7 +437,6 @@ type CreateTestcaseSetParams struct {
 	ChecksumSha256 string `db:"checksum_sha256" json:"checksum_sha256"`
 	SizeBytes      int64  `db:"size_bytes" json:"size_bytes"`
 	CaseCount      int32  `db:"case_count" json:"case_count"`
-	Status         string `db:"status" json:"status"`
 	IsCurrent      bool   `db:"is_current" json:"is_current"`
 	CreatedBy      int64  `db:"created_by" json:"created_by"`
 }
@@ -455,7 +449,6 @@ func (q *Queries) CreateTestcaseSet(ctx context.Context, arg CreateTestcaseSetPa
 		arg.ChecksumSha256,
 		arg.SizeBytes,
 		arg.CaseCount,
-		arg.Status,
 		arg.IsCurrent,
 		arg.CreatedBy,
 	)
@@ -468,7 +461,6 @@ func (q *Queries) CreateTestcaseSet(ctx context.Context, arg CreateTestcaseSetPa
 		&i.ChecksumSha256,
 		&i.SizeBytes,
 		&i.CaseCount,
-		&i.Status,
 		&i.IsCurrent,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -547,16 +539,15 @@ func (q *Queries) GetCurrentProblemStatement(ctx context.Context, problemID int6
 	return i, err
 }
 
-const getCurrentReadyTestcaseSet = `-- name: GetCurrentReadyTestcaseSet :one
-SELECT id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, status, is_current, created_by, created_at
+const getCurrentTestcaseSet = `-- name: GetCurrentTestcaseSet :one
+SELECT id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, is_current, created_by, created_at
 FROM testcase_sets
 WHERE problem_id = $1
   AND is_current = true
-  AND status = 'ready'
 `
 
-func (q *Queries) GetCurrentReadyTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
-	row := q.db.QueryRow(ctx, getCurrentReadyTestcaseSet, problemID)
+func (q *Queries) GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error) {
+	row := q.db.QueryRow(ctx, getCurrentTestcaseSet, problemID)
 	var i TestcaseSet
 	err := row.Scan(
 		&i.ID,
@@ -566,7 +557,6 @@ func (q *Queries) GetCurrentReadyTestcaseSet(ctx context.Context, problemID int6
 		&i.ChecksumSha256,
 		&i.SizeBytes,
 		&i.CaseCount,
-		&i.Status,
 		&i.IsCurrent,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -615,8 +605,7 @@ const getProblemByID = `-- name: GetProblemByID :one
 SELECT
     p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
-    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
-    coalesce(ts.status, '')::text AS current_testcase_status
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
 LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
 LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
@@ -624,21 +613,20 @@ WHERE p.id = $1
 `
 
 type GetProblemByIDRow struct {
-	ID                    int64              `db:"id" json:"id"`
-	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
-	Title                 string             `db:"title" json:"title"`
-	Slug                  string             `db:"slug" json:"slug"`
-	Difficulty            string             `db:"difficulty" json:"difficulty"`
-	Visibility            string             `db:"visibility" json:"visibility"`
-	Status                string             `db:"status" json:"status"`
-	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
-	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
-	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
-	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
-	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
-	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+	ID                   int64              `db:"id" json:"id"`
+	OwnerUserID          int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                string             `db:"title" json:"title"`
+	Slug                 string             `db:"slug" json:"slug"`
+	Difficulty           string             `db:"difficulty" json:"difficulty"`
+	Visibility           string             `db:"visibility" json:"visibility"`
+	Status               string             `db:"status" json:"status"`
+	TimeLimitMs          int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb        int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
 
 func (q *Queries) GetProblemByID(ctx context.Context, id int64) (GetProblemByIDRow, error) {
@@ -659,7 +647,6 @@ func (q *Queries) GetProblemByID(ctx context.Context, id int64) (GetProblemByIDR
 		&i.PublishedAt,
 		&i.CurrentStatementID,
 		&i.CurrentTestcaseSetID,
-		&i.CurrentTestcaseStatus,
 	)
 	return i, err
 }
@@ -668,8 +655,7 @@ const getProblemBySlug = `-- name: GetProblemBySlug :one
 SELECT
     p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
-    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
-    coalesce(ts.status, '')::text AS current_testcase_status
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
 LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
 LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
@@ -677,21 +663,20 @@ WHERE p.slug = $1
 `
 
 type GetProblemBySlugRow struct {
-	ID                    int64              `db:"id" json:"id"`
-	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
-	Title                 string             `db:"title" json:"title"`
-	Slug                  string             `db:"slug" json:"slug"`
-	Difficulty            string             `db:"difficulty" json:"difficulty"`
-	Visibility            string             `db:"visibility" json:"visibility"`
-	Status                string             `db:"status" json:"status"`
-	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
-	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
-	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
-	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
-	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
-	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+	ID                   int64              `db:"id" json:"id"`
+	OwnerUserID          int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                string             `db:"title" json:"title"`
+	Slug                 string             `db:"slug" json:"slug"`
+	Difficulty           string             `db:"difficulty" json:"difficulty"`
+	Visibility           string             `db:"visibility" json:"visibility"`
+	Status               string             `db:"status" json:"status"`
+	TimeLimitMs          int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb        int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
 
 func (q *Queries) GetProblemBySlug(ctx context.Context, slug string) (GetProblemBySlugRow, error) {
@@ -712,7 +697,6 @@ func (q *Queries) GetProblemBySlug(ctx context.Context, slug string) (GetProblem
 		&i.PublishedAt,
 		&i.CurrentStatementID,
 		&i.CurrentTestcaseSetID,
-		&i.CurrentTestcaseStatus,
 	)
 	return i, err
 }
@@ -968,12 +952,51 @@ func (q *Queries) ListProblemTags(ctx context.Context, problemID int64) ([]Probl
 	return items, nil
 }
 
+const listProblemTagsByProblemIDs = `-- name: ListProblemTagsByProblemIDs :many
+SELECT ptl.problem_id, pt.id, pt.name, pt.slug
+FROM problem_tag_links ptl
+JOIN problem_tags pt ON pt.id = ptl.tag_id
+WHERE ptl.problem_id = ANY($1::bigint[])
+ORDER BY ptl.problem_id, pt.name
+`
+
+type ListProblemTagsByProblemIDsRow struct {
+	ProblemID int64  `db:"problem_id" json:"problem_id"`
+	ID        int64  `db:"id" json:"id"`
+	Name      string `db:"name" json:"name"`
+	Slug      string `db:"slug" json:"slug"`
+}
+
+func (q *Queries) ListProblemTagsByProblemIDs(ctx context.Context, problemIds []int64) ([]ListProblemTagsByProblemIDsRow, error) {
+	rows, err := q.db.Query(ctx, listProblemTagsByProblemIDs, problemIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProblemTagsByProblemIDsRow
+	for rows.Next() {
+		var i ListProblemTagsByProblemIDsRow
+		if err := rows.Scan(
+			&i.ProblemID,
+			&i.ID,
+			&i.Name,
+			&i.Slug,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProblems = `-- name: ListProblems :many
 SELECT
     p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
-    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
-    coalesce(ts.status, '')::text AS current_testcase_status
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
 LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
 LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
@@ -1019,21 +1042,20 @@ type ListProblemsParams struct {
 }
 
 type ListProblemsRow struct {
-	ID                    int64              `db:"id" json:"id"`
-	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
-	Title                 string             `db:"title" json:"title"`
-	Slug                  string             `db:"slug" json:"slug"`
-	Difficulty            string             `db:"difficulty" json:"difficulty"`
-	Visibility            string             `db:"visibility" json:"visibility"`
-	Status                string             `db:"status" json:"status"`
-	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
-	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
-	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
-	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
-	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
-	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+	ID                   int64              `db:"id" json:"id"`
+	OwnerUserID          int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                string             `db:"title" json:"title"`
+	Slug                 string             `db:"slug" json:"slug"`
+	Difficulty           string             `db:"difficulty" json:"difficulty"`
+	Visibility           string             `db:"visibility" json:"visibility"`
+	Status               string             `db:"status" json:"status"`
+	TimeLimitMs          int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb        int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
 
 func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]ListProblemsRow, error) {
@@ -1071,7 +1093,6 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]L
 			&i.PublishedAt,
 			&i.CurrentStatementID,
 			&i.CurrentTestcaseSetID,
-			&i.CurrentTestcaseStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -1087,8 +1108,7 @@ const lockProblemForUpdate = `-- name: LockProblemForUpdate :one
 SELECT
     p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
-    coalesce(ts.id, 0)::bigint AS current_testcase_set_id,
-    coalesce(ts.status, '')::text AS current_testcase_status
+    coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
 LEFT JOIN problem_statements ps ON ps.problem_id = p.id AND ps.is_current = true
 LEFT JOIN testcase_sets ts ON ts.problem_id = p.id AND ts.is_current = true
@@ -1097,21 +1117,20 @@ FOR UPDATE OF p
 `
 
 type LockProblemForUpdateRow struct {
-	ID                    int64              `db:"id" json:"id"`
-	OwnerUserID           int64              `db:"owner_user_id" json:"owner_user_id"`
-	Title                 string             `db:"title" json:"title"`
-	Slug                  string             `db:"slug" json:"slug"`
-	Difficulty            string             `db:"difficulty" json:"difficulty"`
-	Visibility            string             `db:"visibility" json:"visibility"`
-	Status                string             `db:"status" json:"status"`
-	TimeLimitMs           int32              `db:"time_limit_ms" json:"time_limit_ms"`
-	MemoryLimitKb         int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
-	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-	PublishedAt           pgtype.Timestamptz `db:"published_at" json:"published_at"`
-	CurrentStatementID    int64              `db:"current_statement_id" json:"current_statement_id"`
-	CurrentTestcaseSetID  int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
-	CurrentTestcaseStatus string             `db:"current_testcase_status" json:"current_testcase_status"`
+	ID                   int64              `db:"id" json:"id"`
+	OwnerUserID          int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title                string             `db:"title" json:"title"`
+	Slug                 string             `db:"slug" json:"slug"`
+	Difficulty           string             `db:"difficulty" json:"difficulty"`
+	Visibility           string             `db:"visibility" json:"visibility"`
+	Status               string             `db:"status" json:"status"`
+	TimeLimitMs          int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb        int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
+	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
 
 func (q *Queries) LockProblemForUpdate(ctx context.Context, id int64) (LockProblemForUpdateRow, error) {
@@ -1132,7 +1151,6 @@ func (q *Queries) LockProblemForUpdate(ctx context.Context, id int64) (LockProbl
 		&i.PublishedAt,
 		&i.CurrentStatementID,
 		&i.CurrentTestcaseSetID,
-		&i.CurrentTestcaseStatus,
 	)
 	return i, err
 }
