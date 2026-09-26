@@ -356,7 +356,7 @@ func TestGetProblemAuthoringStateReturnsOwnerWorkspace(t *testing.T) {
 	}
 }
 
-func TestListProblemsMineScopesRequestToCurrentUser(t *testing.T) {
+func TestListProblemsMineRequiresAuthoringAccess(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Owned", Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
@@ -364,6 +364,34 @@ func TestListProblemsMineScopesRequestToCurrentUser(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems?mine=true", nil)
 	req.Header.Set("X-User-ID", "10")
 	req.Header.Set("X-User-Role", "user")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Error.Code != "problem.forbidden" {
+		t.Fatalf("error code = %q, want problem.forbidden", envelope.Error.Code)
+	}
+}
+
+func TestListProblemsMineScopesRequestToCurrentUser(t *testing.T) {
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Owned", Status: StatusDraft, Visibility: VisibilityPrivate}
+	service := newProblemService(repo, &fakeStorage{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems?mine=true", nil)
+	req.Header.Set("X-User-ID", "10")
+	req.Header.Set("X-User-Role", "author")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)

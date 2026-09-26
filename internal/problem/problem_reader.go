@@ -58,6 +58,11 @@ func (r *ProblemReader) GetProblem(ctx context.Context, actor auth.Actor, id int
 }
 
 func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemList, error) {
+	if filter.Mine {
+		if err := (RBACProblemPolicy{}).CanAccessAuthoring(actor); err != nil {
+			return ProblemList{}, err
+		}
+	}
 	// 匿名与普通用户都只看到 published+public；owner/admin 由 normalizeListFilter 扩展。
 	filter = normalizeListFilter(actor, filter)
 	items, err := r.store.ListProblems(ctx, filter)
@@ -76,6 +81,11 @@ func (r *ProblemReader) ListProblems(ctx context.Context, actor auth.Actor, filt
 }
 
 func (r *ProblemReader) ListProblemsByCursor(ctx context.Context, actor auth.Actor, filter ListProblemsFilter) (ProblemCursorPage, error) {
+	if filter.Mine {
+		if err := (RBACProblemPolicy{}).CanAccessAuthoring(actor); err != nil {
+			return ProblemCursorPage{}, err
+		}
+	}
 	filter = normalizeListFilter(actor, filter)
 	limit := filter.PageSize
 	cursor := ProblemCursor{
