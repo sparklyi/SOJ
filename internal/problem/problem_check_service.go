@@ -203,18 +203,17 @@ func storageUnreadableFinding(storageKey, message string) problemCheckFindingDra
 }
 
 func archiveErrorFinding(err error, storageKey string) problemCheckFindingDraft {
-	code := codeArchiveTooLarge
-	message := "testcase archive is too large"
 	if appErr, ok := apperror.From(err); ok {
-		code = appErr.Code
-		message = appErr.Message
+		return problemCheckFindingDraft{
+			severity: ProblemCheckSeverityError,
+			code:     appErr.Code,
+			message:  appErr.Message,
+			details:  problemCheckDetails(map[string]any{"storage_key": storageKey}),
+		}
 	}
-	return problemCheckFindingDraft{
-		severity: ProblemCheckSeverityError,
-		code:     code,
-		message:  message,
-		details:  problemCheckDetails(map[string]any{"storage_key": storageKey}),
-	}
+	// The archive was fetched but could not be fully read: that is a storage
+	// failure, not a malformed archive.
+	return storageUnreadableFinding(storageKey, "testcase archive cannot be read from storage")
 }
 
 // archiveUnreadable reports whether the archive could not even be opened as a
