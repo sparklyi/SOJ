@@ -233,6 +233,13 @@ func TestArchiveFindingsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("error finding must produce an error")
 	}
+	assertHTTPStatus(t, err, 422)
+
+	if err := ArchiveFindingsError([]Finding{errorFinding(codeArchiveTooLarge, "", "too big")}); err == nil {
+		t.Fatal("archive_too_large must produce an error")
+	} else {
+		assertHTTPStatus(t, err, 413)
+	}
 }
 
 func TestNaturalLessOrdersNumericRuns(t *testing.T) {

@@ -146,8 +146,11 @@ func ArchiveFindingsError(findings []Finding) error {
 			continue
 		}
 		status := http.StatusBadRequest
-		if finding.Code == codeArchiveCorrupted {
+		switch finding.Code {
+		case codeArchiveCorrupted:
 			status = http.StatusUnprocessableEntity
+		case codeArchiveTooLarge:
+			status = http.StatusRequestEntityTooLarge
 		}
 		if finding.File != "" {
 			return apperror.New(finding.Code, finding.File+": "+finding.Message, status)
