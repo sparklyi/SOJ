@@ -196,26 +196,30 @@ setup_problem() {
     echo "failed to get access token" >&2
     exit 1
   fi
+  local user_id
+  user_id="$(jq -r '.data.user.id' <<< "$register_response")"
+  # No bootstrap account exists in a fresh stack, so grant root before the
+  # authoring workflow; the review gate below still runs end to end.
+  psql_scalar "INSERT INTO user_role_assignments (user_id, role_code) VALUES ($user_id, 'root') ON CONFLICT DO NOTHING;" >/dev/null
 
-  local problem_response tmp_dir sha
-  problem_response="$(api_json POST /api/v1/problems "{\"title\":\"Capacity A+B $RUN_ID\",\"slug\":\"capacity-ab-$RUN_ID\",\"difficulty\":\"easy\",\"visibility\":\"public\",\"time_limit_ms\":$CAPACITY_TIME_LIMIT_MS,\"memory_limit_kb\":$CAPACITY_MEMORY_LIMIT_KB}")"
+  local problem_response tmp_dir
+  problem_response="$(api_json POST /api/v1/problems "{\"title\":\"Capacity A+B $RUN_ID\",\"difficulty\":\"easy\",\"visibility\":\"public\",\"time_limit_ms\":$CAPACITY_TIME_LIMIT_MS,\"memory_limit_kb\":$CAPACITY_MEMORY_LIMIT_KB}")"
   PROBLEM_ID="$(jq -r '.data.id' <<< "$problem_response")"
-  api_json POST "/api/v1/problems/$PROBLEM_ID/statement" '{"title":"Capacity A+B","description":"Add two numbers","input_description":"two integers","output_description":"sum","samples":[{"input":"1 1\n","output":"2\n"}]}' >/dev/null
+  api_json POST "/api/v1/problems/$PROBLEM_ID/statement" '{"description":"Add two numbers","input_description":"two integers","output_description":"sum","samples":[{"input":"1 1\n","output":"2\n"}]}' >/dev/null
 
   tmp_dir="$TMP_ROOT/cases"
   mkdir -p "$tmp_dir"
-  printf '1 1\n' > "$tmp_dir/input1.txt"
-  printf '2\n' > "$tmp_dir/output1.txt"
-  (cd "$tmp_dir" && zip -q cases.zip input1.txt output1.txt)
-  sha="$(shasum -a 256 "$tmp_dir/cases.zip" | awk '{print $1}')"
+  printf '1 1\n' > "$tmp_dir/1.in"
+  printf '2\n' > "$tmp_dir/1.ans"
+  (cd "$tmp_dir" && zip -q cases.zip 1.in 1.ans)
 
   curl -fsS -X POST "$API_URL/api/v1/problems/$PROBLEM_ID/testcase-sets" \
     -H "authorization: Bearer $TOKEN" \
-    -F "archive=@$tmp_dir/cases.zip;type=application/zip" \
-    -F "case_count=1" \
-    -F "checksum_sha256=$sha" >/dev/null
+    -F "archive=@$tmp_dir/cases.zip;type=application/zip" >/dev/null
 
-  api_json PATCH "/api/v1/problems/$PROBLEM_ID" '{"status":"published"}' >/dev/null
+  api_json POST "/api/v1/problems/$PROBLEM_ID/checks" '{}' >/dev/null
+  api_json POST "/api/v1/problems/$PROBLEM_ID/review" >/dev/null
+  api_json POST "/api/v1/problems/$PROBLEM_ID/review/decision" '{"decision":"approve","comment":"capacity smoke"}' >/dev/null
 }
 
 source_code() {
@@ -416,7 +420,6 @@ need docker
 need grep
 need jq
 need sed
-need shasum
 need sort
 need wc
 need zip
