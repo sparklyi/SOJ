@@ -402,6 +402,167 @@ func TestCreateProblemStoresTags(t *testing.T) {
 	}
 }
 
+func assertExactJSONKeys(t *testing.T, object map[string]json.RawMessage, key string, want ...string) {
+	t.Helper()
+	if len(object) != len(want) {
+		t.Fatalf("%s keys = %v, want %v", key, mapKeys(object), want)
+	}
+	for _, name := range want {
+		if _, ok := object[name]; !ok {
+			t.Fatalf("%s keys = %v, want %v", key, mapKeys(object), want)
+		}
+	}
+}
+
+func mapKeys(object map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func TestUploadTestcaseSetResponseJSONShape(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		files        map[string]string
+		wantWarnings bool
+	}{
+		{name: "warning", files: map[string]string{"1.in": "1\n", "1.ans": "1\n", ".DS_Store": "junk"}, wantWarnings: true},
+		{name: "clean", files: map[string]string{"1.in": "1\n", "1.ans": "1\n"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := newFakeRepository()
+			repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
+			service := newProblemService(repo, &fakeStorage{})
+			router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+
+			body, contentType := testcaseMultipartBody(t, zipArchive(t, test.files))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", body)
+			req.Header.Set("Content-Type", contentType)
+			req.Header.Set("X-User-ID", "10")
+			req.Header.Set("X-User-Role", "author")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+			}
+			var payload struct {
+				Data map[string]json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			want := []string{"id", "problem_id", "version", "case_count", "size_bytes", "checksum_sha256", "is_current", "created_at"}
+			if test.wantWarnings {
+				want = append(want, "warnings")
+			}
+			assertExactJSONKeys(t, payload.Data, "data", want...)
+			if _, ok := payload.Data["storage_key"]; ok {
+				t.Fatalf("upload response must not expose storage_key: %s", rec.Body.String())
+			}
+			if test.wantWarnings {
+				var warnings []map[string]json.RawMessage
+				if err := json.Unmarshal(payload.Data["warnings"], &warnings); err != nil {
+					t.Fatalf("decode warnings: %v", err)
+				}
+				if len(warnings) != 1 {
+					t.Fatalf("warnings = %s", payload.Data["warnings"])
+				}
+				assertExactJSONKeys(t, warnings[0], "data.warnings[0]", "severity", "code", "file", "message")
+			}
+		})
+	}
+}
+
+func TestAuthoringStateResponseJSONShape(t *testing.T) {
+	repo := newFakeRepository()
+	seedPublishableProblem(repo)
+	service := newProblemService(repo, &fakeStorage{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems/1/authoring", nil)
+	req.Header.Set("X-User-ID", "10")
+	req.Header.Set("X-User-Role", "author")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var payload struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	assertExactJSONKeys(t, payload.Data, "data", "problem", "statement", "testcase_set", "latest_check", "flow", "publishable", "blockers")
+
+	var testcaseSet map[string]json.RawMessage
+	if err := json.Unmarshal(payload.Data["testcase_set"], &testcaseSet); err != nil {
+		t.Fatalf("decode testcase_set: %v", err)
+	}
+	assertExactJSONKeys(t, testcaseSet, "data.testcase_set", "id", "problem_id", "version", "case_count", "size_bytes", "checksum_sha256", "is_current", "created_at")
+
+	var flow map[string]json.RawMessage
+	if err := json.Unmarshal(payload.Data["flow"], &flow); err != nil {
+		t.Fatalf("decode flow: %v", err)
+	}
+	assertExactJSONKeys(t, flow, "data.flow", "current_step", "remaining", "steps")
+
+	var steps []map[string]json.RawMessage
+	if err := json.Unmarshal(flow["steps"], &steps); err != nil {
+		t.Fatalf("decode steps: %v", err)
+	}
+	if len(steps) != 5 {
+		t.Fatalf("steps = %d, want 5", len(steps))
+	}
+	for _, step := range steps {
+		assertExactJSONKeys(t, step, "data.flow.steps[]", "key", "status")
+	}
+
+	var blockers []map[string]json.RawMessage
+	if err := json.Unmarshal(payload.Data["blockers"], &blockers); err != nil {
+		t.Fatalf("decode blockers: %v", err)
+	}
+	if len(blockers) == 0 {
+		t.Fatalf("blockers = %s, want at least check_required", payload.Data["blockers"])
+	}
+	for _, blocker := range blockers {
+		assertExactJSONKeys(t, blocker, "data.blockers[]", "code", "message", "step")
+	}
+}
+
+func TestProblemCheckSummaryJSONShapeDropsExpectedCaseCount(t *testing.T) {
+	checks := &fakeProblemCheckService{result: ProblemCheckResult{Run: ProblemCheckRun{
+		ID: 99, ProblemID: 1, Status: ProblemCheckStatusCompleted,
+		Summary:  ProblemCheckSummary{CaseCount: 2, FindingCount: 1, ErrorCount: 1, StorageReadable: true, ZipReadable: true},
+		Findings: []ProblemCheckFinding{},
+	}}}
+	service := newProblemService(newFakeRepository(), &fakeStorage{})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{
+		&Module{handler: &Handler{service: service, checkRunner: checks, checkGetter: checks}},
+	}})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/checks", nil)
+	req.Header.Set("X-User-ID", "10")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			Summary map[string]json.RawMessage `json:"summary"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	assertExactJSONKeys(t, payload.Data.Summary, "data.summary",
+		"finding_count", "error_count", "warning_count", "info_count", "case_count", "storage_readable", "zip_readable", "valid")
+}
+
 type fakeProblemCheckService struct {
 	result       ProblemCheckResult
 	err          error
