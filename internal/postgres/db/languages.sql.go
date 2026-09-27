@@ -55,33 +55,6 @@ func (q *Queries) DisableLanguagesNotListed(ctx context.Context, arg DisableLang
 	return result.RowsAffected(), nil
 }
 
-const getEnabledLanguageByID = `-- name: GetEnabledLanguageByID :one
-SELECT id, engine, engine_language_id, name, version, compile_command, run_command, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
-FROM languages
-WHERE id = $1
-  AND enabled = true
-`
-
-func (q *Queries) GetEnabledLanguageByID(ctx context.Context, id int64) (Language, error) {
-	row := q.db.QueryRow(ctx, getEnabledLanguageByID, id)
-	var i Language
-	err := row.Scan(
-		&i.ID,
-		&i.Engine,
-		&i.EngineLanguageID,
-		&i.Name,
-		&i.Version,
-		&i.CompileCommand,
-		&i.RunCommand,
-		&i.DefaultTimeLimitMs,
-		&i.DefaultMemoryLimitKb,
-		&i.Enabled,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getLanguageByID = `-- name: GetLanguageByID :one
 SELECT id, engine, engine_language_id, name, version, compile_command, run_command, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
 FROM languages

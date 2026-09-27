@@ -22,6 +22,17 @@ type Artifact struct {
 	CreatedAt      pgtype.Timestamptz `db:"created_at" json:"created_at"`
 }
 
+type AuditEvent struct {
+	ID          int64              `db:"id" json:"id"`
+	ActorUserID pgtype.Int8        `db:"actor_user_id" json:"actor_user_id"`
+	Action      string             `db:"action" json:"action"`
+	ObjectType  string             `db:"object_type" json:"object_type"`
+	ObjectID    int64              `db:"object_id" json:"object_id"`
+	Reason      string             `db:"reason" json:"reason"`
+	Metadata    []byte             `db:"metadata" json:"metadata"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
+}
+
 type Contest struct {
 	ID             int64              `db:"id" json:"id"`
 	OwnerUserID    int64              `db:"owner_user_id" json:"owner_user_id"`
@@ -202,18 +213,19 @@ type Language struct {
 }
 
 type Problem struct {
-	ID            int64              `db:"id" json:"id"`
-	OwnerUserID   int64              `db:"owner_user_id" json:"owner_user_id"`
-	Title         string             `db:"title" json:"title"`
-	Slug          string             `db:"slug" json:"slug"`
-	Difficulty    string             `db:"difficulty" json:"difficulty"`
-	Visibility    string             `db:"visibility" json:"visibility"`
-	Status        string             `db:"status" json:"status"`
-	TimeLimitMs   int32              `db:"time_limit_ms" json:"time_limit_ms"`
-	MemoryLimitKb int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
-	CreatedAt     pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-	PublishedAt   pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	ID                 int64              `db:"id" json:"id"`
+	OwnerUserID        int64              `db:"owner_user_id" json:"owner_user_id"`
+	Title              string             `db:"title" json:"title"`
+	Slug               string             `db:"slug" json:"slug"`
+	Difficulty         string             `db:"difficulty" json:"difficulty"`
+	Visibility         string             `db:"visibility" json:"visibility"`
+	Status             string             `db:"status" json:"status"`
+	TimeLimitMs        int32              `db:"time_limit_ms" json:"time_limit_ms"`
+	MemoryLimitKb      int32              `db:"memory_limit_kb" json:"memory_limit_kb"`
+	CreatedAt          pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	PublishedAt        pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	ArchivedFromStatus pgtype.Text        `db:"archived_from_status" json:"archived_from_status"`
 }
 
 type ProblemCheckFinding struct {
@@ -330,16 +342,6 @@ type Role struct {
 	DisplayName string `db:"display_name" json:"display_name"`
 	Scope       string `db:"scope" json:"scope"`
 	SystemRole  bool   `db:"system_role" json:"system_role"`
-}
-
-type RoleAuditEvent struct {
-	ID          int64              `db:"id" json:"id"`
-	UserID      int64              `db:"user_id" json:"user_id"`
-	RoleCode    string             `db:"role_code" json:"role_code"`
-	ActorUserID pgtype.Int8        `db:"actor_user_id" json:"actor_user_id"`
-	Action      string             `db:"action" json:"action"`
-	Reason      string             `db:"reason" json:"reason"`
-	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
 }
 
 type Run struct {

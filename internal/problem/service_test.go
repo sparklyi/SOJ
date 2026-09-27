@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 	"SOJ/internal/storage"
 )
@@ -76,6 +77,40 @@ func TestUpdateProblemRejectsStatusMutation(t *testing.T) {
 
 	_, err := service.UpdateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, UpdateProblemInput{Status: &status})
 	assertAppCode(t, err, "problem.status_managed_by_review")
+}
+
+func TestRestoreProblemRequiresManageAll(t *testing.T) {
+	repo := newFakeRepository()
+	seedPublishableProblem(repo)
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusArchived, Visibility: VisibilityPrivate}
+	service := newProblemService(repo, &fakeStorage{})
+
+	_, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1)
+	assertAppCode(t, err, "problem.forbidden")
+}
+
+func TestRestoreProblemRejectsProblemThatIsNotArchived(t *testing.T) {
+	repo := newFakeRepository()
+	seedPublishableProblem(repo)
+	service := newProblemService(repo, &fakeStorage{})
+
+	_, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1)
+	assertAppCode(t, err, "problem.not_archived")
+}
+
+func TestRestoreProblemReListsArchivedProblem(t *testing.T) {
+	repo := newFakeRepository()
+	seedPublishableProblem(repo)
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusArchived, Visibility: VisibilityPrivate}
+	service := newProblemService(repo, &fakeStorage{})
+
+	restored, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1)
+	if err != nil {
+		t.Fatalf("RestoreProblem() error = %v", err)
+	}
+	if restored.Status != StatusPublished {
+		t.Fatalf("RestoreProblem() status = %q, want %q", restored.Status, StatusPublished)
+	}
 }
 
 func TestSavingNewStatementInvalidatesPreviousValidCheck(t *testing.T) {
@@ -202,7 +237,7 @@ func TestAnonymousProblemReadsFollowPublicVisibility(t *testing.T) {
 }
 
 func TestNormalizeListFilterScopesMineToActor(t *testing.T) {
-	filter := normalizeListFilter(auth.Actor{UserID: 10, Role: auth.RoleAdmin}, ListProblemsFilter{Mine: true})
+	filter := normalizeListFilter(auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAdmin}}, ListProblemsFilter{Mine: true})
 
 	if filter.OwnerUserID != 10 || filter.IncludeAll {
 		t.Fatalf("mine filter = %+v", filter)
@@ -1059,6 +1094,22 @@ func (r *fakeRepository) ArchiveProblem(ctx context.Context, id int64) (ProblemR
 	defer r.mu.Unlock()
 	r.problems[id] = p
 	return p, nil
+}
+
+func (r *fakeRepository) RestoreProblem(ctx context.Context, id int64) (ProblemRecord, error) {
+	p, err := r.GetProblem(ctx, id)
+	if err != nil {
+		return ProblemRecord{}, err
+	}
+	p.Status = StatusPublished
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.problems[id] = p
+	return p, nil
+}
+
+func (r *fakeRepository) RecordAudit(context.Context, audit.Event) error {
+	return nil
 }
 
 func (r *fakeRepository) LockProblemForUpdate(ctx context.Context, id int64) (ProblemRecord, error) {

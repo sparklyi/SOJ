@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 )
 
 type memoryRepository struct {
@@ -39,6 +40,10 @@ func (r *memoryRepository) id() int64 {
 
 func (r *memoryRepository) WithTx(ctx context.Context, fn func(context.Context, contestTransaction) error) error {
 	return fn(ctx, r)
+}
+
+func (r *memoryRepository) RecordAudit(context.Context, audit.Event) error {
+	return nil
 }
 
 func (r *memoryRepository) CreateContest(ctx context.Context, input ContestRecord) (ContestRecord, error) {

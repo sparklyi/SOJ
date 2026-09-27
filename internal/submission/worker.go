@@ -24,7 +24,7 @@ type taskDispatchStore interface {
 	GetSubmission(context.Context, int64) (SubmissionRecord, error)
 	GetRun(context.Context, int64) (RunRecord, error)
 	GetArtifact(context.Context, int64) (ArtifactRecord, error)
-	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
+	GetLanguage(context.Context, int64) (LanguageRecord, error)
 	MarkSubmissionRunning(context.Context, int64) (SubmissionRecord, error)
 	MarkRunRunning(context.Context, int64) (RunRecord, error)
 	EnsureJudgeAttempt(context.Context, EnsureJudgeAttemptInput) (JudgeAttemptRecord, error)
@@ -157,8 +157,11 @@ func (d *TaskDispatcher) submissionRequestEvent(ctx context.Context, task JudgeT
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
-	language, err := d.store.GetEnabledLanguage(ctx, submission.LanguageID)
+	language, err := d.store.GetLanguage(ctx, submission.LanguageID)
 	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	if err := requireLanguageEnabled(language); err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
 	testcaseSet, err := d.testcases.ReadyTestcaseMetadata(ctx, submission.ProblemID, submission.TestcaseSetID)
@@ -235,8 +238,11 @@ func (d *TaskDispatcher) runRequestEvent(ctx context.Context, task JudgeTaskReco
 	if err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
-	language, err := d.store.GetEnabledLanguage(ctx, run.LanguageID)
+	language, err := d.store.GetLanguage(ctx, run.LanguageID)
 	if err != nil {
+		return judgeevents.RequestEvent{}, err
+	}
+	if err := requireLanguageEnabled(language); err != nil {
 		return judgeevents.RequestEvent{}, err
 	}
 	now := d.now()
@@ -298,7 +304,7 @@ type taskProcessStore interface {
 	MarkJudgeTaskRunning(context.Context, int64) (JudgeTaskRecord, error)
 	MarkSubmissionRunning(context.Context, int64) (SubmissionRecord, error)
 	GetArtifact(context.Context, int64) (ArtifactRecord, error)
-	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
+	GetLanguage(context.Context, int64) (LanguageRecord, error)
 	CompleteSubmissionWithResult(context.Context, int64, judge.Result) (SubmissionRecord, error)
 }
 
@@ -448,8 +454,11 @@ func (p *TaskProcessor) processMessage(ctx context.Context, message queue.Messag
 	if err != nil {
 		return p.failures.retryOrDead(ctx, message, task, err)
 	}
-	language, err := p.store.GetEnabledLanguage(ctx, submission.LanguageID)
+	language, err := p.store.GetLanguage(ctx, submission.LanguageID)
 	if err != nil {
+		return p.failures.retryOrDead(ctx, message, task, err)
+	}
+	if err := requireLanguageEnabled(language); err != nil {
 		return p.failures.retryOrDead(ctx, message, task, err)
 	}
 	if _, err := p.problems.GetForJudge(ctx, submission.ProblemID); err != nil {

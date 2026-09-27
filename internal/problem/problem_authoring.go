@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 	"SOJ/internal/storage"
 )
@@ -26,6 +27,8 @@ type problemAuthoringTx interface {
 	UpdateProblem(ctx context.Context, id int64, input UpdateProblemInput) (ProblemRecord, error)
 	SetProblemStatus(ctx context.Context, id int64, status string) (ProblemRecord, error)
 	ArchiveProblem(ctx context.Context, id int64) (ProblemRecord, error)
+	RestoreProblem(ctx context.Context, id int64) (ProblemRecord, error)
+	RecordAudit(ctx context.Context, event audit.Event) error
 	LockProblemForUpdate(ctx context.Context, id int64) (ProblemRecord, error)
 	NextProblemStatementVersion(ctx context.Context, problemID int64) (int32, error)
 	ClearCurrentProblemStatement(ctx context.Context, problemID int64) error
@@ -140,9 +143,48 @@ func (a *ProblemAuthoring) ArchiveProblem(ctx context.Context, actor auth.Actor,
 			return err
 		}
 		archived, err = tx.ArchiveProblem(ctx, id)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.RecordAudit(ctx, audit.Event{
+			ActorUserID: actor.UserID,
+			Action:      audit.ActionProblemArchived,
+			ObjectType:  audit.ObjectProblem,
+			ObjectID:    id,
+			Metadata:    map[string]string{"previous_status": current.Status},
+		})
 	})
 	return archived, err
+}
+
+// RestoreProblem re-lists an archived problem. It is administrator-only: the
+// problem admin surface takes problems down and puts them back; authors keep
+// using their own console for authoring changes.
+func (a *ProblemAuthoring) RestoreProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
+	if err := (RBACProblemPolicy{}).CanRestore(actor); err != nil {
+		return ProblemRecord{}, err
+	}
+	var restored ProblemRecord
+	err := a.store.WithProblemAuthoringTx(ctx, func(ctx context.Context, tx problemAuthoringTx) error {
+		current, err := tx.LockProblemForUpdate(ctx, id)
+		if err != nil {
+			return err
+		}
+		if current.Status != StatusArchived {
+			return apperror.Conflict("problem.not_archived", "problem is not archived")
+		}
+		restored, err = tx.RestoreProblem(ctx, id)
+		if err != nil {
+			return err
+		}
+		return tx.RecordAudit(ctx, audit.Event{
+			ActorUserID: actor.UserID,
+			Action:      audit.ActionProblemRestored,
+			ObjectType:  audit.ObjectProblem,
+			ObjectID:    id,
+		})
+	})
+	return restored, err
 }
 
 func (a *ProblemAuthoring) CreateStatement(ctx context.Context, actor auth.Actor, problemID int64, input CreateStatementInput) (Statement, error) {

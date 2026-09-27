@@ -61,6 +61,15 @@ WHERE (sqlc.narg('difficulty')::text IS NULL OR p.difficulty = sqlc.narg('diffic
       OR p.title ILIKE '%' || sqlc.narg('keyword')::text || '%'
       OR p.slug ILIKE '%' || sqlc.narg('keyword')::text || '%'
   )
+  AND (
+      sqlc.narg('owner')::text IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM users u
+          WHERE u.id = p.owner_user_id
+            AND u.username ILIKE '%' || sqlc.narg('owner')::text || '%'
+      )
+  )
   AND (sqlc.arg('owner_user_id')::bigint = 0 OR p.owner_user_id = sqlc.arg('owner_user_id')::bigint)
   AND (
       sqlc.arg('include_all')::boolean
@@ -91,6 +100,15 @@ WHERE (sqlc.narg('difficulty')::text IS NULL OR difficulty = sqlc.narg('difficul
       OR title ILIKE '%' || sqlc.narg('keyword')::text || '%'
       OR slug ILIKE '%' || sqlc.narg('keyword')::text || '%'
   )
+  AND (
+      sqlc.narg('owner')::text IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM users u
+          WHERE u.id = problems.owner_user_id
+            AND u.username ILIKE '%' || sqlc.narg('owner')::text || '%'
+      )
+  )
   AND (sqlc.arg('owner_user_id')::bigint = 0 OR owner_user_id = sqlc.arg('owner_user_id')::bigint)
   AND (
       sqlc.arg('include_all')::boolean
@@ -118,9 +136,19 @@ RETURNING *;
 
 -- name: ArchiveProblem :one
 UPDATE problems
-SET status = 'archived',
+SET archived_from_status = CASE WHEN status = 'archived' THEN archived_from_status ELSE status END,
+    status = 'archived',
     updated_at = now()
 WHERE id = $1
+RETURNING *;
+
+-- name: RestoreProblem :one
+UPDATE problems
+SET status = coalesce(archived_from_status, 'draft'),
+    archived_from_status = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND status = 'archived'
 RETURNING *;
 
 -- name: LockProblemForUpdate :one

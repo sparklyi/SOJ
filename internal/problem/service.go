@@ -15,6 +15,7 @@ import (
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 )
 
 const (
@@ -189,6 +190,7 @@ type ListProblemsFilter struct {
 	Visibility   string
 	Tag          string
 	Keyword      string
+	Owner        string
 	Page         int32
 	PageSize     int32
 	Limit        int32
@@ -366,6 +368,10 @@ func (s *Service) ArchiveProblem(ctx context.Context, actor auth.Actor, id int64
 	return s.authoring.ArchiveProblem(ctx, actor, id)
 }
 
+func (s *Service) RestoreProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
+	return s.authoring.RestoreProblem(ctx, actor, id)
+}
+
 func (s *Service) CreateStatement(ctx context.Context, actor auth.Actor, problemID int64, input CreateStatementInput) (Statement, error) {
 	return s.authoring.CreateStatement(ctx, actor, problemID, input)
 }
@@ -510,7 +516,7 @@ func canReadProblem(actor auth.Actor, p ProblemRecord) error {
 	if p.Status == StatusPublished && p.Visibility == VisibilityPublic {
 		return nil
 	}
-	if actor.Admin() || (actor.Authenticated() && actor.UserID == p.OwnerUserID) {
+	if hasProblemPermission(actor, authz.PermissionProblemManageAll) || (actor.Authenticated() && actor.UserID == p.OwnerUserID) {
 		return nil
 	}
 	return apperror.NotFound("problem.not_found", "problem not found")
@@ -636,7 +642,7 @@ func normalizeListFilter(actor auth.Actor, filter ListProblemsFilter) ListProble
 		filter.IncludeAll = false
 		return filter
 	}
-	if actor.Admin() {
+	if hasProblemPermission(actor, authz.PermissionProblemManageAll) {
 		filter.IncludeAll = true
 		return filter
 	}

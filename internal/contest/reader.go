@@ -67,7 +67,7 @@ func (r *ContestReader) ListContests(ctx context.Context, actor auth.Actor, filt
 	if filter.PageSize <= 0 || filter.PageSize > 100 {
 		filter.PageSize = 20
 	}
-	if actor.Admin() {
+	if canManageAllContests(actor) {
 		filter.IncludePrivate = true
 	} else if actor.Authenticated() {
 		filter.VisibleToUserID = actor.UserID
@@ -103,7 +103,7 @@ func (r *ContestReader) ListContestsByCursor(ctx context.Context, actor auth.Act
 	if filter.PageSize <= 0 || filter.PageSize > 100 {
 		filter.PageSize = 20
 	}
-	if actor.Admin() {
+	if canManageAllContests(actor) {
 		filter.IncludePrivate = true
 	} else if actor.Authenticated() {
 		filter.VisibleToUserID = actor.UserID
@@ -200,8 +200,15 @@ func (r *ContestReader) currentUserRoles(ctx context.Context, actor auth.Actor, 
 	return roles
 }
 
+// canManageAllContests is the permission-side view of "this actor can reach
+// every contest". It replaces the admin role check: full-access roles still
+// hold contest.manage_all, and a future contest-management role can too.
+func canManageAllContests(actor auth.Actor) bool {
+	return authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManageAll) == nil
+}
+
 func (r *ContestReader) canReadContest(ctx context.Context, actor auth.Actor, contest ContestRecord) error {
-	if contest.Visibility == VisibilityPublic || actor.Admin() || actor.UserID == contest.OwnerUserID {
+	if contest.Visibility == VisibilityPublic || canManageAllContests(actor) || actor.UserID == contest.OwnerUserID {
 		return nil
 	}
 	scoped, err := r.actorWithContestRoles(ctx, actor, contest.ID)
@@ -212,7 +219,7 @@ func (r *ContestReader) canReadContest(ctx context.Context, actor auth.Actor, co
 }
 
 func (r *ContestReader) canReadContestAs(ctx context.Context, actor auth.Actor, contest ContestRecord) error {
-	if contest.Visibility == VisibilityPublic || actor.Admin() || actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestRead) == nil {
+	if contest.Visibility == VisibilityPublic || canManageAllContests(actor) || actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestRead) == nil {
 		return nil
 	}
 	if !actor.Authenticated() {

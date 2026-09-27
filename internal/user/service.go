@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 	"SOJ/internal/authz"
 )
@@ -114,7 +115,7 @@ type Repository interface {
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	ListUsers(ctx context.Context, input ListUsersInput) ([]User, int64, error)
 	ListUsersByCursor(ctx context.Context, input ListUsersInput) ([]User, error)
-	UpdateUser(ctx context.Context, id int64, input UpdateUserInput) (User, error)
+	UpdateUser(ctx context.Context, id int64, input UpdateUserInput, event *audit.Event) (User, error)
 	CreateRefreshToken(ctx context.Context, userID int64, tokenHash string, meta TokenMetadata) error
 	GetRefreshToken(ctx context.Context, tokenHash string) (RefreshToken, error)
 	RevokeRefreshToken(ctx context.Context, tokenHash string) error
@@ -301,6 +302,10 @@ func (s *Service) ListUsers(ctx context.Context, actor auth.Actor, input ListUse
 	if err != nil {
 		return UserList{}, err
 	}
+	users, err = s.withRolesForUsers(ctx, users)
+	if err != nil {
+		return UserList{}, err
+	}
 	return UserList{Items: users, Total: total, Page: input.Page, PageSize: input.PageSize}, nil
 }
 
@@ -328,6 +333,10 @@ func (s *Service) ListUsersByCursor(ctx context.Context, actor auth.Actor, input
 	if err != nil {
 		return UserCursorPage{}, err
 	}
+	users, err = s.withRolesForUsers(ctx, users)
+	if err != nil {
+		return UserCursorPage{}, err
+	}
 	hasMore := len(users) > int(limit)
 	if hasMore {
 		users = users[:limit]
@@ -344,24 +353,56 @@ func (s *Service) UpdateUser(ctx context.Context, actor auth.Actor, id int64, in
 	if err := authorize(actor, authz.PermissionUserManage); err != nil {
 		return User{}, err
 	}
-	_, err := s.repo.GetUserByID(ctx, id)
+	current, err := s.repo.GetUserByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return User{}, apperror.NotFound("user.not_found", "user not found")
 		}
 		return User{}, err
 	}
-	if input.Status != nil && !validStatus(*input.Status) {
-		return User{}, apperror.BadRequest("user.invalid_status", "invalid status")
-	}
-	user, err := s.repo.UpdateUser(ctx, id, input)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return User{}, apperror.NotFound("user.not_found", "user not found")
+	var event *audit.Event
+	if input.Status != nil {
+		if !validStatus(*input.Status) {
+			return User{}, apperror.BadRequest("user.invalid_status", "invalid status")
 		}
-		return User{}, err
+		if actor.UserID == id && *input.Status != StatusActive {
+			return User{}, apperror.BadRequest("user.self_disable_forbidden", "cannot disable your own account")
+		}
+		event = statusChangeEvent(actor.UserID, id, current.Status, *input.Status)
+	}
+	user, err := s.repo.UpdateUser(ctx, id, input, event)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return User{}, apperror.NotFound("user.not_found", "user not found")
+		case errors.Is(err, ErrLastRoot):
+			return User{}, apperror.Conflict("user.last_root", "at least one active root must remain")
+		default:
+			return User{}, err
+		}
 	}
 	return user, nil
+}
+
+// statusChangeEvent describes an account status transition. A transition to the
+// same status is a no-op and produces no audit record.
+func statusChangeEvent(actorUserID, userID int64, from, to string) *audit.Event {
+	if from == to {
+		return nil
+	}
+	action := audit.ActionUserDisabled
+	switch to {
+	case StatusActive:
+		action = audit.ActionUserEnabled
+	case StatusDeleted:
+		action = audit.ActionUserDeleted
+	}
+	return &audit.Event{
+		ActorUserID: actorUserID,
+		Action:      action,
+		ObjectType:  audit.ObjectUser,
+		ObjectID:    userID,
+	}
 }
 
 func (s *Service) issueSession(ctx context.Context, user User, deviceID, userAgent, ip string) (AuthSession, error) {
@@ -406,6 +447,29 @@ func (s *Service) withRoles(ctx context.Context, user User) (User, error) {
 	user.Roles = append([]auth.Role(nil), roles...)
 	user.Permissions = authz.PermissionsForRoles(roles)
 	return user, nil
+}
+
+// withRolesForUsers attaches the global roles (and their permissions) to a page
+// of users. The admin console needs them to show which roles are held; the
+// assignment tables are consulted once for the whole page.
+func (s *Service) withRolesForUsers(ctx context.Context, users []User) ([]User, error) {
+	if len(users) == 0 || s.roles == nil {
+		return users, nil
+	}
+	ids := make([]int64, len(users))
+	for i := range users {
+		ids[i] = users[i].ID
+	}
+	rolesByUser, err := s.roles.ListUserRolesForUsers(ctx, ids)
+	if err != nil {
+		return nil, mapRoleError(err)
+	}
+	for i := range users {
+		roles := rolesByUser[users[i].ID]
+		users[i].Roles = append([]auth.Role(nil), roles...)
+		users[i].Permissions = authz.PermissionsForRoles(roles)
+	}
+	return users, nil
 }
 
 func (s *Service) GrantRole(ctx context.Context, actor auth.Actor, userID int64, input GrantRoleInput) (RoleAssignment, error) {

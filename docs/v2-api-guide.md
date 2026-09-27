@@ -81,6 +81,7 @@ Problems:
 - `GET /api/v1/problems/{id}/statement`
 - `PATCH /api/v1/problems/{id}`
 - `DELETE /api/v1/problems/{id}`
+- `POST /api/v1/problems/{id}/restore`
 - `POST /api/v1/problems/{id}/statement`
 - `POST /api/v1/problems/{id}/testcase-sets`
 - `POST /api/v1/problems/{id}/checks`
@@ -89,6 +90,8 @@ Problems:
 - `GET /api/v1/problems/{id}/stats`
 
 Use `GET /api/v1/problems?mine=true` with an authenticated request to list only problems owned by the current user. This is the supported source for authoring consoles.
+
+Use the `owner` query parameter to match an owner's username and `status` to filter by lifecycle state; administrators (`problem.manage_all`) see all problems, everyone else sees the public catalog plus their own. `DELETE /api/v1/problems/{id}` archives a problem; `POST /api/v1/problems/{id}/restore` (administrators only) puts it back into the state it had before archiving, or `draft` when that state predates the archive bookkeeping.
 
 Problem checks:
 
@@ -116,6 +119,8 @@ Submissions and runs:
 Languages:
 
 - `GET /api/v1/languages`
+
+Submission and run creation reject a language that administrators disabled with `409` and error code `submission.language_disabled`; an unknown language id is a `404` with `submission.language_not_found`. The public catalog lists enabled languages only.
 
 Submission result visibility:
 
@@ -162,7 +167,10 @@ Admin:
 - `GET /api/v1/admin/users/cursor`
 - `PATCH /api/v1/admin/users/{id}`
 - `GET /api/v1/admin/languages`
-- - `PATCH /api/v1/admin/languages/{id}`
+- `PATCH /api/v1/admin/languages/{id}`
+- `GET /api/v1/admin/audit-events`
+
+Language administration requires `system.manage`. `GET /api/v1/admin/audit-events` accepts `object_type`, `object_id`, `actor_id`, `action`, `page`, and `page_size`, and returns one page of audit records with the acting username resolved.
 
 ## Status And Error Baseline
 

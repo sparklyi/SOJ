@@ -133,8 +133,8 @@ WITH granted AS (
   ON CONFLICT (user_id, role_code) WHERE revoked_at IS NULL DO NOTHING
   RETURNING user_id, role_code
 )
-INSERT INTO role_audit_events (user_id, role_code, actor_user_id, action, reason)
-SELECT user_id, role_code, NULL, 'granted', 'smoke bootstrap root'
+INSERT INTO audit_events (actor_user_id, action, object_type, object_id, reason, metadata)
+SELECT NULL, 'user.role.granted', 'user', user_id, 'smoke bootstrap root', jsonb_build_object('role', role_code)
 FROM granted;
 SQL
 

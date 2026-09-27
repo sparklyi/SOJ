@@ -13,10 +13,11 @@ import (
 
 const archiveProblem = `-- name: ArchiveProblem :one
 UPDATE problems
-SET status = 'archived',
+SET archived_from_status = CASE WHEN status = 'archived' THEN archived_from_status ELSE status END,
+    status = 'archived',
     updated_at = now()
 WHERE id = $1
-RETURNING id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at
+RETURNING id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at, archived_from_status
 `
 
 func (q *Queries) ArchiveProblem(ctx context.Context, id int64) (Problem, error) {
@@ -35,6 +36,7 @@ func (q *Queries) ArchiveProblem(ctx context.Context, id int64) (Problem, error)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.ArchivedFromStatus,
 	)
 	return i, err
 }
@@ -132,11 +134,20 @@ WHERE ($1::text IS NULL OR difficulty = $1::text)
       OR title ILIKE '%' || $5::text || '%'
       OR slug ILIKE '%' || $5::text || '%'
   )
-  AND ($6::bigint = 0 OR owner_user_id = $6::bigint)
   AND (
-      $7::boolean
+      $6::text IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM users u
+          WHERE u.id = problems.owner_user_id
+            AND u.username ILIKE '%' || $6::text || '%'
+      )
+  )
+  AND ($7::bigint = 0 OR owner_user_id = $7::bigint)
+  AND (
+      $8::boolean
       OR (status = 'published' AND visibility = 'public')
-      OR ($8::bigint > 0 AND owner_user_id = $8::bigint)
+      OR ($9::bigint > 0 AND owner_user_id = $9::bigint)
   )
 `
 
@@ -146,6 +157,7 @@ type CountProblemsParams struct {
 	Visibility   pgtype.Text `db:"visibility" json:"visibility"`
 	Tag          pgtype.Text `db:"tag" json:"tag"`
 	Keyword      pgtype.Text `db:"keyword" json:"keyword"`
+	Owner        pgtype.Text `db:"owner" json:"owner"`
 	OwnerUserID  int64       `db:"owner_user_id" json:"owner_user_id"`
 	IncludeAll   bool        `db:"include_all" json:"include_all"`
 	ViewerUserID int64       `db:"viewer_user_id" json:"viewer_user_id"`
@@ -158,6 +170,7 @@ func (q *Queries) CountProblems(ctx context.Context, arg CountProblemsParams) (i
 		arg.Visibility,
 		arg.Tag,
 		arg.Keyword,
+		arg.Owner,
 		arg.OwnerUserID,
 		arg.IncludeAll,
 		arg.ViewerUserID,
@@ -181,7 +194,7 @@ INSERT INTO problems (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8
 )
-RETURNING id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at
+RETURNING id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at, archived_from_status
 `
 
 type CreateProblemParams struct {
@@ -221,6 +234,7 @@ func (q *Queries) CreateProblem(ctx context.Context, arg CreateProblemParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.ArchivedFromStatus,
 	)
 	return i, err
 }
@@ -603,7 +617,7 @@ func (q *Queries) GetLatestCompletedProblemCheckRun(ctx context.Context, arg Get
 
 const getProblemByID = `-- name: GetProblemByID :one
 SELECT
-    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at, p.archived_from_status,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
     coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
@@ -625,6 +639,7 @@ type GetProblemByIDRow struct {
 	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	ArchivedFromStatus   pgtype.Text        `db:"archived_from_status" json:"archived_from_status"`
 	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
 	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
@@ -645,6 +660,7 @@ func (q *Queries) GetProblemByID(ctx context.Context, id int64) (GetProblemByIDR
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.ArchivedFromStatus,
 		&i.CurrentStatementID,
 		&i.CurrentTestcaseSetID,
 	)
@@ -653,7 +669,7 @@ func (q *Queries) GetProblemByID(ctx context.Context, id int64) (GetProblemByIDR
 
 const getProblemBySlug = `-- name: GetProblemBySlug :one
 SELECT
-    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at, p.archived_from_status,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
     coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
@@ -675,6 +691,7 @@ type GetProblemBySlugRow struct {
 	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	ArchivedFromStatus   pgtype.Text        `db:"archived_from_status" json:"archived_from_status"`
 	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
 	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
@@ -695,6 +712,7 @@ func (q *Queries) GetProblemBySlug(ctx context.Context, slug string) (GetProblem
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.ArchivedFromStatus,
 		&i.CurrentStatementID,
 		&i.CurrentTestcaseSetID,
 	)
@@ -994,7 +1012,7 @@ func (q *Queries) ListProblemTagsByProblemIDs(ctx context.Context, problemIds []
 
 const listProblems = `-- name: ListProblems :many
 SELECT
-    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at, p.archived_from_status,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
     coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
@@ -1018,14 +1036,23 @@ WHERE ($1::text IS NULL OR p.difficulty = $1::text)
       OR p.title ILIKE '%' || $5::text || '%'
       OR p.slug ILIKE '%' || $5::text || '%'
   )
-  AND ($6::bigint = 0 OR p.owner_user_id = $6::bigint)
   AND (
-      $7::boolean
+      $6::text IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM users u
+          WHERE u.id = p.owner_user_id
+            AND u.username ILIKE '%' || $6::text || '%'
+      )
+  )
+  AND ($7::bigint = 0 OR p.owner_user_id = $7::bigint)
+  AND (
+      $8::boolean
       OR (p.status = 'published' AND p.visibility = 'public')
-      OR ($8::bigint > 0 AND p.owner_user_id = $8::bigint)
+      OR ($9::bigint > 0 AND p.owner_user_id = $9::bigint)
   )
 ORDER BY p.created_at DESC, p.id DESC
-LIMIT $10 OFFSET $9
+LIMIT $11 OFFSET $10
 `
 
 type ListProblemsParams struct {
@@ -1034,6 +1061,7 @@ type ListProblemsParams struct {
 	Visibility   pgtype.Text `db:"visibility" json:"visibility"`
 	Tag          pgtype.Text `db:"tag" json:"tag"`
 	Keyword      pgtype.Text `db:"keyword" json:"keyword"`
+	Owner        pgtype.Text `db:"owner" json:"owner"`
 	OwnerUserID  int64       `db:"owner_user_id" json:"owner_user_id"`
 	IncludeAll   bool        `db:"include_all" json:"include_all"`
 	ViewerUserID int64       `db:"viewer_user_id" json:"viewer_user_id"`
@@ -1054,6 +1082,7 @@ type ListProblemsRow struct {
 	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	ArchivedFromStatus   pgtype.Text        `db:"archived_from_status" json:"archived_from_status"`
 	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
 	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
@@ -1065,6 +1094,7 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]L
 		arg.Visibility,
 		arg.Tag,
 		arg.Keyword,
+		arg.Owner,
 		arg.OwnerUserID,
 		arg.IncludeAll,
 		arg.ViewerUserID,
@@ -1091,6 +1121,7 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]L
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PublishedAt,
+			&i.ArchivedFromStatus,
 			&i.CurrentStatementID,
 			&i.CurrentTestcaseSetID,
 		); err != nil {
@@ -1106,7 +1137,7 @@ func (q *Queries) ListProblems(ctx context.Context, arg ListProblemsParams) ([]L
 
 const lockProblemForUpdate = `-- name: LockProblemForUpdate :one
 SELECT
-    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at,
+    p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at, p.archived_from_status,
     coalesce(ps.id, 0)::bigint AS current_statement_id,
     coalesce(ts.id, 0)::bigint AS current_testcase_set_id
 FROM problems p
@@ -1129,6 +1160,7 @@ type LockProblemForUpdateRow struct {
 	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 	PublishedAt          pgtype.Timestamptz `db:"published_at" json:"published_at"`
+	ArchivedFromStatus   pgtype.Text        `db:"archived_from_status" json:"archived_from_status"`
 	CurrentStatementID   int64              `db:"current_statement_id" json:"current_statement_id"`
 	CurrentTestcaseSetID int64              `db:"current_testcase_set_id" json:"current_testcase_set_id"`
 }
@@ -1149,6 +1181,7 @@ func (q *Queries) LockProblemForUpdate(ctx context.Context, id int64) (LockProbl
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.ArchivedFromStatus,
 		&i.CurrentStatementID,
 		&i.CurrentTestcaseSetID,
 	)
@@ -1181,6 +1214,37 @@ func (q *Queries) NextTestcaseSetVersion(ctx context.Context, problemID int64) (
 	return next_version, err
 }
 
+const restoreProblem = `-- name: RestoreProblem :one
+UPDATE problems
+SET status = coalesce(archived_from_status, 'draft'),
+    archived_from_status = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND status = 'archived'
+RETURNING id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at, archived_from_status
+`
+
+func (q *Queries) RestoreProblem(ctx context.Context, id int64) (Problem, error) {
+	row := q.db.QueryRow(ctx, restoreProblem, id)
+	var i Problem
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Slug,
+		&i.Difficulty,
+		&i.Visibility,
+		&i.Status,
+		&i.TimeLimitMs,
+		&i.MemoryLimitKb,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PublishedAt,
+		&i.ArchivedFromStatus,
+	)
+	return i, err
+}
+
 const updateProblem = `-- name: UpdateProblem :one
 UPDATE problems
 SET title = coalesce($1, title),
@@ -1197,7 +1261,7 @@ SET title = coalesce($1, title),
     END,
     updated_at = now()
 WHERE id = $8
-RETURNING id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at
+RETURNING id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb, created_at, updated_at, published_at, archived_from_status
 `
 
 type UpdateProblemParams struct {
@@ -1236,6 +1300,7 @@ func (q *Queries) UpdateProblem(ctx context.Context, arg UpdateProblemParams) (P
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.ArchivedFromStatus,
 	)
 	return i, err
 }

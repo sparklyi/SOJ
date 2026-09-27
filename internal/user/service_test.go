@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 )
 
 type memoryRepo struct {
@@ -17,6 +19,8 @@ type memoryRepo struct {
 	createdHash string
 	revokedHash string
 	cursorCalls int
+	updateErr   error
+	lastEvent   *audit.Event
 }
 
 type memoryRoleStore struct {
@@ -25,6 +29,14 @@ type memoryRoleStore struct {
 
 func (r *memoryRoleStore) ListUserRoles(_ context.Context, userID int64) ([]auth.Role, error) {
 	return append([]auth.Role(nil), r.roles[userID]...), nil
+}
+
+func (r *memoryRoleStore) ListUserRolesForUsers(_ context.Context, userIDs []int64) (map[int64][]auth.Role, error) {
+	roles := make(map[int64][]auth.Role, len(userIDs))
+	for _, userID := range userIDs {
+		roles[userID] = append([]auth.Role(nil), r.roles[userID]...)
+	}
+	return roles, nil
 }
 
 func (r *memoryRoleStore) GrantRole(_ context.Context, userID int64, role auth.Role, grantedBy *int64, _ string) (RoleAssignment, error) {
@@ -68,7 +80,12 @@ func (r *memoryRepo) GetUserByID(_ context.Context, id int64) (User, error) {
 }
 
 func (r *memoryRepo) ListUsers(context.Context, ListUsersInput) ([]User, int64, error) {
-	return nil, 0, nil
+	users := make([]User, 0, len(r.users))
+	for _, row := range r.users {
+		users = append(users, row.User)
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+	return users, int64(len(users)), nil
 }
 
 func (r *memoryRepo) ListUsersByCursor(_ context.Context, input ListUsersInput) ([]User, error) {
@@ -104,8 +121,12 @@ func (r *memoryRepo) ListUsersByCursor(_ context.Context, input ListUsersInput) 
 	return users, nil
 }
 
-func (r *memoryRepo) UpdateUser(context.Context, int64, UpdateUserInput) (User, error) {
-	return User{}, nil
+func (r *memoryRepo) UpdateUser(_ context.Context, id int64, input UpdateUserInput, event *audit.Event) (User, error) {
+	if r.updateErr != nil {
+		return User{}, r.updateErr
+	}
+	r.lastEvent = event
+	return User{ID: id, Status: StatusActive}, nil
 }
 
 func (r *memoryRepo) CreateRefreshToken(_ context.Context, userID int64, tokenHash string, meta TokenMetadata) error {
@@ -269,6 +290,120 @@ func TestServiceRevokeRoleProtectsBaseUserRole(t *testing.T) {
 	if !ok || appErr.Code != "role.protected" {
 		t.Fatalf("RevokeRole() error = %v, want role.protected", err)
 	}
+}
+
+func TestUpdateUserRejectsSelfDisable(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{42: {User: User{ID: 42, Status: StatusActive}}}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
+	status := StatusDisabled
+
+	_, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 42, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status})
+	if code := codeOfUserError(err); code != "user.self_disable_forbidden" {
+		t.Fatalf("UpdateUser() error = %v, want user.self_disable_forbidden", err)
+	}
+}
+
+func TestUpdateUserAuditsStatusChange(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{42: {User: User{ID: 42, Status: StatusActive}}}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
+	status := StatusDisabled
+
+	if _, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status}); err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	event := repo.lastEvent
+	if event == nil || event.Action != audit.ActionUserDisabled || event.ObjectType != audit.ObjectUser || event.ObjectID != 42 || event.ActorUserID != 7 {
+		t.Fatalf("audit event = %+v, want user.disabled on user 42 by 7", event)
+	}
+}
+
+func TestUpdateUserSkipsAuditWhenStatusUnchanged(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{42: {User: User{ID: 42, Status: StatusDisabled}}}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
+	status := StatusDisabled
+
+	if _, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status}); err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	if repo.lastEvent != nil {
+		t.Fatalf("audit event = %+v, want none for a no-op status change", repo.lastEvent)
+	}
+}
+
+func TestUpdateUserMapsLastRootConflict(t *testing.T) {
+	repo := &memoryRepo{
+		users:     map[int64]UserWithPassword{42: {User: User{ID: 42, Status: StatusActive}}},
+		updateErr: ErrLastRoot,
+	}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
+	status := StatusDisabled
+
+	_, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status})
+	if code := codeOfUserError(err); code != "user.last_root" {
+		t.Fatalf("UpdateUser() error = %v, want user.last_root", err)
+	}
+}
+
+func TestStatusChangeEventActions(t *testing.T) {
+	tests := map[string]*audit.Event{
+		"disabled":             statusChangeEvent(7, 42, StatusActive, StatusDisabled),
+		"enabled":              statusChangeEvent(7, 42, StatusDisabled, StatusActive),
+		"deleted":              statusChangeEvent(7, 42, StatusDisabled, StatusDeleted),
+		"unchanged is skipped": statusChangeEvent(7, 42, StatusActive, StatusActive),
+	}
+	if tests["disabled"].Action != audit.ActionUserDisabled || tests["enabled"].Action != audit.ActionUserEnabled || tests["deleted"].Action != audit.ActionUserDeleted {
+		t.Fatalf("status change actions = %+v", tests)
+	}
+	if tests["unchanged is skipped"] != nil {
+		t.Fatalf("unchanged status produced an event: %+v", tests["unchanged is skipped"])
+	}
+}
+
+func TestListUsersAttachesRolesAndPermissions(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{
+		1: {User: User{ID: 1, Username: "alice"}},
+		2: {User: User{ID: 2, Username: "bob"}},
+	}}
+	roles := &memoryRoleStore{roles: map[int64][]auth.Role{1: {auth.RoleUser, auth.RoleAuthor}}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
+
+	list, err := service.ListUsers(context.Background(), auth.Actor{UserID: 9, Roles: []auth.Role{auth.RoleRoot}}, ListUsersInput{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v", err)
+	}
+	if len(list.Items) != 2 {
+		t.Fatalf("ListUsers() returned %d users, want 2", len(list.Items))
+	}
+	if !equalRoles(list.Items[0].Roles, []auth.Role{auth.RoleUser, auth.RoleAuthor}) {
+		t.Fatalf("alice roles = %v, want user+author", list.Items[0].Roles)
+	}
+	if len(list.Items[1].Roles) != 0 {
+		t.Fatalf("bob roles = %v, want none", list.Items[1].Roles)
+	}
+	if !containsPermission(list.Items[0].Permissions, authz.PermissionProblemCreate) {
+		t.Fatalf("alice permissions = %v, want problem.create", list.Items[0].Permissions)
+	}
+}
+
+func equalRoles(got, want []auth.Role) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func containsPermission(permissions []authz.Permission, want authz.Permission) bool {
+	for _, permission := range permissions {
+		if permission == want {
+			return true
+		}
+	}
+	return false
 }
 
 func equalInt64s(got, want []int64) bool {

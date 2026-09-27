@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
 	"SOJ/internal/judge"
 	"SOJ/internal/problem"
@@ -14,7 +15,7 @@ type submissionCreatorStoreStub struct {
 	nextID int64
 }
 
-func (s *submissionCreatorStoreStub) GetEnabledLanguage(context.Context, int64) (LanguageRecord, error) {
+func (s *submissionCreatorStoreStub) GetLanguage(context.Context, int64) (LanguageRecord, error) {
 	return LanguageRecord{ID: 71, Enabled: true}, nil
 }
 
@@ -160,7 +161,7 @@ func TestSubmissionReaderUsesOnlyReaderStore(t *testing.T) {
 
 type runStoreStub struct{}
 
-func (runStoreStub) GetEnabledLanguage(context.Context, int64) (LanguageRecord, error) {
+func (runStoreStub) GetLanguage(context.Context, int64) (LanguageRecord, error) {
 	return LanguageRecord{ID: 71, Enabled: true}, nil
 }
 
@@ -210,7 +211,7 @@ func (languageStoreStub) ListLanguages(context.Context, ListLanguagesInput) ([]L
 	return []LanguageRecord{{ID: 71, Name: "Go", Enabled: true}}, 1, nil
 }
 
-func (languageStoreStub) UpdateLanguage(context.Context, int64, UpdateLanguageInput) (LanguageRecord, error) {
+func (languageStoreStub) UpdateLanguage(context.Context, int64, UpdateLanguageInput, int64) (LanguageRecord, error) {
 	return LanguageRecord{}, nil
 }
 
@@ -223,6 +224,28 @@ func TestLanguageServiceUsesOnlyLanguageStore(t *testing.T) {
 	}
 	if total != 1 || len(items) != 1 || items[0].ID != 71 {
 		t.Fatalf("ListPublicLanguages() = (%+v, %d), want Go language", items, total)
+	}
+}
+
+func TestLanguageAdminRequiresSystemManage(t *testing.T) {
+	service := NewLanguageService(languageStoreStub{})
+
+	if _, _, err := service.ListLanguages(t.Context(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleReviewer}}, ListLanguagesInput{}); err == nil {
+		t.Fatal("ListLanguages() error = nil, want forbidden")
+	}
+	if _, _, err := service.ListLanguages(t.Context(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, ListLanguagesInput{}); err != nil {
+		t.Fatalf("admin ListLanguages() error = %v", err)
+	}
+}
+
+func TestRequireLanguageEnabledRejectsDisabledLanguages(t *testing.T) {
+	err := requireLanguageEnabled(LanguageRecord{ID: 1, Enabled: false})
+	appErr, ok := apperror.From(err)
+	if !ok || appErr.Code != "submission.language_disabled" || appErr.HTTPStatus != 409 {
+		t.Fatalf("requireLanguageEnabled(disabled) = %v, want 409 submission.language_disabled", err)
+	}
+	if err := requireLanguageEnabled(LanguageRecord{ID: 1, Enabled: true}); err != nil {
+		t.Fatalf("requireLanguageEnabled(enabled) = %v, want nil", err)
 	}
 }
 

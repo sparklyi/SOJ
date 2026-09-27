@@ -81,6 +81,7 @@ func (h *Handler) listProblems(c *gin.Context) {
 		Visibility: c.Query("visibility"),
 		Tag:        c.Query("tag"),
 		Keyword:    c.Query("keyword"),
+		Owner:      c.Query("owner"),
 		Page:       page,
 		PageSize:   pageSize,
 		Mine:       mine,
@@ -109,6 +110,7 @@ func (h *Handler) listProblemsByCursor(c *gin.Context) {
 		Visibility: c.Query("visibility"),
 		Tag:        c.Query("tag"),
 		Keyword:    c.Query("keyword"),
+		Owner:      c.Query("owner"),
 		PageSize:   pageSize,
 		Mine:       mine,
 	}
@@ -223,6 +225,24 @@ func (h *Handler) archiveProblem(c *gin.Context) {
 		return
 	}
 	httpapi.NoContent(c)
+}
+
+func (h *Handler) restoreProblem(c *gin.Context) {
+	id, ok := problemIDParam(c)
+	if !ok {
+		return
+	}
+	problem, err := h.service.RestoreProblem(c.Request.Context(), actorFromContext(c), id)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	response, err := h.service.ProblemResponse(c.Request.Context(), problem)
+	if err != nil {
+		httpapi.Error(c, err)
+		return
+	}
+	httpapi.OK(c, response)
 }
 
 func (h *Handler) submitReview(c *gin.Context) {

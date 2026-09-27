@@ -10,7 +10,7 @@ import (
 )
 
 type submissionCreationStore interface {
-	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
+	GetLanguage(context.Context, int64) (LanguageRecord, error)
 	CreateArtifact(context.Context, ArtifactRecord) (ArtifactRecord, error)
 	CreateSubmissionWithTask(context.Context, SubmissionRecord, time.Time) (SubmissionRecord, JudgeTaskRecord, error)
 }
@@ -72,7 +72,11 @@ func (s *SubmissionCreator) CreateSubmission(ctx context.Context, actor auth.Act
 			return CreateSubmissionOutput{}, err
 		}
 	}
-	if _, err := s.store.GetEnabledLanguage(ctx, input.LanguageID); err != nil {
+	language, err := s.store.GetLanguage(ctx, input.LanguageID)
+	if err != nil {
+		return CreateSubmissionOutput{}, err
+	}
+	if err := requireLanguageEnabled(language); err != nil {
 		return CreateSubmissionOutput{}, err
 	}
 

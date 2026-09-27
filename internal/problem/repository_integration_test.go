@@ -198,3 +198,65 @@ func TestGetCurrentTestcaseSetIgnoresDroppedStatus(t *testing.T) {
 		t.Fatalf("current set = %+v, want %d", set, currentSetID)
 	}
 }
+
+func TestArchiveAndRestoreProblemRoundTripsStatus(t *testing.T) {
+	repository, pool := newIntegrationRepository(t)
+	ctx := context.Background()
+	base := integrationBaseID()
+	userID, problemID := base+1, base+2
+
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, password_hash, username, status)
+		VALUES ($1, $2, 'hash', $3, 'active')`,
+		userID, fmt.Sprintf("it-restore-%d@example.test", userID), fmt.Sprintf("it-restore-%d", userID)); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	// in_review is not draft: restoring the pre-archive status must survive the
+	// constraint and come back unchanged, not collapse to a default.
+	if _, err := pool.Exec(ctx, `INSERT INTO problems (id, owner_user_id, title, slug, difficulty, visibility, status, time_limit_ms, memory_limit_kb)
+		VALUES ($1, $2, 'Integration', $3, 'easy', 'private', 'in_review', 1000, 262144)`,
+		problemID, userID, fmt.Sprintf("it-restore-%d", problemID)); err != nil {
+		t.Fatalf("seed problem: %v", err)
+	}
+
+	archived, err := repository.ArchiveProblem(ctx, problemID)
+	if err != nil {
+		t.Fatalf("ArchiveProblem returned error: %v", err)
+	}
+	if archived.Status != StatusArchived {
+		t.Fatalf("archived status = %q, want %q", archived.Status, StatusArchived)
+	}
+	var archivedFrom string
+	if err := pool.QueryRow(ctx, `SELECT archived_from_status FROM problems WHERE id = $1`, problemID).Scan(&archivedFrom); err != nil {
+		t.Fatalf("read archived_from_status: %v", err)
+	}
+	if archivedFrom != StatusInReview {
+		t.Fatalf("archived_from_status = %q, want %q", archivedFrom, StatusInReview)
+	}
+
+	// Archiving an already archived problem stays idempotent: the original
+	// previous status survives instead of being overwritten with 'archived'.
+	if _, err := repository.ArchiveProblem(ctx, problemID); err != nil {
+		t.Fatalf("second ArchiveProblem returned error: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT archived_from_status FROM problems WHERE id = $1`, problemID).Scan(&archivedFrom); err != nil {
+		t.Fatalf("read archived_from_status after second archive: %v", err)
+	}
+	if archivedFrom != StatusInReview {
+		t.Fatalf("archived_from_status after second archive = %q, want %q", archivedFrom, StatusInReview)
+	}
+
+	restored, err := repository.RestoreProblem(ctx, problemID)
+	if err != nil {
+		t.Fatalf("RestoreProblem returned error: %v", err)
+	}
+	if restored.Status != StatusInReview {
+		t.Fatalf("restored status = %q, want %q", restored.Status, StatusInReview)
+	}
+	var archivedFromAfter *string
+	if err := pool.QueryRow(ctx, `SELECT archived_from_status FROM problems WHERE id = $1`, problemID).Scan(&archivedFromAfter); err != nil {
+		t.Fatalf("read archived_from_status after restore: %v", err)
+	}
+	if archivedFromAfter != nil {
+		t.Fatalf("archived_from_status after restore = %v, want nil", *archivedFromAfter)
+	}
+}

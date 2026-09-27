@@ -161,6 +161,10 @@ paths:
         - name: keyword
           in: query
           schema: { type: string }
+        - name: owner
+          in: query
+          description: Match problems whose owner's username contains this value.
+          schema: { type: string }
         - name: status
           in: query
           description: Admin/root only.
@@ -284,6 +288,25 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
+    restore:
+      tags: [Problems]
+      operationId: restoreProblem
+      summary: Restore an archived problem
+      description: Requires problem.manage_all. Restores the problem to the status it had before archiving (draft when that is unknown).
+      x-owner: WP3 Problem
+      x-auth: problem-manage-all
+      responses:
+        "200":
+          description: Problem restored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemEnvelope"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/problems/{id}/review:
     post:
       tags: [Problems]
@@ -372,6 +395,10 @@ paths:
           schema: { type: string }
         - name: keyword
           in: query
+          schema: { type: string }
+        - name: owner
+          in: query
+          description: Match problems whose owner's username contains this value.
           schema: { type: string }
         - name: status
           in: query
@@ -1308,7 +1335,7 @@ paths:
       operationId: adminListLanguages
       summary: List judge languages
       x-owner: WP4 Submission/Language
-      x-auth: admin-root
+      x-auth: system.manage
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
@@ -1334,7 +1361,7 @@ paths:
       operationId: adminUpdateLanguage
       summary: Update a judge language
       x-owner: WP4 Submission/Language
-      x-auth: admin-root
+      x-auth: system.manage
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
@@ -1355,6 +1382,39 @@ paths:
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/audit-events:
+    get:
+      tags: [Admin Audit]
+      operationId: listAuditEvents
+      summary: List administrative audit events
+      x-owner: WP1 Data/API Contract
+      x-auth: system.manage
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: object_type
+          in: query
+          schema: { $ref: "#/components/schemas/AuditObjectType" }
+        - name: object_id
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: actor_id
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: action
+          in: query
+          schema: { $ref: "#/components/schemas/AuditAction" }
+      responses:
+        "200":
+          description: Audit event page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventPageEnvelope"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
         "500": { $ref: "#/components/responses/InternalError" }
 components:
   securitySchemes:
@@ -2495,3 +2555,49 @@ components:
     LanguagePageEnvelope:
       allOf: [{ $ref: "#/components/schemas/Envelope" }]
       properties: { data: { $ref: "#/components/schemas/LanguagePage" } }
+    AuditAction:
+      x-owner: WP1 Data/API Contract
+      type: string
+      enum:
+        - user.role.granted
+        - user.role.revoked
+        - user.disabled
+        - user.enabled
+        - user.deleted
+        - language.enabled
+        - language.disabled
+        - problem.archived
+        - problem.restored
+        - contest.archived
+    AuditObjectType:
+      x-owner: WP1 Data/API Contract
+      type: string
+      enum: [user, language, problem, contest]
+    AuditEvent:
+      x-owner: WP1 Data/API Contract
+      type: object
+      required: [id, action, object_type, object_id, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        actor_user_id: { type: integer, format: int64 }
+        actor_username: { type: string }
+        action: { $ref: "#/components/schemas/AuditAction" }
+        object_type: { $ref: "#/components/schemas/AuditObjectType" }
+        object_id: { type: integer, format: int64 }
+        reason: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    AuditEventPage:
+      x-owner: WP1 Data/API Contract
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditEvent" }
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        page_size: { type: integer }
+    AuditEventPageEnvelope:
+      allOf: [{ $ref: "#/components/schemas/Envelope" }]
+      properties: { data: { $ref: "#/components/schemas/AuditEventPage" } }
