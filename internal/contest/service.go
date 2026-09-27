@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 	"SOJ/internal/authz"
 	"SOJ/internal/submission"
@@ -203,7 +204,9 @@ type ContestCursorPage struct {
 type contestTransaction interface {
 	CreateContest(context.Context, ContestRecord) (ContestRecord, error)
 	UpdateContest(context.Context, int64, ContestUpdateInput) (ContestRecord, error)
+	ArchiveContest(context.Context, int64) (ContestRecord, error)
 	ReplaceContestProblems(context.Context, int64, []ContestProblem) error
+	RecordAudit(context.Context, audit.Event) error
 }
 
 type Service struct {
@@ -379,7 +382,7 @@ func requireContestCreator(actor auth.Actor) error {
 	if !actor.Authenticated() {
 		return apperror.Unauthorized("auth_required", "authentication required")
 	}
-	if actor.Admin() || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManageAll) == nil {
+	if authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManageAll) == nil {
 		return nil
 	}
 	return apperror.Forbidden("contest.not_allowed", "contest management permission required")
@@ -406,7 +409,7 @@ func requireContestJudge(actor auth.Actor, contest ContestRecord) error {
 }
 
 func canManageContest(actor auth.Actor, contest ContestRecord) bool {
-	return actor.Admin() || actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManage) == nil
+	return actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManage) == nil
 }
 
 func canViewContestResults(actor auth.Actor, contest ContestRecord) bool {

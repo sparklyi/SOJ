@@ -725,10 +725,10 @@ func (r *memoryRepo) MarkStaleRunsSystemError(ctx context.Context, staleBefore t
 	}
 	return rows, nil
 }
-func (r *memoryRepo) GetEnabledLanguage(ctx context.Context, id int64) (LanguageRecord, error) {
-	row := r.languages[id]
-	if !row.Enabled {
-		return LanguageRecord{}, fmt.Errorf("language disabled")
+func (r *memoryRepo) GetLanguage(ctx context.Context, id int64) (LanguageRecord, error) {
+	row, ok := r.languages[id]
+	if !ok {
+		return LanguageRecord{}, fmt.Errorf("language not found")
 	}
 	return row, nil
 }
@@ -745,7 +745,7 @@ func (r *memoryRepo) ListLanguages(ctx context.Context, arg ListLanguagesInput) 
 	}
 	return rows, int64(len(rows)), nil
 }
-func (r *memoryRepo) UpdateLanguage(ctx context.Context, id int64, arg UpdateLanguageInput) (LanguageRecord, error) {
+func (r *memoryRepo) UpdateLanguage(ctx context.Context, id int64, arg UpdateLanguageInput, actorID int64) (LanguageRecord, error) {
 	row := r.languages[id]
 	if arg.Enabled != nil {
 		row.Enabled = *arg.Enabled

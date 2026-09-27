@@ -84,6 +84,10 @@ func (RBACProblemPolicy) CanViewReviewEvents(actor auth.Actor, problem ProblemRe
 	return problemForbidden("problem owner, reviewer, or problem.manage_all permission required")
 }
 
+func (RBACProblemPolicy) CanRestore(actor auth.Actor) error {
+	return requireProblemPermission(actor, authz.PermissionProblemManageAll)
+}
+
 func requireProblemPermission(actor auth.Actor, permission authz.Permission) error {
 	if err := authz.Authorize(authz.NewSubject(actor), permission); err != nil {
 		return problemForbidden("required problem permission is missing")

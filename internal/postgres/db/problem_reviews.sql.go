@@ -105,7 +105,7 @@ func (q *Queries) ListProblemReviewEvents(ctx context.Context, problemID int64) 
 }
 
 const listProblemsForReview = `-- name: ListProblemsForReview :many
-SELECT p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at
+SELECT p.id, p.owner_user_id, p.title, p.slug, p.difficulty, p.visibility, p.status, p.time_limit_ms, p.memory_limit_kb, p.created_at, p.updated_at, p.published_at, p.archived_from_status
 FROM problems p
 WHERE p.status = 'in_review'
 ORDER BY p.updated_at ASC, p.id ASC
@@ -139,6 +139,7 @@ func (q *Queries) ListProblemsForReview(ctx context.Context, arg ListProblemsFor
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.PublishedAt,
+			&i.ArchivedFromStatus,
 		); err != nil {
 			return nil, err
 		}

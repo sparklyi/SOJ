@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/judge"
 	"SOJ/internal/language"
 	"SOJ/internal/postgres"
@@ -218,9 +219,9 @@ func (r *SQLRepository) GetArtifact(ctx context.Context, id int64) (ArtifactReco
 	return artifactRecord(row), mapNotFound(err, "artifact.not_found", "artifact not found")
 }
 
-func (r *SQLRepository) GetEnabledLanguage(ctx context.Context, id int64) (LanguageRecord, error) {
-	row, err := r.q.GetEnabledLanguageByID(ctx, id)
-	return languageRecord(row), mapNotFound(err, "submission.language_disabled", "language is disabled or not found")
+func (r *SQLRepository) GetLanguage(ctx context.Context, id int64) (LanguageRecord, error) {
+	row, err := r.q.GetLanguageByID(ctx, id)
+	return languageRecord(row), mapNotFound(err, "submission.language_not_found", "language not found")
 }
 
 func (r *SQLRepository) ListLanguages(ctx context.Context, arg ListLanguagesInput) ([]LanguageRecord, int64, error) {
@@ -271,14 +272,43 @@ func (r *SQLRepository) ReconcileLanguages(ctx context.Context, profiles []langu
 	return nil
 }
 
-func (r *SQLRepository) UpdateLanguage(ctx context.Context, id int64, arg UpdateLanguageInput) (LanguageRecord, error) {
-	row, err := r.q.UpdateLanguageAdminFields(ctx, db.UpdateLanguageAdminFieldsParams{
-		ID:                   id,
-		Enabled:              boolPtr(arg.Enabled),
-		DefaultTimeLimitMs:   int4Ptr(arg.DefaultTimeLimitMS),
-		DefaultMemoryLimitKb: int4Ptr(arg.DefaultMemoryLimitKB),
+// UpdateLanguage applies administrator fields and records the enablement change
+// in the same transaction. Limit-only updates are catalog edits, not audited
+// administrative actions.
+func (r *SQLRepository) UpdateLanguage(ctx context.Context, id int64, arg UpdateLanguageInput, actorID int64) (LanguageRecord, error) {
+	if r.txRunner == nil {
+		return LanguageRecord{}, errors.New("submission: transaction runner is required")
+	}
+	var updated LanguageRecord
+	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		row, err := r.q.WithTx(tx).UpdateLanguageAdminFields(ctx, db.UpdateLanguageAdminFieldsParams{
+			ID:                   id,
+			Enabled:              boolPtr(arg.Enabled),
+			DefaultTimeLimitMs:   int4Ptr(arg.DefaultTimeLimitMS),
+			DefaultMemoryLimitKb: int4Ptr(arg.DefaultMemoryLimitKB),
+		})
+		if err != nil {
+			return mapNotFound(err, "language.not_found", "language not found")
+		}
+		updated = languageRecord(row)
+		if arg.Enabled == nil {
+			return nil
+		}
+		action := audit.ActionLanguageDisabled
+		if *arg.Enabled {
+			action = audit.ActionLanguageEnabled
+		}
+		return audit.Insert(ctx, tx, audit.Event{
+			ActorUserID: actorID,
+			Action:      action,
+			ObjectType:  audit.ObjectLanguage,
+			ObjectID:    id,
+		})
 	})
-	return languageRecord(row), mapNotFound(err, "submission.language_disabled", "language is disabled or not found")
+	if err != nil {
+		return LanguageRecord{}, err
+	}
+	return updated, nil
 }
 
 func artifactRecord(row db.Artifact) ArtifactRecord {

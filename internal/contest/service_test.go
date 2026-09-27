@@ -182,7 +182,7 @@ func TestSubmissionResultVisibilityUsesContestFreezePolicy(t *testing.T) {
 		t.Fatalf("after-freeze policy = %+v", afterFreeze)
 	}
 
-	adminVisible, err := service.SubmissionResultVisibility(context.Background(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, submission.ContestSubmissionVisibility{
+	adminVisible, err := service.SubmissionResultVisibility(context.Background(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, submission.ContestSubmissionVisibility{
 		ID:          4,
 		UserID:      20,
 		ProblemID:   101,
@@ -383,7 +383,7 @@ func TestLiveScoreboardAfterFreezeRequiresOwnerOrAdmin(t *testing.T) {
 	if _, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1, ScoreboardQuery{View: ScoreboardViewLive, PageSize: 100}); err != nil {
 		t.Fatalf("owner live returned error: %v", err)
 	}
-	if _, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1, ScoreboardQuery{View: ScoreboardViewLive, PageSize: 100}); err != nil {
+	if _, err := service.Scoreboard(context.Background(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1, ScoreboardQuery{View: ScoreboardViewLive, PageSize: 100}); err != nil {
 		t.Fatalf("admin live returned error: %v", err)
 	}
 }
@@ -413,7 +413,7 @@ func TestListContestsAppliesVisibilityRules(t *testing.T) {
 		t.Fatalf("registered list = %+v, want public plus registered private", registered)
 	}
 
-	admin, err := service.ListContests(context.Background(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, ListContestFilter{})
+	admin, err := service.ListContests(context.Background(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, ListContestFilter{})
 	if err != nil {
 		t.Fatalf("admin ListContests returned error: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestAuthorizeContestRejudgeRequiresContestOperatorAndEndedContest(t *testin
 	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1); err != nil {
 		t.Fatalf("owner authorization returned error: %v", err)
 	}
-	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, 1); err != nil {
+	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1); err != nil {
 		t.Fatalf("admin authorization returned error: %v", err)
 	}
 	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 30, Roles: []auth.Role{auth.RoleContestJudge}}, 1); err != nil {
@@ -586,7 +586,7 @@ func TestContestCRUDRegistrationAndPermissions(t *testing.T) {
 	if codeOf(err) != "contest.not_allowed" {
 		t.Fatalf("stranger update error = %v", err)
 	}
-	updated, err := service.UpdateContest(context.Background(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, created.ID, ContestUpdateInput{Title: stringPtr("Updated")})
+	updated, err := service.UpdateContest(context.Background(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, created.ID, ContestUpdateInput{Title: stringPtr("Updated")})
 	if err != nil {
 		t.Fatalf("admin UpdateContest returned error: %v", err)
 	}

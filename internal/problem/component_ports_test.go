@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 	"SOJ/internal/storage"
 )
@@ -123,6 +124,14 @@ func (*problemAuthoringTxStub) SetProblemStatus(_ context.Context, id int64, sta
 
 func (*problemAuthoringTxStub) ArchiveProblem(_ context.Context, id int64) (ProblemRecord, error) {
 	return ProblemRecord{ID: id, OwnerUserID: 3, Status: StatusArchived}, nil
+}
+
+func (*problemAuthoringTxStub) RestoreProblem(_ context.Context, id int64) (ProblemRecord, error) {
+	return ProblemRecord{ID: id, OwnerUserID: 3, Status: StatusPublished}, nil
+}
+
+func (*problemAuthoringTxStub) RecordAudit(context.Context, audit.Event) error {
+	return nil
 }
 
 func (*problemAuthoringTxStub) NextProblemStatementVersion(context.Context, int64) (int32, error) {

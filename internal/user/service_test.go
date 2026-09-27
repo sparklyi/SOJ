@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 )
 
@@ -17,6 +18,8 @@ type memoryRepo struct {
 	createdHash string
 	revokedHash string
 	cursorCalls int
+	updateErr   error
+	lastEvent   *audit.Event
 }
 
 type memoryRoleStore struct {
@@ -104,8 +107,12 @@ func (r *memoryRepo) ListUsersByCursor(_ context.Context, input ListUsersInput) 
 	return users, nil
 }
 
-func (r *memoryRepo) UpdateUser(context.Context, int64, UpdateUserInput) (User, error) {
-	return User{}, nil
+func (r *memoryRepo) UpdateUser(_ context.Context, id int64, input UpdateUserInput, event *audit.Event) (User, error) {
+	if r.updateErr != nil {
+		return User{}, r.updateErr
+	}
+	r.lastEvent = event
+	return User{ID: id, Status: StatusActive}, nil
 }
 
 func (r *memoryRepo) CreateRefreshToken(_ context.Context, userID int64, tokenHash string, meta TokenMetadata) error {
@@ -268,6 +275,73 @@ func TestServiceRevokeRoleProtectsBaseUserRole(t *testing.T) {
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.Code != "role.protected" {
 		t.Fatalf("RevokeRole() error = %v, want role.protected", err)
+	}
+}
+
+func TestUpdateUserRejectsSelfDisable(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{42: {User: User{ID: 42, Status: StatusActive}}}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
+	status := StatusDisabled
+
+	_, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 42, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status})
+	if code := codeOfUserError(err); code != "user.self_disable_forbidden" {
+		t.Fatalf("UpdateUser() error = %v, want user.self_disable_forbidden", err)
+	}
+}
+
+func TestUpdateUserAuditsStatusChange(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{42: {User: User{ID: 42, Status: StatusActive}}}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
+	status := StatusDisabled
+
+	if _, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status}); err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	event := repo.lastEvent
+	if event == nil || event.Action != audit.ActionUserDisabled || event.ObjectType != audit.ObjectUser || event.ObjectID != 42 || event.ActorUserID != 7 {
+		t.Fatalf("audit event = %+v, want user.disabled on user 42 by 7", event)
+	}
+}
+
+func TestUpdateUserSkipsAuditWhenStatusUnchanged(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{42: {User: User{ID: 42, Status: StatusDisabled}}}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
+	status := StatusDisabled
+
+	if _, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status}); err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	if repo.lastEvent != nil {
+		t.Fatalf("audit event = %+v, want none for a no-op status change", repo.lastEvent)
+	}
+}
+
+func TestUpdateUserMapsLastRootConflict(t *testing.T) {
+	repo := &memoryRepo{
+		users:     map[int64]UserWithPassword{42: {User: User{ID: 42, Status: StatusActive}}},
+		updateErr: ErrLastRoot,
+	}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
+	status := StatusDisabled
+
+	_, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status})
+	if code := codeOfUserError(err); code != "user.last_root" {
+		t.Fatalf("UpdateUser() error = %v, want user.last_root", err)
+	}
+}
+
+func TestStatusChangeEventActions(t *testing.T) {
+	tests := map[string]*audit.Event{
+		"disabled":             statusChangeEvent(7, 42, StatusActive, StatusDisabled),
+		"enabled":              statusChangeEvent(7, 42, StatusDisabled, StatusActive),
+		"deleted":              statusChangeEvent(7, 42, StatusDisabled, StatusDeleted),
+		"unchanged is skipped": statusChangeEvent(7, 42, StatusActive, StatusActive),
+	}
+	if tests["disabled"].Action != audit.ActionUserDisabled || tests["enabled"].Action != audit.ActionUserEnabled || tests["deleted"].Action != audit.ActionUserDeleted {
+		t.Fatalf("status change actions = %+v", tests)
+	}
+	if tests["unchanged is skipped"] != nil {
+		t.Fatalf("unchanged status produced an event: %+v", tests["unchanged is skipped"])
 	}
 }
 

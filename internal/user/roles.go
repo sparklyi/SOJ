@@ -7,16 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 	"SOJ/internal/postgres/db"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-)
-
-const (
-	RoleAuditGranted = "granted"
-	RoleAuditRevoked = "revoked"
 )
 
 var (
@@ -32,16 +28,6 @@ type RoleAssignment struct {
 	GrantedBy *int64     `json:"granted_by,omitempty"`
 	GrantedAt time.Time  `json:"granted_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
-}
-
-type RoleAuditEvent struct {
-	ID          int64     `json:"id"`
-	UserID      int64     `json:"user_id"`
-	Role        auth.Role `json:"role"`
-	ActorUserID *int64    `json:"actor_user_id,omitempty"`
-	Action      string    `json:"action"`
-	Reason      string    `json:"reason"`
-	CreatedAt   time.Time `json:"created_at"`
 }
 
 type RoleStore interface {
@@ -122,10 +108,14 @@ func (r *PostgresRoleRepository) GrantRole(ctx context.Context, userID int64, ro
 	if err != nil {
 		return RoleAssignment{}, mapDBError(err)
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO role_audit_events (user_id, role_code, actor_user_id, action, reason)
-		VALUES ($1, $2, $3, $4, $5)
-	`, userID, string(role), nullableID(grantedBy), RoleAuditGranted, reason); err != nil {
+	if err := audit.Insert(ctx, tx, audit.Event{
+		ActorUserID: actorUserID(grantedBy),
+		Action:      audit.ActionUserRoleGranted,
+		ObjectType:  audit.ObjectUser,
+		ObjectID:    userID,
+		Reason:      reason,
+		Metadata:    map[string]string{"role": string(role)},
+	}); err != nil {
 		return RoleAssignment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -202,10 +192,14 @@ func (r *PostgresRoleRepository) RevokeRole(ctx context.Context, userID int64, r
 			return ErrLastRoot
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO role_audit_events (user_id, role_code, actor_user_id, action, reason)
-		VALUES ($1, $2, $3, $4, $5)
-	`, userID, string(role), revokedBy, RoleAuditRevoked, reason); err != nil {
+	if err := audit.Insert(ctx, tx, audit.Event{
+		ActorUserID: revokedBy,
+		Action:      audit.ActionUserRoleRevoked,
+		ObjectType:  audit.ObjectUser,
+		ObjectID:    userID,
+		Reason:      reason,
+		Metadata:    map[string]string{"role": string(role)},
+	}); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -248,6 +242,13 @@ func scanRoleAssignment(row pgx.Row) (RoleAssignment, error) {
 func nullableID(value *int64) any {
 	if value == nil {
 		return nil
+	}
+	return *value
+}
+
+func actorUserID(value *int64) int64 {
+	if value == nil {
+		return 0
 	}
 	return *value
 }

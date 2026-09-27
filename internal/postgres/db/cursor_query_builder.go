@@ -23,6 +23,7 @@ type ListProblemsByCursorParams struct {
 	Visibility      pgtype.Text        `db:"visibility" json:"visibility"`
 	Tag             pgtype.Text        `db:"tag" json:"tag"`
 	Keyword         pgtype.Text        `db:"keyword" json:"keyword"`
+	Owner           pgtype.Text        `db:"owner" json:"owner"`
 	OwnerUserID     int64              `db:"owner_user_id" json:"owner_user_id"`
 	IncludeAll      bool               `db:"include_all" json:"include_all"`
 	ViewerUserID    int64              `db:"viewer_user_id" json:"viewer_user_id"`
@@ -131,6 +132,10 @@ func buildListProblemsByCursorQuery(arg ListProblemsByCursorParams) (string, []a
 	if arg.Keyword.Valid {
 		keywordArg := builder.bind(arg.Keyword.String, "::text")
 		builder.add("(p.title ILIKE '%' || " + keywordArg + " || '%' OR p.slug ILIKE '%' || " + keywordArg + " || '%')")
+	}
+	if arg.Owner.Valid {
+		ownerArg := builder.bind(arg.Owner.String, "::text")
+		builder.add("EXISTS (SELECT 1 FROM users u WHERE u.id = p.owner_user_id AND u.username ILIKE '%' || " + ownerArg + " || '%')")
 	}
 	if arg.OwnerUserID > 0 {
 		builder.add("p.owner_user_id = " + builder.bind(arg.OwnerUserID, "::bigint"))

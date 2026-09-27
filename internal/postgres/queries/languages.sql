@@ -38,12 +38,6 @@ SELECT *
 FROM languages
 WHERE id = $1;
 
--- name: GetEnabledLanguageByID :one
-SELECT *
-FROM languages
-WHERE id = $1
-  AND enabled = true;
-
 -- name: ListLanguages :many
 SELECT *
 FROM languages

@@ -12,7 +12,7 @@ import (
 )
 
 type runStore interface {
-	GetEnabledLanguage(context.Context, int64) (LanguageRecord, error)
+	GetLanguage(context.Context, int64) (LanguageRecord, error)
 	CreateArtifact(context.Context, ArtifactRecord) (ArtifactRecord, error)
 	AdmitRun(context.Context, AdmitRunInput) (RunRecord, error)
 	GetRun(context.Context, int64) (RunRecord, error)
@@ -159,8 +159,11 @@ func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input Crea
 			return CreateRunOutput{}, err
 		}
 	}
-	language, err := s.store.GetEnabledLanguage(ctx, input.LanguageID)
+	language, err := s.store.GetLanguage(ctx, input.LanguageID)
 	if err != nil {
+		return CreateRunOutput{}, err
+	}
+	if err := requireLanguageEnabled(language); err != nil {
 		return CreateRunOutput{}, err
 	}
 

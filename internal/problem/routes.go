@@ -20,6 +20,7 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	problems.GET("/:id/authoring", m.handler.getProblemAuthoringState)
 	problems.PATCH("/:id", m.handler.updateProblem)
 	problems.DELETE("/:id", m.handler.archiveProblem)
+	problems.POST("/:id/restore", m.handler.restoreProblem)
 	problems.POST("/:id/review", m.handler.submitReview)
 	problems.POST("/:id/review/decision", m.handler.decideReview)
 	problems.GET("/:id/review/events", m.handler.listReviewEvents)

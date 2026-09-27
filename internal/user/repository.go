@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"SOJ/internal/audit"
+	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
 
 	"github.com/jackc/pgx/v5"
@@ -20,25 +22,12 @@ var (
 )
 
 type PostgresRepository struct {
-	q postgresQueries
+	q  *db.Queries
+	tx postgres.TxRunner
 }
 
-type postgresQueries interface {
-	CountUsers(context.Context, db.CountUsersParams) (int64, error)
-	CreateRefreshToken(context.Context, db.CreateRefreshTokenParams) (db.RefreshToken, error)
-	CreateUser(context.Context, db.CreateUserParams) (db.User, error)
-	GetRefreshTokenByHash(context.Context, string) (db.RefreshToken, error)
-	GetUserByEmail(context.Context, string) (db.User, error)
-	GetUserByID(context.Context, int64) (db.User, error)
-	ListUsers(context.Context, db.ListUsersParams) ([]db.User, error)
-	ListUsersByCursor(context.Context, db.ListUsersByCursorParams) ([]db.User, error)
-	RevokeRefreshToken(context.Context, string) error
-	RevokeUserDeviceRefreshTokens(context.Context, db.RevokeUserDeviceRefreshTokensParams) error
-	UpdateUserAdminFields(context.Context, db.UpdateUserAdminFieldsParams) (db.User, error)
-}
-
-func NewPostgresRepository(q postgresQueries) *PostgresRepository {
-	return &PostgresRepository{q: q}
+func NewPostgresRepository(q *db.Queries, tx postgres.TxRunner) *PostgresRepository {
+	return &PostgresRepository{q: q, tx: tx}
 }
 
 func (r *PostgresRepository) CreateUser(ctx context.Context, email, passwordHash, username string) (User, error) {
@@ -119,17 +108,78 @@ func (r *PostgresRepository) ListUsersByCursor(ctx context.Context, input ListUs
 	return users, nil
 }
 
-func (r *PostgresRepository) UpdateUser(ctx context.Context, id int64, input UpdateUserInput) (User, error) {
-	row, err := r.q.UpdateUserAdminFields(ctx, db.UpdateUserAdminFieldsParams{
+// UpdateUser applies an administrative update. A non-nil event makes the
+// change and its audit record one transaction, so a recorded disable cannot
+// exist without the disable itself (or the other way around).
+func (r *PostgresRepository) UpdateUser(ctx context.Context, id int64, input UpdateUserInput, event *audit.Event) (User, error) {
+	params := updateUserParams(id, input)
+	if event == nil {
+		row, err := r.q.UpdateUserAdminFields(ctx, params)
+		if err != nil {
+			return User{}, mapDBError(err)
+		}
+		return mapUser(row), nil
+	}
+
+	var updated User
+	err := postgres.WithTx(ctx, r.tx, func(tx pgx.Tx) error {
+		if input.Status != nil && *input.Status != StatusActive {
+			if err := ensureActiveRootRemains(ctx, tx, id); err != nil {
+				return err
+			}
+		}
+		row, err := r.q.WithTx(tx).UpdateUserAdminFields(ctx, params)
+		if err != nil {
+			return mapDBError(err)
+		}
+		updated = mapUser(row)
+		return audit.Insert(ctx, tx, *event)
+	})
+	if err != nil {
+		return User{}, err
+	}
+	return updated, nil
+}
+
+func updateUserParams(id int64, input UpdateUserInput) db.UpdateUserAdminFieldsParams {
+	return db.UpdateUserAdminFieldsParams{
 		ID:       id,
 		Username: nullableTextPtr(input.Username),
 		Bio:      nullableTextPtr(input.Bio),
 		Status:   nullableTextPtr(input.Status),
-	})
-	if err != nil {
-		return User{}, mapDBError(err)
 	}
-	return mapUser(row), nil
+}
+
+// ensureActiveRootRemains locks the active root assignments and rejects the
+// update that would leave none. Disabling the last root is the same loss of
+// break-glass access as revoking the role, so it carries the same invariant.
+func ensureActiveRootRemains(ctx context.Context, tx pgx.Tx, userID int64) error {
+	rows, err := tx.Query(ctx, `
+		SELECT user_id
+		FROM user_role_assignments
+		WHERE role_code = 'root' AND revoked_at IS NULL
+		FOR UPDATE
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var roots []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		roots = append(roots, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(roots) == 1 && roots[0] == userID {
+		return ErrLastRoot
+	}
+	return nil
 }
 
 func (r *PostgresRepository) CreateRefreshToken(ctx context.Context, userID int64, tokenHash string, meta TokenMetadata) error {

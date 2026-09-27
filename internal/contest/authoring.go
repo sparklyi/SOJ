@@ -4,12 +4,12 @@ import (
 	"context"
 	"strings"
 
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 )
 
 type contestAuthoringStore interface {
 	GetContest(context.Context, int64) (ContestRecord, error)
-	ArchiveContest(context.Context, int64) (ContestRecord, error)
 	WithTx(context.Context, func(context.Context, contestTransaction) error) error
 }
 
@@ -114,7 +114,8 @@ func (a *ContestAuthoring) UpdateContest(ctx context.Context, actor auth.Actor, 
 	return updated, err
 }
 
-// DeleteContest archives a contest after checking ownership.
+// DeleteContest archives a contest after checking ownership. The archive and
+// its audit record are one transaction.
 func (a *ContestAuthoring) DeleteContest(ctx context.Context, actor auth.Actor, id int64) (ContestRecord, error) {
 	current, err := a.store.GetContest(ctx, id)
 	if err != nil {
@@ -123,5 +124,18 @@ func (a *ContestAuthoring) DeleteContest(ctx context.Context, actor auth.Actor, 
 	if err := requireContestWriter(actor, current); err != nil {
 		return ContestRecord{}, err
 	}
-	return a.store.ArchiveContest(ctx, id)
+	var archived ContestRecord
+	err = a.store.WithTx(ctx, func(ctx context.Context, tx contestTransaction) error {
+		archived, err = tx.ArchiveContest(ctx, id)
+		if err != nil {
+			return err
+		}
+		return tx.RecordAudit(ctx, audit.Event{
+			ActorUserID: actor.UserID,
+			Action:      audit.ActionContestArchived,
+			ObjectType:  audit.ObjectContest,
+			ObjectID:    id,
+		})
+	})
+	return archived, err
 }

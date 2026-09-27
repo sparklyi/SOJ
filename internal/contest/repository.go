@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
 
@@ -27,7 +28,7 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 func (r *PostgresRepository) WithTx(ctx context.Context, fn func(context.Context, contestTransaction) error) error {
 	return postgres.WithPoolTx(ctx, r.pool, func(tx pgx.Tx) error {
-		return fn(ctx, &txRepository{queries: r.queries.WithTx(tx)})
+		return fn(ctx, &txRepository{tx: tx, queries: r.queries.WithTx(tx)})
 	})
 }
 
@@ -121,7 +122,12 @@ func (r *PostgresRepository) ScoreSnapshotPage(ctx context.Context, contestID in
 }
 
 type txRepository struct {
+	tx      pgx.Tx
 	queries *db.Queries
+}
+
+func (r *txRepository) RecordAudit(ctx context.Context, event audit.Event) error {
+	return audit.Insert(ctx, r.tx, event)
 }
 
 func (r *txRepository) WithTx(ctx context.Context, fn func(context.Context, contestTransaction) error) error {

@@ -95,8 +95,8 @@ func (taskDispatchStoreStub) GetArtifact(context.Context, int64) (ArtifactRecord
 	return ArtifactRecord{}, nil
 }
 
-func (taskDispatchStoreStub) GetEnabledLanguage(context.Context, int64) (LanguageRecord, error) {
-	return LanguageRecord{}, nil
+func (taskDispatchStoreStub) GetLanguage(context.Context, int64) (LanguageRecord, error) {
+	return LanguageRecord{ID: 71, Enabled: true}, nil
 }
 
 func (taskDispatchStoreStub) MarkSubmissionRunning(context.Context, int64) (SubmissionRecord, error) {
@@ -180,8 +180,8 @@ func (taskProcessStoreStub) GetArtifact(context.Context, int64) (ArtifactRecord,
 	return ArtifactRecord{}, nil
 }
 
-func (taskProcessStoreStub) GetEnabledLanguage(context.Context, int64) (LanguageRecord, error) {
-	return LanguageRecord{}, nil
+func (taskProcessStoreStub) GetLanguage(context.Context, int64) (LanguageRecord, error) {
+	return LanguageRecord{ID: 71, Enabled: true}, nil
 }
 
 func (taskProcessStoreStub) CompleteSubmissionWithResult(context.Context, int64, judge.Result) (SubmissionRecord, error) {

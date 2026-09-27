@@ -31,6 +31,7 @@ type Querier interface {
 	// on. Counted in the database so the cap holds across API replicas, where an
 	// in-process counter would silently be N times the configured value.
 	CountActiveRunsByUser(ctx context.Context, userID int64) (int64, error)
+	CountAuditEvents(ctx context.Context, arg CountAuditEventsParams) (int64, error)
 	CountContests(ctx context.Context, arg CountContestsParams) (int64, error)
 	CountLanguages(ctx context.Context, arg CountLanguagesParams) (int64, error)
 	CountProblems(ctx context.Context, arg CountProblemsParams) (int64, error)
@@ -83,7 +84,6 @@ type Querier interface {
 	GetContestScoreSnapshotByKey(ctx context.Context, arg GetContestScoreSnapshotByKeyParams) (ContestScoreSnapshot, error)
 	GetCurrentProblemStatement(ctx context.Context, problemID int64) (ProblemStatement, error)
 	GetCurrentTestcaseSet(ctx context.Context, problemID int64) (TestcaseSet, error)
-	GetEnabledLanguageByID(ctx context.Context, id int64) (Language, error)
 	GetJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttempt, error)
 	GetJudgeTaskByID(ctx context.Context, id int64) (JudgeTask, error)
 	GetJudgeTaskByRunID(ctx context.Context, runID pgtype.Int8) (JudgeTask, error)
@@ -109,6 +109,7 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	IncrementContestScoreRevision(ctx context.Context, id int64) (int64, error)
 	LinkProblemTag(ctx context.Context, arg LinkProblemTagParams) error
+	ListAuditEvents(ctx context.Context, arg ListAuditEventsParams) ([]ListAuditEventsRow, error)
 	ListContestProblemResults(ctx context.Context, contestID int64) ([]ContestProblemResult, error)
 	ListContestProblemResultsForUsers(ctx context.Context, arg ListContestProblemResultsForUsersParams) ([]ContestProblemResult, error)
 	ListContestProblemSubmissionsForProjection(ctx context.Context, arg ListContestProblemSubmissionsForProjectionParams) ([]ListContestProblemSubmissionsForProjectionRow, error)
@@ -190,6 +191,7 @@ type Querier interface {
 	RecoverDeadJudgeTask(ctx context.Context, arg RecoverDeadJudgeTaskParams) (RecoverDeadJudgeTaskRow, error)
 	RefreshRejudgeBatchProgress(ctx context.Context, id int64) (RejudgeBatch, error)
 	ResetStaleJudgeTasks(ctx context.Context, arg ResetStaleJudgeTasksParams) ([]ResetStaleJudgeTasksRow, error)
+	RestoreProblem(ctx context.Context, id int64) (Problem, error)
 	RestoreSubmissionAfterCanceledRejudge(ctx context.Context, submissionID int64) (Submission, error)
 	RetryJudgeTask(ctx context.Context, arg RetryJudgeTaskParams) (JudgeTask, error)
 	RevokeRefreshToken(ctx context.Context, tokenHash string) error

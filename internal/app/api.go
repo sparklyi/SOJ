@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 	"SOJ/internal/config"
 	"SOJ/internal/contest"
@@ -85,7 +86,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	)
 
 	queries := db.New(pool)
-	userRepo := user.NewPostgresRepository(queries)
+	userRepo := user.NewPostgresRepository(queries, pool)
 	roleRepo := user.NewPostgresRoleRepository(pool)
 	userService := user.NewService(
 		userRepo,
@@ -173,6 +174,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 			contest.NewModule(contestService),
 			submission.NewModule(submission.NewHandler(submissionService, rejudgeService)),
 			stats.NewModule(statsService),
+			audit.NewModule(audit.NewPostgresStore(queries)),
 		},
 	})
 	logger.InfoContext(ctx, "starting soj api", "addr", cfg.HTTP.Addr)
@@ -212,15 +214,18 @@ func (p rejudgeAuthorizationPolicy) ValidateContestRejudgeTarget(ctx context.Con
 	return p.contests.ValidateContestRejudgeTarget(ctx, contestID)
 }
 
-func actorMiddleware(jwtManager *auth.JWTManager, roles user.RoleStore) gin.HandlerFunc {
+func actorMiddleware(jwtManager *auth.JWTManager, actors user.ActorResolver) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetString(httpapi.ContextRequestID)
 		actor := auth.Anonymous(requestID)
 		header := c.GetHeader("Authorization")
 		if token, ok := bearerToken(header); ok {
 			if parsed, err := jwtManager.ParseAccessToken(token); err == nil {
-				if assigned, roleErr := roles.ListUserRoles(c.Request.Context(), parsed.UserID); roleErr == nil {
-					parsed.Roles = assigned
+				// Roles are re-read on every request so grants and revocations
+				// apply immediately. Account status travels with them: a disabled
+				// account loses its session here, not when its token expires.
+				if state, stateErr := actors.ResolveActor(c.Request.Context(), parsed.UserID); stateErr == nil && state.Status == user.StatusActive {
+					parsed.Roles = state.Roles
 					parsed.RequestID = requestID
 					actor = parsed
 				}

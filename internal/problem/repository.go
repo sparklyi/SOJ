@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/postgres"
 	"SOJ/internal/postgres/db"
 
@@ -81,7 +82,7 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 func (r *PostgresRepository) withTx(ctx context.Context, fn func(*txRepository) error) error {
 	return postgres.WithPoolTx(ctx, r.pool, func(tx pgx.Tx) error {
-		return fn(&txRepository{queries: r.queries.WithTx(tx)})
+		return fn(&txRepository{tx: tx, queries: r.queries.WithTx(tx)})
 	})
 }
 
@@ -129,6 +130,7 @@ func (r *PostgresRepository) ListProblems(ctx context.Context, filter ListProble
 		Visibility:   textArg(filter.Visibility),
 		Tag:          textArg(filter.Tag),
 		Keyword:      textArg(filter.Keyword),
+		Owner:        textArg(filter.Owner),
 		OwnerUserID:  filter.OwnerUserID,
 		IncludeAll:   filter.IncludeAll,
 		ViewerUserID: filter.ViewerUserID,
@@ -156,6 +158,7 @@ func (r *PostgresRepository) CountProblems(ctx context.Context, filter ListProbl
 		Visibility:   textArg(filter.Visibility),
 		Tag:          textArg(filter.Tag),
 		Keyword:      textArg(filter.Keyword),
+		Owner:        textArg(filter.Owner),
 		OwnerUserID:  filter.OwnerUserID,
 		IncludeAll:   filter.IncludeAll,
 		ViewerUserID: filter.ViewerUserID,
@@ -169,6 +172,11 @@ func (r *PostgresRepository) UpdateProblem(ctx context.Context, id int64, input 
 
 func (r *PostgresRepository) ArchiveProblem(ctx context.Context, id int64) (ProblemRecord, error) {
 	p, err := r.queries.ArchiveProblem(ctx, id)
+	return problemFromDB(p), mapDBErr(err)
+}
+
+func (r *PostgresRepository) RestoreProblem(ctx context.Context, id int64) (ProblemRecord, error) {
+	p, err := r.queries.RestoreProblem(ctx, id)
 	return problemFromDB(p), mapDBErr(err)
 }
 
@@ -325,7 +333,12 @@ func (r *PostgresRepository) ListProblemReviewEvents(ctx context.Context, proble
 }
 
 type txRepository struct {
+	tx      pgx.Tx
 	queries *db.Queries
+}
+
+func (r *txRepository) RecordAudit(ctx context.Context, event audit.Event) error {
+	return audit.Insert(ctx, r.tx, event)
 }
 
 func (r *txRepository) CreateProblem(ctx context.Context, ownerUserID int64, input CreateProblemInput) (ProblemRecord, error) {
@@ -393,6 +406,7 @@ func (r *txRepository) CountProblems(ctx context.Context, filter ListProblemsFil
 		Visibility:   textArg(filter.Visibility),
 		Tag:          textArg(filter.Tag),
 		Keyword:      textArg(filter.Keyword),
+		Owner:        textArg(filter.Owner),
 		OwnerUserID:  filter.OwnerUserID,
 		IncludeAll:   filter.IncludeAll,
 		ViewerUserID: filter.ViewerUserID,
@@ -411,6 +425,7 @@ func listProblemsByCursor(ctx context.Context, q *db.Queries, filter ListProblem
 		Visibility:      textArg(filter.Visibility),
 		Tag:             textArg(filter.Tag),
 		Keyword:         textArg(filter.Keyword),
+		Owner:           textArg(filter.Owner),
 		OwnerUserID:     filter.OwnerUserID,
 		IncludeAll:      filter.IncludeAll,
 		ViewerUserID:    filter.ViewerUserID,
@@ -438,6 +453,11 @@ func (r *txRepository) SetProblemStatus(ctx context.Context, id int64, status st
 
 func (r *txRepository) ArchiveProblem(ctx context.Context, id int64) (ProblemRecord, error) {
 	p, err := r.queries.ArchiveProblem(ctx, id)
+	return problemFromDB(p), mapDBErr(err)
+}
+
+func (r *txRepository) RestoreProblem(ctx context.Context, id int64) (ProblemRecord, error) {
+	p, err := r.queries.RestoreProblem(ctx, id)
 	return problemFromDB(p), mapDBErr(err)
 }
 
