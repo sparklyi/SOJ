@@ -24,10 +24,10 @@ func (s *contestRoleMemoryStore) ListContestIDs(_ context.Context, userID int64)
 	return ids, nil
 }
 
-func (s *contestRoleMemoryStore) ListContestRoles(_ context.Context, contestID, userID int64) ([]auth.Role, error) {
+func (s *contestRoleMemoryStore) ListContestAccess(_ context.Context, contestID, userID int64) (ContestAccess, error) {
 	roles := append([]auth.Role(nil), s.roles[[2]int64{contestID, userID}]...)
 	sort.Slice(roles, func(i, j int) bool { return roles[i] < roles[j] })
-	return roles, nil
+	return ContestAccess{Roles: roles, Permissions: seededPermissions(roles...)}, nil
 }
 
 func (s *contestRoleMemoryStore) ListContestRoleAssignments(_ context.Context, contestID int64) ([]ContestRoleAssignment, error) {
@@ -152,21 +152,21 @@ func TestContestRoleIsIncludedInListVisibilityFilter(t *testing.T) {
 }
 
 func TestContestManagerCanWriteWithoutGlobalAdmin(t *testing.T) {
-	err := requireContestManager(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestManager}}, ContestRecord{ID: 9, OwnerUserID: 1})
+	err := requireContestManager(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestManager}, Permissions: seededPermissions(auth.RoleContestManager)}, ContestRecord{ID: 9, OwnerUserID: 1})
 	if err != nil {
 		t.Fatalf("contest manager write error = %v", err)
 	}
-	if err := requireContestManager(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestStaff}}, ContestRecord{ID: 9, OwnerUserID: 1}); err == nil {
+	if err := requireContestManager(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestStaff}, Permissions: seededPermissions(auth.RoleContestStaff)}, ContestRecord{ID: 9, OwnerUserID: 1}); err == nil {
 		t.Fatal("contest staff unexpectedly received manager permission")
 	}
 }
 
 func TestContestJudgeCanRejudgeButStaffCannot(t *testing.T) {
 	contest := ContestRecord{ID: 9, OwnerUserID: 1}
-	if err := requireContestJudge(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestJudge}}, contest); err != nil {
+	if err := requireContestJudge(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestJudge}, Permissions: seededPermissions(auth.RoleContestJudge)}, contest); err != nil {
 		t.Fatalf("contest judge rejudge error = %v", err)
 	}
-	if err := requireContestJudge(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestStaff}}, contest); err == nil {
+	if err := requireContestJudge(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestStaff}, Permissions: seededPermissions(auth.RoleContestStaff)}, contest); err == nil {
 		t.Fatal("contest staff unexpectedly received judge permission")
 	}
 }
@@ -177,11 +177,11 @@ func TestContestStaffCannotSeeFullSubmissionDiagnostics(t *testing.T) {
 	judgedAt := now
 	sub := submission.ContestSubmissionVisibility{SubmittedAt: now.Add(-2 * time.Hour), JudgedAt: &judgedAt}
 
-	staff := submissionResultVisibility(contest, auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestStaff}}, sub, now)
+	staff := submissionResultVisibility(contest, auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestStaff}, Permissions: seededPermissions(auth.RoleContestStaff)}, sub, now)
 	if staff.Visibility != "frozen" || staff.ShowAdminDiagnostics {
 		t.Fatalf("staff visibility = %+v, want frozen without diagnostics", staff)
 	}
-	judge := submissionResultVisibility(contest, auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestJudge}}, sub, now)
+	judge := submissionResultVisibility(contest, auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleContestJudge}, Permissions: seededPermissions(auth.RoleContestJudge)}, sub, now)
 	if judge.Visibility != "visible" || !judge.ShowAdminDiagnostics {
 		t.Fatalf("judge visibility = %+v, want visible diagnostics", judge)
 	}
@@ -259,7 +259,7 @@ func TestListContestRolesRequiresContestManager(t *testing.T) {
 	if _, err := service.ListContestRoles(t.Context(), auth.Actor{}, 9); err == nil {
 		t.Fatal("anonymous actor can list role assignments")
 	}
-	admin := auth.Actor{UserID: 5, Roles: []auth.Role{auth.RoleAdmin}}
+	admin := auth.Actor{UserID: 5, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}
 	if _, err := service.ListContestRoles(t.Context(), admin, 9); err != nil {
 		t.Fatalf("admin ListContestRoles error = %v", err)
 	}

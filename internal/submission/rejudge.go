@@ -187,7 +187,7 @@ func (s *RejudgeService) ListBatches(ctx context.Context, actor auth.Actor, inpu
 	if input.Offset < 0 {
 		input.Offset = 0
 	}
-	if !actor.Admin() {
+	if !canRejudge(actor) {
 		input.RequestedBy = &actor.UserID
 	}
 	return s.repo.ListRejudgeBatches(ctx, input)

@@ -25,6 +25,8 @@ type HandlerService interface {
 	UpdateUser(context.Context, auth.Actor, int64, UpdateUserInput) (User, error)
 	GrantRole(context.Context, auth.Actor, int64, GrantRoleInput) (RoleAssignment, error)
 	RevokeRole(context.Context, auth.Actor, int64, string, RevokeRoleInput) error
+	RolePermissionMatrix(context.Context, auth.Actor) (PermissionMatrix, error)
+	ReplaceRolePermissions(context.Context, auth.Actor, string, ReplaceRolePermissionsInput) (RolePermissionView, error)
 }
 
 type Handler struct {

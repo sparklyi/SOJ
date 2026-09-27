@@ -120,7 +120,7 @@ func TestContestComponentsUseFocusedPorts(t *testing.T) {
 	if _, err := reader.GetContest(t.Context(), auth.Actor{UserID: 8, Role: auth.RoleUser}, 1); err != nil {
 		t.Fatalf("ContestReader.GetContest() error = %v", err)
 	}
-	if _, err := authoring.DeleteContest(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1); err != nil {
+	if _, err := authoring.DeleteContest(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 1); err != nil {
 		t.Fatalf("ContestAuthoring.DeleteContest() error = %v", err)
 	}
 	if _, err := policy.Register(t.Context(), auth.Actor{UserID: 8, Role: auth.RoleUser}, 1, RegistrationInput{DisplayName: "alice", Email: "alice@example.com"}); err != nil {
@@ -140,7 +140,7 @@ func TestServiceAuthorizeContestRejudgeUsesReaderComponent(t *testing.T) {
 		NewScoreboardService(reader, scoreboardStoreStub{}),
 	)
 
-	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1); err != nil {
+	if err := service.AuthorizeContestRejudge(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 1); err != nil {
 		t.Fatalf("AuthorizeContestRejudge() error = %v", err)
 	}
 }

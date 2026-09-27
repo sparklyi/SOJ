@@ -230,10 +230,10 @@ func TestLanguageServiceUsesOnlyLanguageStore(t *testing.T) {
 func TestLanguageAdminRequiresSystemManage(t *testing.T) {
 	service := NewLanguageService(languageStoreStub{})
 
-	if _, _, err := service.ListLanguages(t.Context(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleReviewer}}, ListLanguagesInput{}); err == nil {
+	if _, _, err := service.ListLanguages(t.Context(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleReviewer}, Permissions: seededPermissions(auth.RoleReviewer)}, ListLanguagesInput{}); err == nil {
 		t.Fatal("ListLanguages() error = nil, want forbidden")
 	}
-	if _, _, err := service.ListLanguages(t.Context(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, ListLanguagesInput{}); err != nil {
+	if _, _, err := service.ListLanguages(t.Context(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, ListLanguagesInput{}); err != nil {
 		t.Fatalf("admin ListLanguages() error = %v", err)
 	}
 }

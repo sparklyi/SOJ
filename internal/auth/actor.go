@@ -7,6 +7,12 @@ import (
 
 type Role string
 
+// Permission is a site permission code. The auth package owns the type only so
+// an Actor can carry the resolved permission set; the directory that defines the
+// codes lives in internal/authz, which must not be imported here (authz imports
+// auth, so the dependency only runs one way).
+type Permission string
+
 const (
 	RoleUser           Role = "user"
 	RoleAuthor         Role = "author"
@@ -22,6 +28,11 @@ const (
 type Actor struct {
 	UserID int64
 	Roles  []Role
+	// Permissions is the permission set resolved for this request. It is filled
+	// by the middleware from the database on every request; authorization is a
+	// membership check against it. An Actor with no Permissions is an Actor with
+	// no permissions (fail closed), never one whose roles are re-expanded.
+	Permissions []Permission
 	// Role remains an in-memory single-role view for domain packages that have
 	// not yet moved to Roles. It is never included in a JWT.
 	Role      Role
@@ -87,12 +98,4 @@ func (a Actor) HasRole(role Role) bool {
 		}
 	}
 	return a.Role == role
-}
-
-func (a Actor) Admin() bool {
-	return a.HasRole(RoleAdmin) || a.HasRole(RoleRoot)
-}
-
-func (a Actor) Root() bool {
-	return a.HasRole(RoleRoot)
 }

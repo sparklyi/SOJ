@@ -29,17 +29,17 @@ func TestActorRoleChecks(t *testing.T) {
 	if !admin.Authenticated() {
 		t.Fatal("admin should be authenticated")
 	}
-	if !admin.Admin() {
-		t.Fatal("admin should satisfy Admin")
+	if !admin.HasRole(RoleAdmin) {
+		t.Fatal("admin should carry the admin role")
 	}
-	if admin.Root() {
-		t.Fatal("admin should not satisfy Root")
+	if admin.HasRole(RoleRoot) {
+		t.Fatal("admin should not carry the root role")
 	}
 }
 
 func TestActorRoleChecksUseAssignedRoles(t *testing.T) {
 	root := Actor{UserID: 42, Roles: []Role{RoleRoot}}
-	if !root.Admin() || !root.Root() {
-		t.Fatalf("root role checks failed: %+v", root)
+	if !root.HasRole(RoleRoot) {
+		t.Fatalf("root role check failed: %+v", root)
 	}
 }

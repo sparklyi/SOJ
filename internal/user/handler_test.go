@@ -19,16 +19,18 @@ import (
 )
 
 type fakeService struct {
-	register          func(context.Context, auth.Actor, RegisterInput) (AuthSession, error)
-	login             func(context.Context, auth.Actor, LoginInput) (AuthSession, error)
-	refresh           func(context.Context, auth.Actor, RefreshInput) (AuthSession, error)
-	logout            func(context.Context, auth.Actor, LogoutInput) error
-	me                func(context.Context, auth.Actor) (User, error)
-	listUsers         func(context.Context, auth.Actor, ListUsersInput) (UserList, error)
-	listUsersByCursor func(context.Context, auth.Actor, ListUsersInput) (UserCursorPage, error)
-	updateUser        func(context.Context, auth.Actor, int64, UpdateUserInput) (User, error)
-	grantRole         func(context.Context, auth.Actor, int64, GrantRoleInput) (RoleAssignment, error)
-	revokeRole        func(context.Context, auth.Actor, int64, string, RevokeRoleInput) error
+	register               func(context.Context, auth.Actor, RegisterInput) (AuthSession, error)
+	login                  func(context.Context, auth.Actor, LoginInput) (AuthSession, error)
+	refresh                func(context.Context, auth.Actor, RefreshInput) (AuthSession, error)
+	logout                 func(context.Context, auth.Actor, LogoutInput) error
+	me                     func(context.Context, auth.Actor) (User, error)
+	listUsers              func(context.Context, auth.Actor, ListUsersInput) (UserList, error)
+	listUsersByCursor      func(context.Context, auth.Actor, ListUsersInput) (UserCursorPage, error)
+	updateUser             func(context.Context, auth.Actor, int64, UpdateUserInput) (User, error)
+	grantRole              func(context.Context, auth.Actor, int64, GrantRoleInput) (RoleAssignment, error)
+	revokeRole             func(context.Context, auth.Actor, int64, string, RevokeRoleInput) error
+	rolePermissionMatrix   func(context.Context, auth.Actor) (PermissionMatrix, error)
+	replaceRolePermissions func(context.Context, auth.Actor, string, ReplaceRolePermissionsInput) (RolePermissionView, error)
 }
 
 func (f fakeService) Register(ctx context.Context, actor auth.Actor, input RegisterInput) (AuthSession, error) {
@@ -90,6 +92,20 @@ func (f fakeService) RevokeRole(ctx context.Context, actor auth.Actor, id int64,
 		return errors.New("not implemented")
 	}
 	return f.revokeRole(ctx, actor, id, role, input)
+}
+
+func (f fakeService) RolePermissionMatrix(ctx context.Context, actor auth.Actor) (PermissionMatrix, error) {
+	if f.rolePermissionMatrix == nil {
+		return PermissionMatrix{}, errors.New("not implemented")
+	}
+	return f.rolePermissionMatrix(ctx, actor)
+}
+
+func (f fakeService) ReplaceRolePermissions(ctx context.Context, actor auth.Actor, role string, input ReplaceRolePermissionsInput) (RolePermissionView, error) {
+	if f.replaceRolePermissions == nil {
+		return RolePermissionView{}, errors.New("not implemented")
+	}
+	return f.replaceRolePermissions(ctx, actor, role, input)
 }
 
 func TestHandlerRegisterRejectsBadJSON(t *testing.T) {

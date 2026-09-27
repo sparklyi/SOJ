@@ -21,15 +21,17 @@ type ListFilter struct {
 
 // Record is one audit event as the admin console reads it back.
 type Record struct {
-	ID            int64           `json:"id"`
-	ActorUserID   *int64          `json:"actor_user_id,omitempty"`
-	ActorUsername string          `json:"actor_username,omitempty"`
-	Action        Action          `json:"action"`
-	ObjectType    ObjectType      `json:"object_type"`
-	ObjectID      int64           `json:"object_id"`
-	Reason        string          `json:"reason,omitempty"`
-	Metadata      json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
+	ID            int64      `json:"id"`
+	ActorUserID   *int64     `json:"actor_user_id,omitempty"`
+	ActorUsername string     `json:"actor_username,omitempty"`
+	Action        Action     `json:"action"`
+	ObjectType    ObjectType `json:"object_type"`
+	// ObjectID is nil for objects without a numeric id (for example a role,
+	// whose code travels in Metadata).
+	ObjectID  *int64          `json:"object_id,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 type Store interface {
@@ -78,7 +80,6 @@ func recordFromDB(row db.ListAuditEventsRow) Record {
 		ID:            row.ID,
 		Action:        Action(row.Action),
 		ObjectType:    ObjectType(row.ObjectType),
-		ObjectID:      row.ObjectID,
 		Reason:        row.Reason,
 		Metadata:      row.Metadata,
 		CreatedAt:     row.CreatedAt.Time.UTC(),
@@ -87,6 +88,10 @@ func recordFromDB(row db.ListAuditEventsRow) Record {
 	if row.ActorUserID.Valid {
 		actorID := row.ActorUserID.Int64
 		record.ActorUserID = &actorID
+	}
+	if row.ObjectID.Valid {
+		objectID := row.ObjectID.Int64
+		record.ObjectID = &objectID
 	}
 	return record
 }

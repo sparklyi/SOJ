@@ -45,16 +45,16 @@ func (s *SubmissionReader) GetSubmission(ctx context.Context, actor auth.Actor, 
 	if err != nil {
 		return SubmissionView{}, err
 	}
-	if !actor.Admin() && (!actor.Authenticated() || actor.UserID != record.UserID) {
+	if !canInspectSubmissions(actor) && (!actor.Authenticated() || actor.UserID != record.UserID) {
 		return SubmissionView{}, apperror.Forbidden("submission.not_allowed", "submission access denied")
 	}
 	return s.submissionView(ctx, actor, record)
 }
 
 // GetSubmissionSource reads the stored source for an authorized reader. The
-// owner and global admins always pass; anyone else needs contest staff rights
-// on the submission's contest, asked through the same contest policy that owns
-// result visibility.
+// owner and holders of judge.inspect always pass; anyone else needs contest
+// staff rights on the submission's contest, asked through the same contest
+// policy that owns result visibility.
 func (s *SubmissionReader) GetSubmissionSource(ctx context.Context, actor auth.Actor, id int64) (SubmissionSource, error) {
 	record, err := s.store.GetSubmission(ctx, id)
 	if err != nil {
@@ -78,7 +78,7 @@ func (s *SubmissionReader) GetSubmissionSource(ctx context.Context, actor auth.A
 }
 
 func (s *SubmissionReader) authorizeSourceRead(ctx context.Context, actor auth.Actor, record SubmissionRecord) error {
-	if actor.Admin() || (actor.Authenticated() && actor.UserID == record.UserID) {
+	if canInspectSubmissions(actor) || (actor.Authenticated() && actor.UserID == record.UserID) {
 		return nil
 	}
 	if record.ContestID == nil {
@@ -106,7 +106,7 @@ func (s *SubmissionReader) ListSubmissions(ctx context.Context, actor auth.Actor
 	if !actor.Authenticated() {
 		return nil, 0, apperror.Unauthorized("auth_required", "authentication required")
 	}
-	if !actor.Admin() {
+	if !canInspectSubmissions(actor) {
 		input.UserID = &actor.UserID
 	}
 	if input.Limit <= 0 || input.Limit > 100 {
@@ -130,7 +130,7 @@ func (s *SubmissionReader) ListSubmissionsByCursor(ctx context.Context, actor au
 	if !actor.Authenticated() {
 		return SubmissionCursorPage{}, apperror.Unauthorized("auth_required", "authentication required")
 	}
-	if !actor.Admin() {
+	if !canInspectSubmissions(actor) {
 		input.UserID = &actor.UserID
 	}
 	if input.Limit <= 0 || input.Limit > 100 {
@@ -286,7 +286,7 @@ func (s *SubmissionReader) submissionListVisibilities(ctx context.Context, actor
 	visibilities := make(map[int64]SubmissionResultVisibility, len(records))
 	contestSubmissions := make([]ContestSubmissionVisibility, 0, len(records))
 	for _, record := range records {
-		visibilities[record.ID] = SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: actor.Admin(), Visibility: "visible"}
+		visibilities[record.ID] = SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: canInspectSubmissions(actor), Visibility: "visible"}
 		if record.ContestID == nil {
 			continue
 		}
@@ -305,7 +305,7 @@ func (s *SubmissionReader) submissionListVisibilities(ctx context.Context, actor
 			if !ok {
 				return nil, fmt.Errorf("contest visibility policy did not return submission %d", submission.ID)
 			}
-			if actor.Admin() {
+			if canInspectSubmissions(actor) {
 				visibility.ShowAdminDiagnostics = true
 			}
 			visibilities[submission.ID] = visibility
@@ -326,7 +326,7 @@ func (s *SubmissionReader) submissionListVisibilities(ctx context.Context, actor
 }
 
 func (s *SubmissionReader) submissionVisibility(ctx context.Context, actor auth.Actor, record SubmissionRecord) (SubmissionResultVisibility, error) {
-	visibility := SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: actor.Admin(), Visibility: "visible"}
+	visibility := SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: canInspectSubmissions(actor), Visibility: "visible"}
 	if record.ContestID == nil {
 		return visibility, nil
 	}
@@ -335,12 +335,12 @@ func (s *SubmissionReader) submissionVisibility(ctx context.Context, actor auth.
 		if err != nil {
 			return SubmissionResultVisibility{}, err
 		}
-		if actor.Admin() {
+		if canInspectSubmissions(actor) {
 			policyVisibility.ShowAdminDiagnostics = true
 		}
 		return policyVisibility, nil
 	}
-	if !actor.Admin() {
+	if !canInspectSubmissions(actor) {
 		visibility.ShowCases = false
 	}
 	return visibility, nil

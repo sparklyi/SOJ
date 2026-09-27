@@ -21,4 +21,6 @@ func (m *Module) RegisterRoutes(group *gin.RouterGroup) {
 	group.PATCH("/admin/users/:id", m.handler.UpdateUser)
 	group.POST("/admin/users/:id/roles", m.handler.GrantRole)
 	group.DELETE("/admin/users/:id/roles/:role", m.handler.RevokeRole)
+	group.GET("/admin/roles", m.handler.RolePermissionMatrix)
+	group.PUT("/admin/roles/:role/permissions", m.handler.ReplaceRolePermissions)
 }

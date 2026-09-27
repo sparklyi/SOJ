@@ -29,10 +29,10 @@ func TestProblemAuthorizationAllowsOwnerAndAdmin(t *testing.T) {
 	_, err := service.UpdateProblem(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1, UpdateProblemInput{Title: &title})
 	assertAppCode(t, err, "problem.forbidden")
 
-	if _, err := service.UpdateProblem(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, UpdateProblemInput{Title: &title}); err != nil {
+	if _, err := service.UpdateProblem(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, UpdateProblemInput{Title: &title}); err != nil {
 		t.Fatalf("owner update failed: %v", err)
 	}
-	if _, err := service.UpdateProblem(context.Background(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1, UpdateProblemInput{Title: &title}); err != nil {
+	if _, err := service.UpdateProblem(context.Background(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 1, UpdateProblemInput{Title: &title}); err != nil {
 		t.Fatalf("admin update failed: %v", err)
 	}
 }
@@ -59,10 +59,10 @@ func TestAuthorizeProblemRejudgeUsesOperatorPermission(t *testing.T) {
 	if err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 10, Role: auth.RoleUser}, 1); err == nil {
 		t.Fatal("ordinary user should not rejudge a problem")
 	}
-	if err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleOperator}}, 1); err != nil {
+	if err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleOperator}, Permissions: seededPermissions(auth.RoleOperator)}, 1); err != nil {
 		t.Fatalf("operator authorization returned error: %v", err)
 	}
-	if err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1); err != nil {
+	if err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 1); err != nil {
 		t.Fatalf("admin authorization returned error: %v", err)
 	}
 	err := service.AuthorizeProblemRejudge(t.Context(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1)
@@ -75,7 +75,7 @@ func TestUpdateProblemRejectsStatusMutation(t *testing.T) {
 	service := newProblemService(repo, &fakeStorage{})
 	status := StatusPublished
 
-	_, err := service.UpdateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, UpdateProblemInput{Status: &status})
+	_, err := service.UpdateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, UpdateProblemInput{Status: &status})
 	assertAppCode(t, err, "problem.status_managed_by_review")
 }
 
@@ -85,7 +85,7 @@ func TestRestoreProblemRequiresManageAll(t *testing.T) {
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusArchived, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
 
-	_, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1)
+	_, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
 	assertAppCode(t, err, "problem.forbidden")
 }
 
@@ -94,7 +94,7 @@ func TestRestoreProblemRejectsProblemThatIsNotArchived(t *testing.T) {
 	seedPublishableProblem(repo)
 	service := newProblemService(repo, &fakeStorage{})
 
-	_, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1)
+	_, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 1)
 	assertAppCode(t, err, "problem.not_archived")
 }
 
@@ -104,7 +104,7 @@ func TestRestoreProblemReListsArchivedProblem(t *testing.T) {
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusArchived, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
 
-	restored, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1)
+	restored, err := service.RestoreProblem(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 1)
 	if err != nil {
 		t.Fatalf("RestoreProblem() error = %v", err)
 	}
@@ -123,7 +123,7 @@ func TestSavingNewStatementInvalidatesPreviousValidCheck(t *testing.T) {
 	}
 	store := &fakeStorage{}
 	service := newProblemService(repo, store)
-	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}
+	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}
 
 	statement, err := service.CreateStatement(t.Context(), actor, 1, CreateStatementInput{
 		Title:       "Updated statement",
@@ -173,7 +173,7 @@ func TestProblemAuthoringStateReportsPublishBlockers(t *testing.T) {
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
 
-	state, err := service.GetProblemAuthoringState(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1)
+	state, err := service.GetProblemAuthoringState(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
 
 	if err != nil {
 		t.Fatalf("GetProblemAuthoringState returned error: %v", err)
@@ -195,7 +195,7 @@ func TestProblemAuthoringStateReturnsCurrentValidCheck(t *testing.T) {
 	}
 	service := newProblemService(repo, &fakeStorage{})
 
-	state, err := service.GetProblemAuthoringState(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1)
+	state, err := service.GetProblemAuthoringState(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
 
 	if err != nil {
 		t.Fatalf("GetProblemAuthoringState returned error: %v", err)
@@ -237,7 +237,7 @@ func TestAnonymousProblemReadsFollowPublicVisibility(t *testing.T) {
 }
 
 func TestNormalizeListFilterScopesMineToActor(t *testing.T) {
-	filter := normalizeListFilter(auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAdmin}}, ListProblemsFilter{Mine: true})
+	filter := normalizeListFilter(auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, ListProblemsFilter{Mine: true})
 
 	if filter.OwnerUserID != 10 || filter.IncludeAll {
 		t.Fatalf("mine filter = %+v", filter)
@@ -251,7 +251,7 @@ func TestListProblemsByCursorReturnsNextCursor(t *testing.T) {
 	repo.problems[1] = ProblemRecord{ID: 1, Title: "First", Slug: "first", Status: StatusPublished, Visibility: VisibilityPublic, CreatedAt: now.Add(-2 * time.Minute)}
 	service := newProblemService(repo, &fakeStorage{})
 
-	viewer := auth.Actor{UserID: 30, Roles: []auth.Role{auth.RoleUser}}
+	viewer := auth.Actor{UserID: 30, Roles: []auth.Role{auth.RoleUser}, Permissions: seededPermissions(auth.RoleUser)}
 	page, err := service.ListProblemsByCursor(context.Background(), viewer, ListProblemsFilter{PageSize: 1})
 	if err != nil {
 		t.Fatalf("ListProblemsByCursor returned error: %v", err)
@@ -276,7 +276,7 @@ func TestCreateStatementSwitchesCurrentVersion(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
-	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}
+	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}
 
 	first, err := service.CreateStatement(context.Background(), actor, 1, CreateStatementInput{Title: "A", Description: "desc"})
 	if err != nil {
@@ -303,7 +303,7 @@ func TestCreateStatementDemotesPublishedProblemToDraft(t *testing.T) {
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic}
 	service := newProblemService(repo, &fakeStorage{})
 
-	_, err := service.CreateStatement(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, CreateStatementInput{Title: "Updated", Description: "desc"})
+	_, err := service.CreateStatement(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, CreateStatementInput{Title: "Updated", Description: "desc"})
 
 	if err != nil {
 		t.Fatalf("CreateStatement returned error: %v", err)
@@ -326,7 +326,7 @@ func TestUploadTestcaseArchiveValidationFailure(t *testing.T) {
 	// A lone input can never form a case, so the upload must fail before any
 	// object is written.
 	archive := zipArchive(t, map[string]string{"1.in": "1\n"})
-	_, findings, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, uploadArchiveInput(archive))
+	_, findings, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, uploadArchiveInput(archive))
 	assertAppCode(t, err, "testcase.archive_invalid")
 	assertHTTPStatus(t, err, 422)
 	if len(findings) == 0 || !hasFindingCode(findings, codeOutputMissing) {
@@ -359,7 +359,7 @@ func TestUploadTestcaseArchiveRejectsIllegalFileName(t *testing.T) {
 		"README.md": "documentation\n",
 	})
 
-	_, findings, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, uploadArchiveInput(archive))
+	_, findings, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, uploadArchiveInput(archive))
 	assertAppCode(t, err, "testcase.archive_invalid")
 	assertHTTPStatus(t, err, 422)
 	if !hasFindingCode(findings, codeFileNameInvalid) {
@@ -377,7 +377,7 @@ func TestUploadTestcaseArchiveReturnsWarnings(t *testing.T) {
 		".DS_Store": "metadata",
 	})
 
-	set, findings, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, uploadArchiveInput(archive))
+	set, findings, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, uploadArchiveInput(archive))
 	if err != nil {
 		t.Fatalf("UploadTestcaseArchive returned error: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestUploadTestcaseArchiveDeletesObjectWhenTransactionFails(t *testing.T) {
 	service := newProblemService(repo, store)
 	archive := zipArchive(t, map[string]string{"1.in": "1\n", "1.ans": "1\n"})
 
-	_, _, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, uploadArchiveInput(archive))
+	_, _, err := service.UploadTestcaseArchive(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, uploadArchiveInput(archive))
 	if err == nil {
 		t.Fatalf("expected transaction failure")
 	}
@@ -412,7 +412,7 @@ func TestUploadTestcaseArchiveDemotesPublishedProblemToDraft(t *testing.T) {
 	service := newProblemService(repo, &fakeStorage{})
 	archive := zipArchive(t, map[string]string{"1.in": "1\n", "1.ans": "1\n"})
 
-	_, _, err := service.UploadTestcaseArchive(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, uploadArchiveInput(archive))
+	_, _, err := service.UploadTestcaseArchive(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, uploadArchiveInput(archive))
 	if err != nil {
 		t.Fatalf("UploadTestcaseArchive returned error: %v", err)
 	}
@@ -486,7 +486,7 @@ func TestConcurrentUploadSerializesVersionAllocation(t *testing.T) {
 	store := &fakeStorage{delay: 20 * time.Millisecond}
 	service := newProblemService(repo, store)
 	archive := zipArchive(t, map[string]string{"1.in": "1\n", "1.ans": "1\n"})
-	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}
+	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
@@ -534,10 +534,10 @@ func TestRunProblemCheckRequiresOwnerOrAdmin(t *testing.T) {
 	_, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 20, Role: auth.RoleUser}, 1)
 	assertAppCode(t, err, "problem.forbidden")
 
-	if _, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1); err != nil {
+	if _, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1); err != nil {
 		t.Fatalf("owner check failed: %v", err)
 	}
-	if _, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}}, 1); err != nil {
+	if _, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 1); err != nil {
 		t.Fatalf("admin check failed: %v", err)
 	}
 }
@@ -554,7 +554,7 @@ func TestRunProblemCheckPersistsCompletedRunAndSummary(t *testing.T) {
 	service := newProblemService(repo, store)
 	service.checks.now = func() time.Time { return time.Unix(100, 0).UTC() }
 
-	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1)
+	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
 	if err != nil {
 		t.Fatalf("RunProblemCheck returned error: %v", err)
 	}
@@ -631,7 +631,7 @@ func TestRunProblemCheckReportsArchiveFindings(t *testing.T) {
 			seedProblemCheckData(t, repo, store, `[]`, tt.archive, tt.caseCount)
 			service := newProblemService(repo, store)
 
-			result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1)
+			result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
 			if err != nil {
 				t.Fatalf("RunProblemCheck returned error: %v", err)
 			}
@@ -663,7 +663,7 @@ func TestRunProblemCheckReportsBatchFindings(t *testing.T) {
 	}), 3)
 	service := newProblemService(repo, store)
 
-	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1)
+	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
 	if err != nil {
 		t.Fatalf("RunProblemCheck returned error: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestGetProblemCheckReturnsCheckNotFoundForMissingRun(t *testing.T) {
 	}), 1)
 	service := newProblemService(repo, store)
 
-	_, err := service.GetProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1, 99)
+	_, err := service.GetProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, 99)
 
 	assertAppCode(t, err, "problem_check.not_found")
 }
@@ -804,7 +804,7 @@ func TestProblemAuthoringStateExposesFlowAndBlockerSteps(t *testing.T) {
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
 
-	state, err := service.GetProblemAuthoringState(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, 1)
+	state, err := service.GetProblemAuthoringState(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
 	if err != nil {
 		t.Fatalf("GetProblemAuthoringState returned error: %v", err)
 	}
@@ -840,7 +840,7 @@ func TestListProblemsBatchesTagLookup(t *testing.T) {
 	repo.tags[2] = []Tag{{ID: 2, Name: "dp", Slug: "dp"}}
 	service := newProblemService(repo, &fakeStorage{})
 
-	list, err := service.ListProblems(t.Context(), auth.Actor{Roles: []auth.Role{auth.RoleAdmin}}, ListProblemsFilter{})
+	list, err := service.ListProblems(t.Context(), auth.Actor{Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, ListProblemsFilter{})
 	if err != nil {
 		t.Fatalf("ListProblems returned error: %v", err)
 	}
@@ -860,7 +860,7 @@ func TestCreateStatementValidatesSamplesAndMirrorsTitle(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Two Sum", Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
-	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}
+	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}
 
 	_, err := service.CreateStatement(t.Context(), actor, 1, CreateStatementInput{
 		Description: "desc",
@@ -891,7 +891,7 @@ func TestCreateProblemRetriesSlugConflict(t *testing.T) {
 	repo.slugConflicts = 2
 	service := newProblemService(repo, &fakeStorage{})
 
-	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, CreateProblemInput{Title: "Two Sum"})
+	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, CreateProblemInput{Title: "Two Sum"})
 	if err != nil {
 		t.Fatalf("CreateProblem returned error: %v", err)
 	}
@@ -908,7 +908,7 @@ func TestCreateProblemGivesUpAfterSlugConflicts(t *testing.T) {
 	repo.slugConflicts = problemSlugAttempts + 1
 	service := newProblemService(repo, &fakeStorage{})
 
-	_, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, CreateProblemInput{Title: "Two Sum"})
+	_, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, CreateProblemInput{Title: "Two Sum"})
 	assertAppCode(t, err, "problem.slug_conflict")
 	if len(repo.problems) != 0 {
 		t.Fatalf("no problem should be persisted, got %+v", repo.problems)

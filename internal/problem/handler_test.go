@@ -51,7 +51,7 @@ func TestRunProblemCheckReturnsCreatedEnvelope(t *testing.T) {
 		},
 	}
 	service := newProblemService(newFakeRepository(), &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{
 		&Module{handler: &Handler{service: service, checkRunner: checks, checkGetter: checks}},
 	}})
 
@@ -99,7 +99,7 @@ func TestGetProblemCheckParsesCheckIDAndReturnsEnvelope(t *testing.T) {
 		},
 	}
 	service := newProblemService(newFakeRepository(), &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{
 		&Module{handler: &Handler{service: service, checkRunner: checks, checkGetter: checks}},
 	}})
 
@@ -129,7 +129,7 @@ func TestGetProblemCheckParsesCheckIDAndReturnsEnvelope(t *testing.T) {
 func TestGetProblemCheckRejectsInvalidCheckID(t *testing.T) {
 	checks := &fakeProblemCheckService{}
 	service := newProblemService(newFakeRepository(), &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{
 		&Module{handler: &Handler{service: service, checkRunner: checks, checkGetter: checks}},
 	}})
 
@@ -153,7 +153,7 @@ func TestUploadTestcasesMissingArchiveReturnsBadRequest(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", strings.NewReader("case_count=1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -174,7 +174,7 @@ func TestUploadTestcasesReturnsCreatedSetWithWarnings(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 
 	body, contentType := testcaseMultipartBody(t, zipArchive(t, map[string]string{
 		"1.in":      "1\n",
@@ -213,7 +213,7 @@ func TestUploadTestcasesReturnsFindingsDetails(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 
 	body, contentType := testcaseMultipartBody(t, zipArchive(t, map[string]string{"3.in": "3\n"}))
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", body)
@@ -270,7 +270,7 @@ func TestUploadTestcasesRejectsOversizedContentLengthBeforeMultipartParsing(t *t
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", strings.NewReader("archive=x"))
 	req.Header.Set("Content-Type", "multipart/form-data; boundary=test")
@@ -334,7 +334,7 @@ func TestGetProblemAuthoringStateReturnsOwnerWorkspace(t *testing.T) {
 		Summary: json.RawMessage(`{"valid":true}`),
 	}
 	service := newProblemService(repo, &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems/1/authoring", nil)
 	req.Header.Set("X-User-ID", "10")
 	req.Header.Set("X-User-Role", "author")
@@ -360,7 +360,7 @@ func TestListProblemsMineRequiresAuthoringAccess(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Owned", Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems?mine=true", nil)
 	req.Header.Set("X-User-ID", "10")
 	req.Header.Set("X-User-Role", "user")
@@ -388,7 +388,7 @@ func TestListProblemsMineScopesRequestToCurrentUser(t *testing.T) {
 	repo := newFakeRepository()
 	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Owned", Status: StatusDraft, Visibility: VisibilityPrivate}
 	service := newProblemService(repo, &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems?mine=true", nil)
 	req.Header.Set("X-User-ID", "10")
 	req.Header.Set("X-User-Role", "author")
@@ -408,7 +408,7 @@ func TestCreateProblemStoresTags(t *testing.T) {
 	repo := newFakeRepository()
 	service := newProblemService(repo, &fakeStorage{})
 
-	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}}, CreateProblemInput{
+	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, CreateProblemInput{
 		Title:         "Two Sum",
 		Slug:          "two-sum",
 		Difficulty:    DifficultyEasy,
@@ -463,7 +463,7 @@ func TestUploadTestcaseSetResponseJSONShape(t *testing.T) {
 			repo := newFakeRepository()
 			repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusDraft, Visibility: VisibilityPrivate}
 			service := newProblemService(repo, &fakeStorage{})
-			router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+			router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 
 			body, contentType := testcaseMultipartBody(t, zipArchive(t, test.files))
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/testcase-sets", body)
@@ -508,7 +508,7 @@ func TestAuthoringStateResponseJSONShape(t *testing.T) {
 	repo := newFakeRepository()
 	seedPublishableProblem(repo)
 	service := newProblemService(repo, &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(service)}})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{NewModule(service)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/problems/1/authoring", nil)
 	req.Header.Set("X-User-ID", "10")
 	req.Header.Set("X-User-Role", "author")
@@ -568,7 +568,7 @@ func TestProblemCheckSummaryJSONShapeDropsExpectedCaseCount(t *testing.T) {
 		Findings: []ProblemCheckFinding{},
 	}}}
 	service := newProblemService(newFakeRepository(), &fakeStorage{})
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: testMiddlewareSet(), Modules: []httpapi.Module{
 		&Module{handler: &Handler{service: service, checkRunner: checks, checkGetter: checks}},
 	}})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/problems/1/checks", nil)

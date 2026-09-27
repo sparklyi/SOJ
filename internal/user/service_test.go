@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 	"testing"
@@ -27,16 +28,21 @@ type memoryRoleStore struct {
 	roles map[int64][]auth.Role
 }
 
-func (r *memoryRoleStore) ListUserRoles(_ context.Context, userID int64) ([]auth.Role, error) {
-	return append([]auth.Role(nil), r.roles[userID]...), nil
+func (r *memoryRoleStore) ListAccess(_ context.Context, userID int64) (Access, error) {
+	return r.accessFor(userID), nil
 }
 
-func (r *memoryRoleStore) ListUserRolesForUsers(_ context.Context, userIDs []int64) (map[int64][]auth.Role, error) {
-	roles := make(map[int64][]auth.Role, len(userIDs))
+func (r *memoryRoleStore) ListAccessForUsers(_ context.Context, userIDs []int64) (map[int64]Access, error) {
+	access := make(map[int64]Access, len(userIDs))
 	for _, userID := range userIDs {
-		roles[userID] = append([]auth.Role(nil), r.roles[userID]...)
+		access[userID] = r.accessFor(userID)
 	}
-	return roles, nil
+	return access, nil
+}
+
+func (r *memoryRoleStore) accessFor(userID int64) Access {
+	roles := append([]auth.Role(nil), r.roles[userID]...)
+	return Access{Roles: roles, Permissions: seededPermissions(roles...)}
 }
 
 func (r *memoryRoleStore) GrantRole(_ context.Context, userID int64, role auth.Role, grantedBy *int64, _ string) (RoleAssignment, error) {
@@ -202,7 +208,7 @@ func TestListUsersByCursorUsesSeekPagination(t *testing.T) {
 		1: {User: User{ID: 1, Username: "first", Roles: []auth.Role{auth.RoleUser}, Status: StatusActive, CreatedAt: createdAt.Add(-time.Minute)}},
 	}}
 	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
-	actor := auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleRoot}}
+	actor := auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleRoot}, Permissions: seededPermissions(auth.RoleRoot)}
 
 	first, err := service.ListUsersByCursor(t.Context(), actor, ListUsersInput{PageSize: 2})
 	if err != nil {
@@ -249,8 +255,33 @@ func TestServiceMeLoadsRolesAndPermissions(t *testing.T) {
 	if len(got.Permissions) == 0 {
 		t.Fatal("permissions are empty")
 	}
-	if got.Permissions[0] != "contest.join" {
+	if got.Permissions[0] != "problem.create" {
 		t.Fatalf("permissions are not deterministic: %v", got.Permissions)
+	}
+}
+
+func TestServiceMeKeepsEmptyAccessAsJSONArrays(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{
+		42: {User: User{ID: 42, Email: "user@example.com", Username: "user", Status: StatusActive}},
+	}}
+	roles := &memoryRoleStore{roles: map[int64][]auth.Role{
+		42: {auth.RoleUser},
+	}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
+
+	got, err := service.Me(context.Background(), auth.Actor{UserID: 42})
+	if err != nil {
+		t.Fatalf("Me() error = %v", err)
+	}
+	if got.Permissions == nil || len(got.Permissions) != 0 {
+		t.Fatalf("permissions = %#v, want non-nil empty slice", got.Permissions)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal user: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"permissions":[]`) {
+		t.Fatalf("marshal(user) = %s, want permissions serialized as []", encoded)
 	}
 }
 
@@ -258,17 +289,17 @@ func TestServiceGrantRoleRequiresRootAndWritesAssignment(t *testing.T) {
 	roles := &memoryRoleStore{roles: map[int64][]auth.Role{42: {auth.RoleUser}}}
 	service := NewService(&memoryRepo{}, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
 
-	if _, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleUser}}, 42, GrantRoleInput{Role: "author", Reason: "approved author"}); err == nil {
+	if _, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleUser}, Permissions: seededPermissions(auth.RoleUser)}, 42, GrantRoleInput{Role: "author", Reason: "approved author"}); err == nil {
 		t.Fatal("user GrantRole() error = nil, want forbidden")
 	}
-	assignment, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}}, 42, GrantRoleInput{Role: "author", Reason: "approved author"})
+	assignment, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}, Permissions: seededPermissions(auth.RoleRoot)}, 42, GrantRoleInput{Role: "author", Reason: "approved author"})
 	if err != nil {
 		t.Fatalf("root GrantRole() error = %v", err)
 	}
 	if assignment.UserID != 42 || assignment.Role != auth.RoleAuthor {
 		t.Fatalf("assignment = %+v, want user 42 author", assignment)
 	}
-	if _, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}}, 42, GrantRoleInput{Role: "contest_manager", Reason: "contest scope only"}); codeOfUserError(err) != "role.invalid_role" {
+	if _, err := service.GrantRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}, Permissions: seededPermissions(auth.RoleRoot)}, 42, GrantRoleInput{Role: "contest_manager", Reason: "contest scope only"}); codeOfUserError(err) != "role.invalid_role" {
 		t.Fatalf("contest role grant error = %v, want role.invalid_role", err)
 	}
 }
@@ -285,7 +316,7 @@ func TestServiceRevokeRoleProtectsBaseUserRole(t *testing.T) {
 	roles := &memoryRoleStore{roles: map[int64][]auth.Role{42: {auth.RoleUser, auth.RoleAuthor}}}
 	service := NewService(&memoryRepo{}, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
 
-	err := service.RevokeRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}}, 42, "user", RevokeRoleInput{Reason: "remove access"})
+	err := service.RevokeRole(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}, Permissions: seededPermissions(auth.RoleRoot)}, 42, "user", RevokeRoleInput{Reason: "remove access"})
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.Code != "role.protected" {
 		t.Fatalf("RevokeRole() error = %v, want role.protected", err)
@@ -297,7 +328,7 @@ func TestUpdateUserRejectsSelfDisable(t *testing.T) {
 	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
 	status := StatusDisabled
 
-	_, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 42, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status})
+	_, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 42, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 42, UpdateUserInput{Status: &status})
 	if code := codeOfUserError(err); code != "user.self_disable_forbidden" {
 		t.Fatalf("UpdateUser() error = %v, want user.self_disable_forbidden", err)
 	}
@@ -308,7 +339,7 @@ func TestUpdateUserAuditsStatusChange(t *testing.T) {
 	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
 	status := StatusDisabled
 
-	if _, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status}); err != nil {
+	if _, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 42, UpdateUserInput{Status: &status}); err != nil {
 		t.Fatalf("UpdateUser() error = %v", err)
 	}
 	event := repo.lastEvent
@@ -322,7 +353,7 @@ func TestUpdateUserSkipsAuditWhenStatusUnchanged(t *testing.T) {
 	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
 	status := StatusDisabled
 
-	if _, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status}); err != nil {
+	if _, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 42, UpdateUserInput{Status: &status}); err != nil {
 		t.Fatalf("UpdateUser() error = %v", err)
 	}
 	if repo.lastEvent != nil {
@@ -338,7 +369,7 @@ func TestUpdateUserMapsLastRootConflict(t *testing.T) {
 	service := NewService(repo, auth.NewJWTManager("secret", time.Minute))
 	status := StatusDisabled
 
-	_, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}, 42, UpdateUserInput{Status: &status})
+	_, err := service.UpdateUser(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, 42, UpdateUserInput{Status: &status})
 	if code := codeOfUserError(err); code != "user.last_root" {
 		t.Fatalf("UpdateUser() error = %v, want user.last_root", err)
 	}
@@ -367,7 +398,7 @@ func TestListUsersAttachesRolesAndPermissions(t *testing.T) {
 	roles := &memoryRoleStore{roles: map[int64][]auth.Role{1: {auth.RoleUser, auth.RoleAuthor}}}
 	service := NewService(repo, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
 
-	list, err := service.ListUsers(context.Background(), auth.Actor{UserID: 9, Roles: []auth.Role{auth.RoleRoot}}, ListUsersInput{Page: 1, PageSize: 20})
+	list, err := service.ListUsers(context.Background(), auth.Actor{UserID: 9, Roles: []auth.Role{auth.RoleRoot}, Permissions: seededPermissions(auth.RoleRoot)}, ListUsersInput{Page: 1, PageSize: 20})
 	if err != nil {
 		t.Fatalf("ListUsers() error = %v", err)
 	}

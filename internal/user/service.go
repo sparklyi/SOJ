@@ -137,12 +137,13 @@ type UserWithPassword struct {
 }
 
 type Service struct {
-	repo       Repository
-	roles      RoleStore
-	jwt        *auth.JWTManager
-	accessTTL  time.Duration
-	refreshTTL time.Duration
-	now        func() time.Time
+	repo            Repository
+	roles           RoleStore
+	rolePermissions RolePermissionStore
+	jwt             *auth.JWTManager
+	accessTTL       time.Duration
+	refreshTTL      time.Duration
+	now             func() time.Time
 }
 
 func NewService(repo Repository, jwtManager *auth.JWTManager, opts ...Option) *Service {
@@ -183,6 +184,12 @@ func WithClock(now func() time.Time) Option {
 func WithRoleStore(roles RoleStore) Option {
 	return func(s *Service) {
 		s.roles = roles
+	}
+}
+
+func WithRolePermissionStore(store RolePermissionStore) Option {
+	return func(s *Service) {
+		s.rolePermissions = store
 	}
 }
 
@@ -440,18 +447,18 @@ func (s *Service) withRoles(ctx context.Context, user User) (User, error) {
 	if err := s.requireRoleStore(); err != nil {
 		return User{}, err
 	}
-	roles, err := s.roles.ListUserRoles(ctx, user.ID)
+	access, err := s.roles.ListAccess(ctx, user.ID)
 	if err != nil {
 		return User{}, mapRoleError(err)
 	}
-	user.Roles = append([]auth.Role(nil), roles...)
-	user.Permissions = authz.PermissionsForRoles(roles)
+	user.Roles = cloneRoles(access.Roles)
+	user.Permissions = clonePermissions(access.Permissions)
 	return user, nil
 }
 
-// withRolesForUsers attaches the global roles (and their permissions) to a page
-// of users. The admin console needs them to show which roles are held; the
-// assignment tables are consulted once for the whole page.
+// withRolesForUsers attaches the global roles and effective permissions to a
+// page of users. The admin console needs them to show which roles are held; the
+// assignment and matrix tables are consulted once for the whole page.
 func (s *Service) withRolesForUsers(ctx context.Context, users []User) ([]User, error) {
 	if len(users) == 0 || s.roles == nil {
 		return users, nil
@@ -460,16 +467,27 @@ func (s *Service) withRolesForUsers(ctx context.Context, users []User) ([]User, 
 	for i := range users {
 		ids[i] = users[i].ID
 	}
-	rolesByUser, err := s.roles.ListUserRolesForUsers(ctx, ids)
+	accessByUser, err := s.roles.ListAccessForUsers(ctx, ids)
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
 	for i := range users {
-		roles := rolesByUser[users[i].ID]
-		users[i].Roles = append([]auth.Role(nil), roles...)
-		users[i].Permissions = authz.PermissionsForRoles(roles)
+		access := accessByUser[users[i].ID]
+		users[i].Roles = cloneRoles(access.Roles)
+		users[i].Permissions = clonePermissions(access.Permissions)
 	}
 	return users, nil
+}
+
+// cloneRoles and clonePermissions always return non-nil slices so the JSON
+// contract stays "roles": [] / "permissions": [], never null, for accounts
+// with no roles or no permissions.
+func cloneRoles(roles []auth.Role) []auth.Role {
+	return append(make([]auth.Role, 0, len(roles)), roles...)
+}
+
+func clonePermissions(permissions []authz.Permission) []authz.Permission {
+	return append(make([]authz.Permission, 0, len(permissions)), permissions...)
 }
 
 func (s *Service) GrantRole(ctx context.Context, actor auth.Actor, userID int64, input GrantRoleInput) (RoleAssignment, error) {
@@ -523,6 +541,13 @@ func (s *Service) RevokeRole(ctx context.Context, actor auth.Actor, userID int64
 
 func (s *Service) requireRoleStore() error {
 	if s.roles == nil {
+		return apperror.Internal()
+	}
+	return nil
+}
+
+func (s *Service) requireRolePermissionStore() error {
+	if s.rolePermissions == nil {
 		return apperror.Internal()
 	}
 	return nil

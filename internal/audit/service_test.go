@@ -19,9 +19,9 @@ func (s *stubStore) ListEvents(_ context.Context, filter ListFilter) ([]Record, 
 	return s.items, s.total, nil
 }
 
-func TestListEventsRequiresSystemManage(t *testing.T) {
+func TestListEventsRequiresAuditRead(t *testing.T) {
 	service := NewService(&stubStore{})
-	_, err := service.ListEvents(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleReviewer}}, ListFilter{})
+	_, err := service.ListEvents(context.Background(), auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleReviewer}, Permissions: seededPermissions(auth.RoleReviewer)}, ListFilter{})
 	appErr, ok := apperror.From(err)
 	if !ok || appErr.HTTPStatus != 403 || appErr.Code != "forbidden" {
 		t.Fatalf("ListEvents() error = %v, want 403 forbidden", err)
@@ -31,7 +31,7 @@ func TestListEventsRequiresSystemManage(t *testing.T) {
 func TestListEventsNormalizesPaging(t *testing.T) {
 	store := &stubStore{}
 	service := NewService(store)
-	admin := auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}}
+	admin := auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}
 
 	list, err := service.ListEvents(context.Background(), admin, ListFilter{ObjectType: ObjectProblem, ObjectID: 42})
 	if err != nil {
@@ -56,7 +56,7 @@ func TestListEventsNormalizesPaging(t *testing.T) {
 
 func TestListEventsRejectsUnknownFilters(t *testing.T) {
 	service := NewService(&stubStore{})
-	admin := auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}}
+	admin := auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleRoot}, Permissions: seededPermissions(auth.RoleRoot)}
 
 	if _, err := service.ListEvents(context.Background(), admin, ListFilter{ObjectType: "sprocket"}); !isBadRequest(err, "audit.invalid_object_type") {
 		t.Fatalf("unknown object type error = %v", err)

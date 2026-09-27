@@ -8,25 +8,24 @@ import (
 
 var ErrForbidden = errors.New("permission denied")
 
+// Subject is the authorization view of an actor: the resolved permission set.
+// Roles are not consulted here. The resolver expands admin/root and joins the
+// database's role_permissions rows before the request reaches this package.
 type Subject struct {
-	UserID int64
-	Roles  []Role
+	UserID      int64
+	Permissions []Permission
 }
 
 func NewSubject(actor auth.Actor) Subject {
-	return Subject{UserID: actor.UserID, Roles: append([]Role(nil), actor.Roles...)}
+	return Subject{UserID: actor.UserID, Permissions: append([]Permission(nil), actor.Permissions...)}
 }
 
 func (s Subject) Authenticated() bool {
 	return s.UserID > 0
 }
 
-func (s Subject) HasRole(role Role) bool {
-	return containsRole(s.Roles, role)
-}
-
 func (s Subject) Has(permission Permission) bool {
-	for _, granted := range PermissionsForRoles(s.Roles) {
+	for _, granted := range s.Permissions {
 		if granted == permission {
 			return true
 		}
@@ -39,13 +38,4 @@ func Authorize(subject Subject, permission Permission) error {
 		return ErrForbidden
 	}
 	return nil
-}
-
-func containsRole(roles []Role, target Role) bool {
-	for _, role := range roles {
-		if role == target {
-			return true
-		}
-	}
-	return false
 }

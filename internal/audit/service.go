@@ -24,10 +24,10 @@ func NewService(store Store) *Service {
 }
 
 // ListEvents returns one page of audit history. It is the admin console's only
-// read surface, so it is gated by the same system-management permission as the
-// surfaces whose actions it records.
+// read surface, so it is gated by audit.read rather than the language catalog's
+// system.manage permission.
 func (s *Service) ListEvents(ctx context.Context, actor auth.Actor, filter ListFilter) (EventList, error) {
-	if err := authz.Authorize(authz.NewSubject(actor), authz.PermissionSystemManage); err != nil {
+	if err := authz.Authorize(authz.NewSubject(actor), authz.PermissionAuditRead); err != nil {
 		return EventList{}, apperror.Forbidden("forbidden", "required permission is missing")
 	}
 	if filter.ObjectType != "" && !filter.ObjectType.Valid() {
