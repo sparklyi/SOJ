@@ -92,7 +92,8 @@ npm ci && cp .env.example .env.local && npm run dev   # http://localhost:3000
 
 ## 参与开发
 
-欢迎提 issue 和 pull request。
+欢迎提 issue 和 pull request。可以从 `good first issue` 标签的 issue 入手；前端在
+[SOJ-web](https://github.com/sparklyi/SOJ-web)。
 
 先 fork 仓库，再 clone 你自己的 fork：
 
@@ -103,17 +104,17 @@ git remote add upstream https://github.com/sparklyi/SOJ.git
 git checkout -b fix/short-description
 ```
 
-改完之后跑一遍检查：
+推之前跑一遍检查：
 
 ```bash
-make test            # go test ./...
-make vet             # go vet ./...
-make lint            # golangci-lint run（需要 golangci-lint v2）
-make compose-config  # 校验所有 Compose 文件
+make test            # 依赖 PostgreSQL 的测试还需要设置 SOJ_TEST_DATABASE_DSN
+make vet
+make lint            # 需要 golangci-lint v2
+make compose-config
 ```
 
-把分支推上去，对 `main` 提 pull request。提交尽量聚焦，遵循 Conventional Commits。
-CI 会跑同样的检查，外加一次 Docker smoke 测试。
+对 `main` 提 pull request。提交尽量聚焦，遵循 Conventional Commits。CI 会跑同样的检查，
+外加一次 Docker smoke 测试；纯文档改动会跳过 CI。
 
 ## 许可证
 

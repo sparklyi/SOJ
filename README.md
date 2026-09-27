@@ -97,7 +97,8 @@ npm ci && cp .env.example .env.local && npm run dev   # http://localhost:3000
 
 ## Contributing
 
-Bug reports and pull requests are welcome.
+Bug reports and pull requests are welcome. Issues labelled `good first issue` are a good place to
+start; the frontend lives in [SOJ-web](https://github.com/sparklyi/SOJ-web).
 
 Fork the repository and clone your fork:
 
@@ -108,17 +109,17 @@ git remote add upstream https://github.com/sparklyi/SOJ.git
 git checkout -b fix/short-description
 ```
 
-Make your changes and run the checks:
+Run the checks before pushing:
 
 ```bash
-make test            # go test ./...
-make vet             # go vet ./...
-make lint            # golangci-lint run (needs golangci-lint v2)
-make compose-config  # validate every Compose file
+make test            # PostgreSQL-backed tests also need SOJ_TEST_DATABASE_DSN
+make vet
+make lint            # golangci-lint v2
+make compose-config
 ```
 
-Push the branch and open a pull request against `main`. Keep commits focused and follow
-Conventional Commits. CI runs the same checks plus a Docker smoke test.
+Open a pull request against `main`. Keep commits focused and follow Conventional Commits. CI runs
+these checks plus a Docker smoke test; doc-only changes skip CI.
 
 ## License
 
