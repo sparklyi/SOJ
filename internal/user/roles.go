@@ -32,6 +32,7 @@ type RoleAssignment struct {
 
 type RoleStore interface {
 	ListUserRoles(context.Context, int64) ([]auth.Role, error)
+	ListUserRolesForUsers(context.Context, []int64) (map[int64][]auth.Role, error)
 	GrantRole(context.Context, int64, auth.Role, *int64, string) (RoleAssignment, error)
 	RevokeRole(context.Context, int64, auth.Role, int64, string) error
 }
@@ -77,6 +78,48 @@ func (r *PostgresRoleRepository) ListUserRoles(ctx context.Context, userID int64
 			return nil, fmt.Errorf("invalid global role assignment %q", value)
 		}
 		roles = append(roles, role)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+
+// ListUserRolesForUsers returns the active global roles of every requested user
+// in one query. The admin user list needs roles for a whole page, and asking
+// per user would turn one page into N+1 queries.
+func (r *PostgresRoleRepository) ListUserRolesForUsers(ctx context.Context, userIDs []int64) (map[int64][]auth.Role, error) {
+	roles := make(map[int64][]auth.Role, len(userIDs))
+	if len(userIDs) == 0 {
+		return roles, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT user_id, role_code
+		FROM user_role_assignments
+		WHERE user_id = ANY($1) AND revoked_at IS NULL
+		ORDER BY user_id, role_code
+	`, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			userID   int64
+			roleCode string
+		)
+		if err := rows.Scan(&userID, &roleCode); err != nil {
+			return nil, err
+		}
+		role, err := auth.ParseRole(roleCode)
+		if err != nil {
+			return nil, fmt.Errorf("invalid role assignment: %w", err)
+		}
+		if !auth.IsGlobalRole(role) {
+			return nil, fmt.Errorf("invalid global role assignment %q", roleCode)
+		}
+		roles[userID] = append(roles[userID], role)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

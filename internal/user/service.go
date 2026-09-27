@@ -302,6 +302,10 @@ func (s *Service) ListUsers(ctx context.Context, actor auth.Actor, input ListUse
 	if err != nil {
 		return UserList{}, err
 	}
+	users, err = s.withRolesForUsers(ctx, users)
+	if err != nil {
+		return UserList{}, err
+	}
 	return UserList{Items: users, Total: total, Page: input.Page, PageSize: input.PageSize}, nil
 }
 
@@ -326,6 +330,10 @@ func (s *Service) ListUsersByCursor(ctx context.Context, actor auth.Actor, input
 	limit := input.PageSize
 	input.PageSize++
 	users, err := s.repo.ListUsersByCursor(ctx, input)
+	if err != nil {
+		return UserCursorPage{}, err
+	}
+	users, err = s.withRolesForUsers(ctx, users)
 	if err != nil {
 		return UserCursorPage{}, err
 	}
@@ -439,6 +447,29 @@ func (s *Service) withRoles(ctx context.Context, user User) (User, error) {
 	user.Roles = append([]auth.Role(nil), roles...)
 	user.Permissions = authz.PermissionsForRoles(roles)
 	return user, nil
+}
+
+// withRolesForUsers attaches the global roles (and their permissions) to a page
+// of users. The admin console needs them to show which roles are held; the
+// assignment tables are consulted once for the whole page.
+func (s *Service) withRolesForUsers(ctx context.Context, users []User) ([]User, error) {
+	if len(users) == 0 || s.roles == nil {
+		return users, nil
+	}
+	ids := make([]int64, len(users))
+	for i := range users {
+		ids[i] = users[i].ID
+	}
+	rolesByUser, err := s.roles.ListUserRolesForUsers(ctx, ids)
+	if err != nil {
+		return nil, mapRoleError(err)
+	}
+	for i := range users {
+		roles := rolesByUser[users[i].ID]
+		users[i].Roles = append([]auth.Role(nil), roles...)
+		users[i].Permissions = authz.PermissionsForRoles(roles)
+	}
+	return users, nil
 }
 
 func (s *Service) GrantRole(ctx context.Context, actor auth.Actor, userID int64, input GrantRoleInput) (RoleAssignment, error) {

@@ -10,6 +10,7 @@ import (
 	"SOJ/internal/apperror"
 	"SOJ/internal/audit"
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 )
 
 type memoryRepo struct {
@@ -28,6 +29,14 @@ type memoryRoleStore struct {
 
 func (r *memoryRoleStore) ListUserRoles(_ context.Context, userID int64) ([]auth.Role, error) {
 	return append([]auth.Role(nil), r.roles[userID]...), nil
+}
+
+func (r *memoryRoleStore) ListUserRolesForUsers(_ context.Context, userIDs []int64) (map[int64][]auth.Role, error) {
+	roles := make(map[int64][]auth.Role, len(userIDs))
+	for _, userID := range userIDs {
+		roles[userID] = append([]auth.Role(nil), r.roles[userID]...)
+	}
+	return roles, nil
 }
 
 func (r *memoryRoleStore) GrantRole(_ context.Context, userID int64, role auth.Role, grantedBy *int64, _ string) (RoleAssignment, error) {
@@ -71,7 +80,12 @@ func (r *memoryRepo) GetUserByID(_ context.Context, id int64) (User, error) {
 }
 
 func (r *memoryRepo) ListUsers(context.Context, ListUsersInput) ([]User, int64, error) {
-	return nil, 0, nil
+	users := make([]User, 0, len(r.users))
+	for _, row := range r.users {
+		users = append(users, row.User)
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+	return users, int64(len(users)), nil
 }
 
 func (r *memoryRepo) ListUsersByCursor(_ context.Context, input ListUsersInput) ([]User, error) {
@@ -343,6 +357,53 @@ func TestStatusChangeEventActions(t *testing.T) {
 	if tests["unchanged is skipped"] != nil {
 		t.Fatalf("unchanged status produced an event: %+v", tests["unchanged is skipped"])
 	}
+}
+
+func TestListUsersAttachesRolesAndPermissions(t *testing.T) {
+	repo := &memoryRepo{users: map[int64]UserWithPassword{
+		1: {User: User{ID: 1, Username: "alice"}},
+		2: {User: User{ID: 2, Username: "bob"}},
+	}}
+	roles := &memoryRoleStore{roles: map[int64][]auth.Role{1: {auth.RoleUser, auth.RoleAuthor}}}
+	service := NewService(repo, auth.NewJWTManager("secret", time.Minute), WithRoleStore(roles))
+
+	list, err := service.ListUsers(context.Background(), auth.Actor{UserID: 9, Roles: []auth.Role{auth.RoleRoot}}, ListUsersInput{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v", err)
+	}
+	if len(list.Items) != 2 {
+		t.Fatalf("ListUsers() returned %d users, want 2", len(list.Items))
+	}
+	if !equalRoles(list.Items[0].Roles, []auth.Role{auth.RoleUser, auth.RoleAuthor}) {
+		t.Fatalf("alice roles = %v, want user+author", list.Items[0].Roles)
+	}
+	if len(list.Items[1].Roles) != 0 {
+		t.Fatalf("bob roles = %v, want none", list.Items[1].Roles)
+	}
+	if !containsPermission(list.Items[0].Permissions, authz.PermissionProblemCreate) {
+		t.Fatalf("alice permissions = %v, want problem.create", list.Items[0].Permissions)
+	}
+}
+
+func equalRoles(got, want []auth.Role) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func containsPermission(permissions []authz.Permission, want authz.Permission) bool {
+	for _, permission := range permissions {
+		if permission == want {
+			return true
+		}
+	}
+	return false
 }
 
 func equalInt64s(got, want []int64) bool {
