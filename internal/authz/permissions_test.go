@@ -7,44 +7,15 @@ import (
 	"SOJ/internal/auth"
 )
 
-func TestPermissionsForRolesCombinesAndSorts(t *testing.T) {
-	got := PermissionsForRoles([]Role{RoleAuthor, RoleUser})
-	want := []Permission{
-		PermissionContestJoin,
-		PermissionProblemCheckOwn,
-		PermissionProblemCreate,
-		PermissionProblemEditOwn,
-		PermissionProblemRead,
-		PermissionProblemSubmitReview,
-		PermissionProblemTestcaseOwn,
-		PermissionSubmissionCreate,
-		PermissionSubmissionReadOwn,
-	}
-	if !equalPermissions(got, want) {
-		t.Fatalf("permissions = %v, want %v", got, want)
-	}
-}
-
-func TestRootHasEveryPermission(t *testing.T) {
-	got := PermissionsForRoles([]Role{RoleRoot})
-	if !equalPermissions(got, AllPermissions()) {
-		t.Fatalf("root permissions = %v, want %v", got, AllPermissions())
-	}
-}
-
-func TestAdminHasEveryPermission(t *testing.T) {
-	got := PermissionsForRoles([]Role{RoleAdmin})
-	if !equalPermissions(got, AllPermissions()) {
-		t.Fatalf("admin permissions = %v, want %v", got, AllPermissions())
-	}
-}
-
-func TestFullAccessRolesAuthorizeEveryPermission(t *testing.T) {
+func TestFullAccessRolesBehaveAsPermitted(t *testing.T) {
 	for _, role := range []Role{RoleAdmin, RoleRoot} {
 		if !IsFullAccessRole(role) {
 			t.Fatalf("IsFullAccessRole(%s) = false, want true", role)
 		}
-		subject := NewSubject(auth.Actor{UserID: 5, Roles: []auth.Role{role}})
+		// Full access is now an expansion done by the resolver, not a property
+		// of the Subject. A Subject carrying the whole directory authorizes
+		// every permission.
+		subject := NewSubject(auth.Actor{UserID: 5, Roles: []auth.Role{role}, Permissions: AllPermissions()})
 		for _, permission := range AllPermissions() {
 			if err := Authorize(subject, permission); err != nil {
 				t.Fatalf("Authorize(%s, %s) error = %v", role, permission, err)
@@ -53,41 +24,41 @@ func TestFullAccessRolesAuthorizeEveryPermission(t *testing.T) {
 	}
 }
 
-func TestContestRolesExposeOnlyScopedPermissions(t *testing.T) {
-	manager := PermissionsForRoles([]Role{RoleContestManager})
-	if !equalPermissions(manager, []Permission{PermissionContestManage, PermissionContestRead}) {
-		t.Fatalf("contest manager permissions = %v", manager)
-	}
-	judge := NewSubject(auth.Actor{UserID: 9, Roles: []auth.Role{auth.RoleContestJudge}})
-	if err := Authorize(judge, PermissionContestJudge); err != nil {
-		t.Fatalf("contest judge permission error = %v", err)
-	}
-	if err := Authorize(judge, PermissionContestManage); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("contest judge manage error = %v, want %v", err, ErrForbidden)
-	}
-}
-
 func TestAuthorizeRequiresAuthenticatedSubjectAndPermission(t *testing.T) {
-	author := NewSubject(auth.Actor{UserID: 7, Roles: []auth.Role{auth.RoleAuthor}})
+	author := NewSubject(auth.Actor{
+		UserID:      7,
+		Roles:       []auth.Role{auth.RoleAuthor},
+		Permissions: []Permission{PermissionProblemCreate},
+	})
 	if err := Authorize(author, PermissionProblemCreate); err != nil {
 		t.Fatalf("Authorize(author, create) error = %v", err)
 	}
 	if err := Authorize(author, PermissionProblemPublish); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("Authorize(author, publish) error = %v, want %v", err, ErrForbidden)
 	}
-	if err := Authorize(Subject{Roles: []Role{RoleRoot}}, PermissionSystemManage); !errors.Is(err, ErrForbidden) {
+	if err := Authorize(Subject{Permissions: []Permission{PermissionSystemManage}}, PermissionSystemManage); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("Authorize(anonymous, system.manage) error = %v, want %v", err, ErrForbidden)
 	}
 }
 
-func TestNewSubjectUsesOnlyAssignedRoles(t *testing.T) {
+func TestNewSubjectCopiesActorPermissionsWithoutRederiving(t *testing.T) {
+	// The Subject must not consult Roles: a role set with no permissions is
+	// denied. This is the fail-closed contract the resolver relies on.
 	subject := NewSubject(auth.Actor{
 		UserID: 7,
 		Role:   auth.RoleUser,
 		Roles:  []auth.Role{auth.RoleAuthor},
 	})
-	if subject.HasRole(RoleUser) || !subject.HasRole(RoleAuthor) {
-		t.Fatalf("subject roles = %v, want only assigned author role", subject.Roles)
+	if subject.Has(PermissionProblemCreate) {
+		t.Fatalf("subject without resolved permissions granted %s", PermissionProblemCreate)
+	}
+
+	granted := NewSubject(auth.Actor{
+		UserID:      7,
+		Permissions: []auth.Permission{PermissionProblemCreate},
+	})
+	if !granted.Has(PermissionProblemCreate) {
+		t.Fatalf("subject permissions = %v, want problem.create", granted.Permissions)
 	}
 }
 

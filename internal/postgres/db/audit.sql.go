@@ -75,7 +75,7 @@ type ListAuditEventsRow struct {
 	ActorUsername pgtype.Text        `db:"actor_username" json:"actor_username"`
 	Action        string             `db:"action" json:"action"`
 	ObjectType    string             `db:"object_type" json:"object_type"`
-	ObjectID      int64              `db:"object_id" json:"object_id"`
+	ObjectID      pgtype.Int8        `db:"object_id" json:"object_id"`
 	Reason        string             `db:"reason" json:"reason"`
 	Metadata      []byte             `db:"metadata" json:"metadata"`
 	CreatedAt     pgtype.Timestamptz `db:"created_at" json:"created_at"`

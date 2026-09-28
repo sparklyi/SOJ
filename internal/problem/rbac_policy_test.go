@@ -21,7 +21,7 @@ func TestRBACProblemPolicyCanCreate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			actor := auth.Actor{UserID: 11, Roles: []auth.Role{tc.role}}
+			actor := auth.Actor{UserID: 11, Roles: []auth.Role{tc.role}, Permissions: seededPermissions(tc.role)}
 			err := policy.CanCreate(actor)
 			if (err == nil) != tc.want {
 				t.Fatalf("CanCreate(%s) error = %v, want allowed = %v", tc.role, err, tc.want)
@@ -35,7 +35,7 @@ func TestRBACProblemPolicyFullAccessRolesBypassOwnership(t *testing.T) {
 	other := ProblemRecord{ID: 1, OwnerUserID: 99}
 
 	for _, role := range []auth.Role{auth.RoleAdmin, auth.RoleRoot} {
-		actor := auth.Actor{UserID: 11, Roles: []auth.Role{role}}
+		actor := auth.Actor{UserID: 11, Roles: []auth.Role{role}, Permissions: seededPermissions(role)}
 		if err := policy.CanEdit(actor, other); err != nil {
 			t.Fatalf("%s CanEdit error = %v", role, err)
 		}
@@ -58,7 +58,7 @@ func TestRBACProblemPolicyAuthorIsScopedToOwnProblems(t *testing.T) {
 	policy := RBACProblemPolicy{}
 	own := ProblemRecord{ID: 1, OwnerUserID: 11}
 	other := ProblemRecord{ID: 2, OwnerUserID: 99}
-	author := auth.Actor{UserID: 11, Roles: []auth.Role{auth.RoleAuthor}}
+	author := auth.Actor{UserID: 11, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}
 
 	if err := policy.CanEdit(author, own); err != nil {
 		t.Fatalf("author CanEdit(own) error = %v", err)
@@ -84,12 +84,12 @@ func TestRBACProblemPolicyReviewerCannotDecideOwnProblem(t *testing.T) {
 	policy := RBACProblemPolicy{}
 	problem := ProblemRecord{ID: 1, OwnerUserID: 11}
 
-	self := auth.Actor{UserID: 11, Roles: []auth.Role{auth.RoleReviewer, auth.RoleAuthor}}
+	self := auth.Actor{UserID: 11, Roles: []auth.Role{auth.RoleReviewer, auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleReviewer, auth.RoleAuthor)}
 	if err := policy.CanDecideReview(self, problem); err == nil {
 		t.Fatal("self review allowed, want forbidden")
 	}
 
-	peer := auth.Actor{UserID: 12, Roles: []auth.Role{auth.RoleReviewer}}
+	peer := auth.Actor{UserID: 12, Roles: []auth.Role{auth.RoleReviewer}, Permissions: seededPermissions(auth.RoleReviewer)}
 	if err := policy.CanDecideReview(peer, problem); err != nil {
 		t.Fatalf("reviewer CanDecideReview error = %v", err)
 	}
@@ -100,7 +100,7 @@ func TestRBACProblemPolicyReviewerCannotDecideOwnProblem(t *testing.T) {
 
 func TestRBACProblemPolicyOperatorCannotAuthorProblems(t *testing.T) {
 	policy := RBACProblemPolicy{}
-	operator := auth.Actor{UserID: 11, Roles: []auth.Role{auth.RoleOperator}}
+	operator := auth.Actor{UserID: 11, Roles: []auth.Role{auth.RoleOperator}, Permissions: seededPermissions(auth.RoleOperator)}
 	if err := policy.CanRejudge(operator); err != nil {
 		t.Fatalf("operator CanRejudge error = %v", err)
 	}

@@ -27,7 +27,7 @@ type AuditEvent struct {
 	ActorUserID pgtype.Int8        `db:"actor_user_id" json:"actor_user_id"`
 	Action      string             `db:"action" json:"action"`
 	ObjectType  string             `db:"object_type" json:"object_type"`
-	ObjectID    int64              `db:"object_id" json:"object_id"`
+	ObjectID    pgtype.Int8        `db:"object_id" json:"object_id"`
 	Reason      string             `db:"reason" json:"reason"`
 	Metadata    []byte             `db:"metadata" json:"metadata"`
 	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
@@ -342,6 +342,11 @@ type Role struct {
 	DisplayName string `db:"display_name" json:"display_name"`
 	Scope       string `db:"scope" json:"scope"`
 	SystemRole  bool   `db:"system_role" json:"system_role"`
+}
+
+type RolePermission struct {
+	RoleCode       string `db:"role_code" json:"role_code"`
+	PermissionCode string `db:"permission_code" json:"permission_code"`
 }
 
 type Run struct {

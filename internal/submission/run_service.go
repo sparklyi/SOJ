@@ -142,6 +142,9 @@ func NewRunService(options RunServiceOptions) *RunService {
 }
 
 func (s *RunService) CreateRun(ctx context.Context, actor auth.Actor, input CreateRunInput) (CreateRunOutput, error) {
+	// A playground run only requires login: it is a public capability and is not
+	// gated by a permission point. See docs/authz.md for the public-capability
+	// exception list.
 	if !actor.Authenticated() {
 		return CreateRunOutput{}, apperror.Unauthorized("auth_required", "authentication required")
 	}
@@ -239,7 +242,7 @@ func (s *RunService) GetRun(ctx context.Context, actor auth.Actor, id int64) (Ru
 	if err != nil {
 		return RunRecord{}, err
 	}
-	if !actor.Admin() && (!actor.Authenticated() || actor.UserID != record.UserID) {
+	if !canInspectSubmissions(actor) && (!actor.Authenticated() || actor.UserID != record.UserID) {
 		return RunRecord{}, apperror.Forbidden("run.not_allowed", "run access denied")
 	}
 	return record, nil

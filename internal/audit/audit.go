@@ -15,16 +15,17 @@ import (
 type Action string
 
 const (
-	ActionUserRoleGranted  Action = "user.role.granted"
-	ActionUserRoleRevoked  Action = "user.role.revoked"
-	ActionUserDisabled     Action = "user.disabled"
-	ActionUserEnabled      Action = "user.enabled"
-	ActionUserDeleted      Action = "user.deleted"
-	ActionLanguageEnabled  Action = "language.enabled"
-	ActionLanguageDisabled Action = "language.disabled"
-	ActionProblemArchived  Action = "problem.archived"
-	ActionProblemRestored  Action = "problem.restored"
-	ActionContestArchived  Action = "contest.archived"
+	ActionUserRoleGranted        Action = "user.role.granted"
+	ActionUserRoleRevoked        Action = "user.role.revoked"
+	ActionUserDisabled           Action = "user.disabled"
+	ActionUserEnabled            Action = "user.enabled"
+	ActionUserDeleted            Action = "user.deleted"
+	ActionLanguageEnabled        Action = "language.enabled"
+	ActionLanguageDisabled       Action = "language.disabled"
+	ActionProblemArchived        Action = "problem.archived"
+	ActionProblemRestored        Action = "problem.restored"
+	ActionContestArchived        Action = "contest.archived"
+	ActionRolePermissionsUpdated Action = "role.permissions.updated"
 )
 
 // ObjectType names the kind of object an action targets.
@@ -35,6 +36,7 @@ const (
 	ObjectLanguage ObjectType = "language"
 	ObjectProblem  ObjectType = "problem"
 	ObjectContest  ObjectType = "contest"
+	ObjectRole     ObjectType = "role"
 )
 
 // Event is one administrative action. ActorUserID identifies the operator;
@@ -76,21 +78,22 @@ func Insert(ctx context.Context, db Execer, event Event) error {
 	_, err := db.Exec(ctx, `
 		INSERT INTO audit_events (actor_user_id, action, object_type, object_id, reason, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, nullableActorID(event.ActorUserID), string(event.Action), string(event.ObjectType), event.ObjectID, event.Reason, metadata)
+	`, nullableActorID(event.ActorUserID), string(event.Action), string(event.ObjectType), nullableObjectID(event.ObjectID), event.Reason, metadata)
 	return err
 }
 
 var validActions = map[Action]struct{}{
-	ActionUserRoleGranted:  {},
-	ActionUserRoleRevoked:  {},
-	ActionUserDisabled:     {},
-	ActionUserEnabled:      {},
-	ActionUserDeleted:      {},
-	ActionLanguageEnabled:  {},
-	ActionLanguageDisabled: {},
-	ActionProblemArchived:  {},
-	ActionProblemRestored:  {},
-	ActionContestArchived:  {},
+	ActionUserRoleGranted:        {},
+	ActionUserRoleRevoked:        {},
+	ActionUserDisabled:           {},
+	ActionUserEnabled:            {},
+	ActionUserDeleted:            {},
+	ActionLanguageEnabled:        {},
+	ActionLanguageDisabled:       {},
+	ActionProblemArchived:        {},
+	ActionProblemRestored:        {},
+	ActionContestArchived:        {},
+	ActionRolePermissionsUpdated: {},
 }
 
 var validObjectTypes = map[ObjectType]struct{}{
@@ -98,6 +101,7 @@ var validObjectTypes = map[ObjectType]struct{}{
 	ObjectLanguage: {},
 	ObjectProblem:  {},
 	ObjectContest:  {},
+	ObjectRole:     {},
 }
 
 func (a Action) Valid() bool {
@@ -120,7 +124,18 @@ func (e Event) validate() error {
 	if !e.ObjectType.Valid() {
 		return fmt.Errorf("unknown audit object type %q", e.ObjectType)
 	}
-	if e.ObjectID <= 0 {
+	if e.ObjectID < 0 {
+		return fmt.Errorf("audit object id must not be negative")
+	}
+	if e.ObjectType == ObjectRole {
+		// A role has no numeric id: the role code lives in metadata. Recording
+		// a bogus object_id here would make the event lie about its target.
+		if e.ObjectID != 0 {
+			return fmt.Errorf("role audit object id must be zero")
+		}
+		return nil
+	}
+	if e.ObjectID == 0 {
 		return fmt.Errorf("audit object id must be positive")
 	}
 	return nil
@@ -131,4 +146,11 @@ func nullableActorID(userID int64) any {
 		return nil
 	}
 	return userID
+}
+
+func nullableObjectID(objectID int64) any {
+	if objectID <= 0 {
+		return nil
+	}
+	return objectID
 }

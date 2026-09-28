@@ -120,7 +120,7 @@ func (p *ContestPolicy) ValidateSubmission(ctx context.Context, actor auth.Actor
 	if !containsProblem(problems, problemID) {
 		return apperror.NotFound("contest.problem_not_found", "problem is not in contest")
 	}
-	if actor.Admin() || actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManage) == nil {
+	if actor.UserID == contest.OwnerUserID || authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManage) == nil {
 		return nil
 	}
 	registration, err := p.reader.getRegistration(ctx, contestID, actor.UserID)

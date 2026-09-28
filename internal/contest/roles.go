@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 	"SOJ/internal/postgres/db"
 
 	"github.com/jackc/pgx/v5"
@@ -37,9 +39,18 @@ type ContestRoleRevokeInput struct {
 	Reason string `json:"reason"`
 }
 
+// ContestAccess is the scoped authorization state for one contest: the roles a
+// user holds there and the permissions those roles currently grant. Like the
+// global resolver, it reads role_permissions so matrix edits take effect on the
+// next request.
+type ContestAccess struct {
+	Roles       []auth.Role
+	Permissions []authz.Permission
+}
+
 type ContestRoleStore interface {
 	ListContestIDs(context.Context, int64) ([]int64, error)
-	ListContestRoles(context.Context, int64, int64) ([]auth.Role, error)
+	ListContestAccess(context.Context, int64, int64) (ContestAccess, error)
 	ListContestRoleAssignments(context.Context, int64) ([]ContestRoleAssignment, error)
 	GrantContestRole(context.Context, int64, int64, auth.Role, int64, string) (ContestRoleAssignment, error)
 	RevokeContestRole(context.Context, int64, int64, auth.Role, int64, string) error
@@ -88,37 +99,52 @@ func (r *PostgresContestRoleStore) ListContestIDs(ctx context.Context, userID in
 	return ids, nil
 }
 
-func (r *PostgresContestRoleStore) ListContestRoles(ctx context.Context, contestID, userID int64) ([]auth.Role, error) {
+func (r *PostgresContestRoleStore) ListContestAccess(ctx context.Context, contestID, userID int64) (ContestAccess, error) {
 	if contestID <= 0 || userID <= 0 {
-		return nil, apperror.NotFound("contest.role_not_found", "contest role assignment not found")
+		return ContestAccess{}, apperror.NotFound("contest.role_not_found", "contest role assignment not found")
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT role_code
-		FROM contest_role_assignments
-		WHERE contest_id = $1 AND user_id = $2 AND revoked_at IS NULL
-		ORDER BY role_code
+		SELECT a.role_code, rp.permission_code
+		FROM contest_role_assignments AS a
+		LEFT JOIN role_permissions AS rp
+			ON rp.role_code = a.role_code
+		WHERE a.contest_id = $1 AND a.user_id = $2 AND a.revoked_at IS NULL
+		ORDER BY a.role_code, rp.permission_code
 	`, contestID, userID)
 	if err != nil {
-		return nil, mapContestRoleDBError(err)
+		return ContestAccess{}, mapContestRoleDBError(err)
 	}
 	defer rows.Close()
 
-	roles := make([]auth.Role, 0)
+	access := ContestAccess{Roles: make([]auth.Role, 0), Permissions: make([]authz.Permission, 0)}
 	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			return nil, err
+		var (
+			roleCode       string
+			permissionCode pgtype.Text
+		)
+		if err := rows.Scan(&roleCode, &permissionCode); err != nil {
+			return ContestAccess{}, err
 		}
-		role, err := auth.ParseRole(value)
+		role, err := auth.ParseRole(roleCode)
 		if err != nil || !auth.IsContestRole(role) {
-			return nil, fmt.Errorf("invalid contest role assignment %q", value)
+			return ContestAccess{}, fmt.Errorf("invalid contest role assignment %q", roleCode)
 		}
-		roles = append(roles, role)
+		if len(access.Roles) == 0 || access.Roles[len(access.Roles)-1] != role {
+			access.Roles = append(access.Roles, role)
+		}
+		if permissionCode.Valid {
+			permission := authz.Permission(permissionCode.String)
+			if _, ok := authz.Lookup(permission); !ok {
+				return ContestAccess{}, fmt.Errorf("invalid permission assignment %q", permissionCode.String)
+			}
+			access.Permissions = append(access.Permissions, permission)
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return ContestAccess{}, err
 	}
-	return roles, nil
+	sort.Slice(access.Permissions, func(i, j int) bool { return access.Permissions[i] < access.Permissions[j] })
+	return access, nil
 }
 
 // ListContestRoleAssignments returns every active assignment inside one contest

@@ -182,7 +182,7 @@ func TestProblemAuthoringUsesOnlyAuthoringTransaction(t *testing.T) {
 	store := &problemAuthoringStoreStub{}
 	authoring := NewProblemAuthoring(store, testcaseArchiveWriterStub{})
 
-	created, err := authoring.CreateProblem(t.Context(), auth.Actor{UserID: 3, Roles: []auth.Role{auth.RoleAuthor}}, CreateProblemInput{
+	created, err := authoring.CreateProblem(t.Context(), auth.Actor{UserID: 3, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, CreateProblemInput{
 		Title:         "Sum",
 		Slug:          "sum",
 		Difficulty:    DifficultyEasy,
@@ -245,7 +245,7 @@ func (problemCheckTxStub) CompleteProblemCheckRun(_ context.Context, input Compl
 func TestProblemCheckServiceUsesOnlyCheckStore(t *testing.T) {
 	checks := NewProblemCheckService(problemCheckStoreStub{}, testcaseArchiveReaderStub{}, func() time.Time { return time.Unix(10, 0).UTC() })
 
-	got, err := checks.GetProblemCheck(t.Context(), auth.Actor{UserID: 3, Roles: []auth.Role{auth.RoleAuthor}}, 7, 9)
+	got, err := checks.GetProblemCheck(t.Context(), auth.Actor{UserID: 3, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 7, 9)
 	if err != nil {
 		t.Fatalf("GetProblemCheck() error = %v", err)
 	}

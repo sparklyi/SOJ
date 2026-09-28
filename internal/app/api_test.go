@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"SOJ/internal/auth"
+	"SOJ/internal/authz"
 	"SOJ/internal/user"
 
 	"github.com/gin-gonic/gin"
@@ -33,12 +34,18 @@ func TestActorMiddlewareDropsDisabledSessions(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		resolver actorResolverStub
-		wantAuth bool
+		resolver  actorResolverStub
+		wantAuth  bool
+		wantPerms []authz.Permission
 	}{
 		"active account keeps its session": {
-			resolver: actorResolverStub{state: user.ActorState{Status: user.StatusActive, Roles: []auth.Role{auth.RoleAuthor}}},
-			wantAuth: true,
+			resolver: actorResolverStub{state: user.ActorState{
+				Status:      user.StatusActive,
+				Roles:       []auth.Role{auth.RoleAuthor},
+				Permissions: []authz.Permission{authz.PermissionProblemCreate},
+			}},
+			wantAuth:  true,
+			wantPerms: []authz.Permission{authz.PermissionProblemCreate},
 		},
 		"disabled account becomes anonymous": {
 			resolver: actorResolverStub{state: user.ActorState{Status: user.StatusDisabled, Roles: []auth.Role{auth.RoleAuthor}}},
@@ -56,6 +63,14 @@ func TestActorMiddlewareDropsDisabledSessions(t *testing.T) {
 				resolved, _ := actor.(auth.Actor)
 				if resolved.Authenticated() != tt.wantAuth {
 					t.Fatalf("authenticated = %v, want %v (actor %+v)", resolved.Authenticated(), tt.wantAuth, resolved)
+				}
+				if len(resolved.Permissions) != len(tt.wantPerms) {
+					t.Fatalf("permissions = %v, want %v", resolved.Permissions, tt.wantPerms)
+				}
+				for i := range tt.wantPerms {
+					if resolved.Permissions[i] != tt.wantPerms[i] {
+						t.Fatalf("permissions = %v, want %v", resolved.Permissions, tt.wantPerms)
+					}
 				}
 				c.Status(http.StatusNoContent)
 			})

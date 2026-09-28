@@ -28,6 +28,18 @@ func TestInsertRejectsMalformedEvents(t *testing.T) {
 		"empty action":       {ActorUserID: 1, ObjectType: ObjectUser, ObjectID: 1},
 		"empty object type":  {ActorUserID: 1, Action: ActionUserDisabled, ObjectID: 1},
 		"negative object id": {ActorUserID: 1, Action: ActionUserDisabled, ObjectType: ObjectUser, ObjectID: -3},
+		"role with object id": {
+			ActorUserID: 1,
+			Action:      ActionRolePermissionsUpdated,
+			ObjectType:  ObjectRole,
+			ObjectID:    5,
+		},
+		"role negative object id": {
+			ActorUserID: 1,
+			Action:      ActionRolePermissionsUpdated,
+			ObjectType:  ObjectRole,
+			ObjectID:    -1,
+		},
 	}
 	for name, event := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -67,6 +79,23 @@ func TestInsertEncodesEventArguments(t *testing.T) {
 	}
 	if decoded["previous_status"] != "published" {
 		t.Fatalf("metadata = %v, want previous_status", decoded)
+	}
+}
+
+func TestInsertStoresRoleEventsWithoutNumericObjectID(t *testing.T) {
+	execer := &recordingExecer{}
+	event := Event{
+		ActorUserID: 7,
+		Action:      ActionRolePermissionsUpdated,
+		ObjectType:  ObjectRole,
+		Reason:      "seed author",
+		Metadata:    map[string]string{"role": "author"},
+	}
+	if err := Insert(context.Background(), execer, event); err != nil {
+		t.Fatalf("Insert() error = %v", err)
+	}
+	if execer.args[3] != nil {
+		t.Fatalf("object id arg = %#v, want nil for a role event", execer.args[3])
 	}
 }
 

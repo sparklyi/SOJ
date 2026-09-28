@@ -382,6 +382,9 @@ func requireContestCreator(actor auth.Actor) error {
 	if !actor.Authenticated() {
 		return apperror.Unauthorized("auth_required", "authentication required")
 	}
+	if authz.Authorize(authz.NewSubject(actor), authz.PermissionContestCreate) == nil {
+		return nil
+	}
 	if authz.Authorize(authz.NewSubject(actor), authz.PermissionContestManageAll) == nil {
 		return nil
 	}

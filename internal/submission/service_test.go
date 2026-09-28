@@ -789,7 +789,7 @@ func TestListSubmissionsBuildsBatchedSummariesWithoutCaseDetails(t *testing.T) {
 	seedSubmissionListSummaries(repo, 5, 7)
 	service := newServiceForTest(serviceTestOptions{Repository: repo, ContestVisibilityPolicy: policy})
 
-	views, total, err := service.ListSubmissions(t.Context(), auth.Actor{UserID: 99, Role: auth.RoleAdmin}, ListSubmissionsInput{Limit: 50})
+	views, total, err := service.ListSubmissions(t.Context(), auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}, ListSubmissionsInput{Limit: 50})
 	if err != nil {
 		t.Fatalf("ListSubmissions returned error: %v", err)
 	}
@@ -1172,10 +1172,10 @@ func TestHandlerSubmissionDetailIncludesAdminDiagnosticsForAdmin(t *testing.T) {
 		t.Fatalf("CompleteSubmission returned error: %v", err)
 	}
 	handler := NewHandler(service)
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
+	middleware := httpapi.DefaultMiddlewareSet()
+	middleware.Auth = actorAuthMiddleware(auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: middleware, Modules: []httpapi.Module{NewModule(handler)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/1", nil)
-	req.Header.Set("X-User-ID", "99")
-	req.Header.Set("X-User-Role", "admin")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -1237,10 +1237,10 @@ func TestHandlerSubmissionDetailIncludesAsyncOTelTraceIDForAdmin(t *testing.T) {
 	}
 
 	handler := NewHandler(newServiceForTest(serviceTestOptions{Repository: repo}))
-	router := httpapi.NewRouter(httpapi.RouterOptions{Modules: []httpapi.Module{NewModule(handler)}})
+	middleware := httpapi.DefaultMiddlewareSet()
+	middleware.Auth = actorAuthMiddleware(auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)})
+	router := httpapi.NewRouter(httpapi.RouterOptions{Middleware: middleware, Modules: []httpapi.Module{NewModule(handler)}})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/submissions/1", nil)
-	req.Header.Set("X-User-ID", "99")
-	req.Header.Set("X-User-Role", "admin")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -1313,7 +1313,7 @@ func (p frozenSubmissionPolicy) ValidateSubmission(ctx context.Context, actor au
 }
 
 func (p frozenSubmissionPolicy) SubmissionResultVisibility(ctx context.Context, actor auth.Actor, sub ContestSubmissionVisibility) (SubmissionResultVisibility, error) {
-	if actor.Admin() {
+	if canInspectSubmissions(actor) {
 		return SubmissionResultVisibility{ShowResult: true, ShowCases: true, ShowAdminDiagnostics: true, Visibility: "visible"}, nil
 	}
 	now := p.now

@@ -193,11 +193,11 @@ func (r *ContestReader) currentUserRoles(ctx context.Context, actor auth.Actor, 
 	if r.roles == nil || !actor.Authenticated() || contestID <= 0 {
 		return []auth.Role{}
 	}
-	roles, err := r.roles.ListContestRoles(ctx, contestID, actor.UserID)
-	if err != nil || roles == nil {
+	roles, err := r.roles.ListContestAccess(ctx, contestID, actor.UserID)
+	if err != nil || roles.Roles == nil {
 		return []auth.Role{}
 	}
-	return roles
+	return roles.Roles
 }
 
 // canManageAllContests is the permission-side view of "this actor can reach
@@ -236,14 +236,28 @@ func (r *ContestReader) actorWithContestRoles(ctx context.Context, actor auth.Ac
 	if r.roles == nil || !actor.Authenticated() || contestID <= 0 {
 		return actor, nil
 	}
-	roles, err := r.roles.ListContestRoles(ctx, contestID, actor.UserID)
+	access, err := r.roles.ListContestAccess(ctx, contestID, actor.UserID)
 	if err != nil {
 		return auth.Actor{}, err
 	}
-	for _, role := range roles {
+	for _, role := range access.Roles {
 		if !actor.HasRole(role) {
 			actor.Roles = append(actor.Roles, role)
 		}
 	}
+	for _, permission := range access.Permissions {
+		if !actorHasPermission(actor, permission) {
+			actor.Permissions = append(actor.Permissions, permission)
+		}
+	}
 	return actor, nil
+}
+
+func actorHasPermission(actor auth.Actor, permission auth.Permission) bool {
+	for _, granted := range actor.Permissions {
+		if granted == permission {
+			return true
+		}
+	}
+	return false
 }

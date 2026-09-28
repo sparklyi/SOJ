@@ -15,14 +15,11 @@ func (RBACProblemPolicy) CanCreate(actor auth.Actor) error {
 }
 
 // CanAccessAuthoring gates the authoring console entry. Reviewers and problem
-// managers use the console without creating drafts themselves, so any of the
-// authoring permissions is enough; an ordinary user has none of them.
+// managers use the console without creating drafts themselves, so any member of
+// authz.Combos()["problem.authoring.access"] is enough; an ordinary user has
+// none of them.
 func (RBACProblemPolicy) CanAccessAuthoring(actor auth.Actor) error {
-	for _, permission := range []authz.Permission{
-		authz.PermissionProblemCreate,
-		authz.PermissionProblemReview,
-		authz.PermissionProblemManageAll,
-	} {
+	for _, permission := range authz.Combos()["problem.authoring.access"] {
 		if hasProblemPermission(actor, permission) {
 			return nil
 		}
@@ -61,6 +58,9 @@ func (RBACProblemPolicy) CanDecideReview(actor auth.Actor, problem ProblemRecord
 	if actor.UserID == problem.OwnerUserID {
 		return apperror.Forbidden("problem.self_review_forbidden", "problem authors cannot review their own problems")
 	}
+	// authz.Combos()["problem.review.decide"] documents the full set
+	// (review + publish, with manage_all as the bypass above). The two checks stay
+	// sequential and AND-ed: a reviewer may only decide when they hold both.
 	if err := requireProblemPermission(actor, authz.PermissionProblemReview); err != nil {
 		return err
 	}
@@ -68,10 +68,12 @@ func (RBACProblemPolicy) CanDecideReview(actor auth.Actor, problem ProblemRecord
 }
 
 func (RBACProblemPolicy) CanViewReviewQueue(actor auth.Actor) error {
-	if hasProblemPermission(actor, authz.PermissionProblemManageAll) {
-		return nil
+	for _, permission := range authz.Combos()["problem.review.queue"] {
+		if hasProblemPermission(actor, permission) {
+			return nil
+		}
 	}
-	return requireProblemPermission(actor, authz.PermissionProblemReview)
+	return problemForbidden("required problem permission is missing")
 }
 
 func (RBACProblemPolicy) CanViewReviewEvents(actor auth.Actor, problem ProblemRecord) error {

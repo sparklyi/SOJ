@@ -92,6 +92,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		userRepo,
 		jwtManager,
 		user.WithRoleStore(roleRepo),
+		user.WithRolePermissionStore(user.NewPostgresRolePermissionStore(pool)),
 		user.WithTokenTTLs(cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL),
 	)
 	problemRepo := problem.NewPostgresRepository(pool)
@@ -226,6 +227,7 @@ func actorMiddleware(jwtManager *auth.JWTManager, actors user.ActorResolver) gin
 				// account loses its session here, not when its token expires.
 				if state, stateErr := actors.ResolveActor(c.Request.Context(), parsed.UserID); stateErr == nil && state.Status == user.StatusActive {
 					parsed.Roles = state.Roles
+					parsed.Permissions = state.Permissions
 					parsed.RequestID = requestID
 					actor = parsed
 				}
