@@ -46,10 +46,10 @@ jobs:
       SOJ_TEST_DATABASE_DSN: postgres://soj:soj@localhost:5432/soj?sslmode=disable
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -86,10 +86,10 @@ jobs:
       COMPOSE_PROJECT_NAME: soj-ci-smoke
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build service images
         uses: docker/bake-action@v7
