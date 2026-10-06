@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine
+FROM golang:1.27-alpine
 
 RUN apk add --no-cache ca-certificates git tzdata \
     && addgroup -g 1000 runner \
