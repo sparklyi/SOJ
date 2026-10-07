@@ -1,4 +1,4 @@
-FROM alpine:3.22
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates g++ musl-dev tzdata \
     && addgroup -g 1000 runner \
