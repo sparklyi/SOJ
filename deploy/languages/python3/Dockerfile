@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM python:3.14-alpine
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -g 1000 runner \
