@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"SOJ/internal/apperror"
+	"SOJ/internal/audit"
 	"SOJ/internal/auth"
 	"SOJ/internal/authz"
 	"SOJ/internal/postgres/db"
@@ -232,10 +234,7 @@ func (r *PostgresContestRoleStore) GrantContestRole(ctx context.Context, contest
 		}
 		return ContestRoleAssignment{}, mapContestRoleDBError(err)
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO contest_role_audit_events (contest_id, user_id, role_code, actor_user_id, action, reason)
-		VALUES ($1, $2, $3, $4, 'granted', $5)
-	`, contestID, userID, string(role), grantedBy, reason); err != nil {
+	if err := insertContestRoleAudit(ctx, tx, audit.ActionContestRoleGranted, contestID, userID, role, grantedBy, reason); err != nil {
 		return ContestRoleAssignment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -270,13 +269,21 @@ func (r *PostgresContestRoleStore) RevokeContestRole(ctx context.Context, contes
 	if tag.RowsAffected() != 1 {
 		return apperror.NotFound("contest.role_not_found", "contest role assignment not found")
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO contest_role_audit_events (contest_id, user_id, role_code, actor_user_id, action, reason)
-		VALUES ($1, $2, $3, $4, 'revoked', $5)
-	`, contestID, userID, string(role), revokedBy, reason); err != nil {
+	if err := insertContestRoleAudit(ctx, tx, audit.ActionContestRoleRevoked, contestID, userID, role, revokedBy, reason); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func insertContestRoleAudit(ctx context.Context, tx pgx.Tx, action audit.Action, contestID, userID int64, role auth.Role, actorID int64, reason string) error {
+	return audit.Insert(ctx, tx, audit.Event{
+		ActorUserID: actorID,
+		Action:      action,
+		ObjectType:  audit.ObjectContest,
+		ObjectID:    contestID,
+		Reason:      reason,
+		Metadata:    map[string]string{"user_id": strconv.FormatInt(userID, 10), "role": string(role)},
+	})
 }
 
 func scanContestRoleAssignment(row pgx.Row) (ContestRoleAssignment, error) {

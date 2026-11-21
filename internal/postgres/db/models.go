@@ -65,9 +65,6 @@ type ContestProblemResult struct {
 	AcceptedAt       pgtype.Timestamptz `db:"accepted_at" json:"accepted_at"`
 	PenaltyMinutes   int32              `db:"penalty_minutes" json:"penalty_minutes"`
 	LastSubmissionID pgtype.Int8        `db:"last_submission_id" json:"last_submission_id"`
-	BestSubmissionID pgtype.Int8        `db:"best_submission_id" json:"best_submission_id"`
-	BestAttemptID    pgtype.Int8        `db:"best_attempt_id" json:"best_attempt_id"`
-	LastAttemptID    pgtype.Int8        `db:"last_attempt_id" json:"last_attempt_id"`
 	UpdatedAt        pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
 
@@ -91,17 +88,6 @@ type ContestRoleAssignment struct {
 	GrantedBy pgtype.Int8        `db:"granted_by" json:"granted_by"`
 	GrantedAt pgtype.Timestamptz `db:"granted_at" json:"granted_at"`
 	RevokedAt pgtype.Timestamptz `db:"revoked_at" json:"revoked_at"`
-}
-
-type ContestRoleAuditEvent struct {
-	ID          int64              `db:"id" json:"id"`
-	ContestID   int64              `db:"contest_id" json:"contest_id"`
-	UserID      int64              `db:"user_id" json:"user_id"`
-	RoleCode    string             `db:"role_code" json:"role_code"`
-	ActorUserID pgtype.Int8        `db:"actor_user_id" json:"actor_user_id"`
-	Action      string             `db:"action" json:"action"`
-	Reason      string             `db:"reason" json:"reason"`
-	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"created_at"`
 }
 
 type ContestScoreSnapshot struct {
@@ -144,8 +130,6 @@ type JudgeAttempt struct {
 	CheckerHash          pgtype.Text        `db:"checker_hash" json:"checker_hash"`
 	ValidatorHash        pgtype.Text        `db:"validator_hash" json:"validator_hash"`
 	Status               string             `db:"status" json:"status"`
-	Verdict              pgtype.Text        `db:"verdict" json:"verdict"`
-	Score                int32              `db:"score" json:"score"`
 	TimeMs               pgtype.Int4        `db:"time_ms" json:"time_ms"`
 	MemoryKb             pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
 	FirstFailedCaseIndex pgtype.Int4        `db:"first_failed_case_index" json:"first_failed_case_index"`
@@ -156,7 +140,6 @@ type JudgeAttempt struct {
 	ErrorClass           pgtype.Text        `db:"error_class" json:"error_class"`
 	ErrorMessage         pgtype.Text        `db:"error_message" json:"error_message"`
 	Manifest             []byte             `db:"manifest" json:"manifest"`
-	Metrics              []byte             `db:"metrics" json:"metrics"`
 	TraceID              pgtype.Text        `db:"trace_id" json:"trace_id"`
 	StartedAt            pgtype.Timestamptz `db:"started_at" json:"started_at"`
 	FinishedAt           pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
@@ -178,9 +161,6 @@ type JudgeCaseResult struct {
 	Signal            pgtype.Text        `db:"signal" json:"signal"`
 	CheckerMessage    pgtype.Text        `db:"checker_message" json:"checker_message"`
 	OutputDiffSummary pgtype.Text        `db:"output_diff_summary" json:"output_diff_summary"`
-	StdoutArtifactID  pgtype.Int8        `db:"stdout_artifact_id" json:"stdout_artifact_id"`
-	StderrArtifactID  pgtype.Int8        `db:"stderr_artifact_id" json:"stderr_artifact_id"`
-	DiffArtifactID    pgtype.Int8        `db:"diff_artifact_id" json:"diff_artifact_id"`
 	CreatedAt         pgtype.Timestamptz `db:"created_at" json:"created_at"`
 }
 
@@ -202,9 +182,6 @@ type Language struct {
 	Engine               string             `db:"engine" json:"engine"`
 	EngineLanguageID     string             `db:"engine_language_id" json:"engine_language_id"`
 	Name                 string             `db:"name" json:"name"`
-	Version              pgtype.Text        `db:"version" json:"version"`
-	CompileCommand       pgtype.Text        `db:"compile_command" json:"compile_command"`
-	RunCommand           pgtype.Text        `db:"run_command" json:"run_command"`
 	DefaultTimeLimitMs   int32              `db:"default_time_limit_ms" json:"default_time_limit_ms"`
 	DefaultMemoryLimitKb int32              `db:"default_memory_limit_kb" json:"default_memory_limit_kb"`
 	Enabled              bool               `db:"enabled" json:"enabled"`
@@ -369,37 +346,19 @@ type Run struct {
 }
 
 type Submission struct {
-	ID               int64              `db:"id" json:"id"`
-	UserID           int64              `db:"user_id" json:"user_id"`
-	ProblemID        int64              `db:"problem_id" json:"problem_id"`
-	ContestID        pgtype.Int8        `db:"contest_id" json:"contest_id"`
-	LanguageID       int64              `db:"language_id" json:"language_id"`
-	TestcaseSetID    int64              `db:"testcase_set_id" json:"testcase_set_id"`
-	Status           string             `db:"status" json:"status"`
-	SourceArtifactID pgtype.Int8        `db:"source_artifact_id" json:"source_artifact_id"`
-	TimeMs           pgtype.Int4        `db:"time_ms" json:"time_ms"`
-	MemoryKb         pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
-	Score            int32              `db:"score" json:"score"`
-	ErrorMessage     pgtype.Text        `db:"error_message" json:"error_message"`
-	SubmittedAt      pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
-	JudgedAt         pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
-	FirstJudgedAt    pgtype.Timestamptz `db:"first_judged_at" json:"first_judged_at"`
-	UpdatedAt        pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-}
-
-type SubmissionResult struct {
-	SubmissionID         int64              `db:"submission_id" json:"submission_id"`
-	AttemptID            int64              `db:"attempt_id" json:"attempt_id"`
-	Status               string             `db:"status" json:"status"`
-	Score                int32              `db:"score" json:"score"`
-	TimeMs               pgtype.Int4        `db:"time_ms" json:"time_ms"`
-	MemoryKb             pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
-	FirstFailedCaseIndex pgtype.Int4        `db:"first_failed_case_index" json:"first_failed_case_index"`
-	FirstFailedGroup     pgtype.Text        `db:"first_failed_group" json:"first_failed_group"`
-	ErrorClass           pgtype.Text        `db:"error_class" json:"error_class"`
-	SafeSummary          []byte             `db:"safe_summary" json:"safe_summary"`
-	CreatedAt            pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	ID                 int64              `db:"id" json:"id"`
+	UserID             int64              `db:"user_id" json:"user_id"`
+	ProblemID          int64              `db:"problem_id" json:"problem_id"`
+	ContestID          pgtype.Int8        `db:"contest_id" json:"contest_id"`
+	LanguageID         int64              `db:"language_id" json:"language_id"`
+	TestcaseSetID      int64              `db:"testcase_set_id" json:"testcase_set_id"`
+	Status             string             `db:"status" json:"status"`
+	SourceArtifactID   pgtype.Int8        `db:"source_artifact_id" json:"source_artifact_id"`
+	SubmittedAt        pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
+	JudgedAt           pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
+	FirstJudgedAt      pgtype.Timestamptz `db:"first_judged_at" json:"first_judged_at"`
+	UpdatedAt          pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	EffectiveAttemptID pgtype.Int8        `db:"effective_attempt_id" json:"effective_attempt_id"`
 }
 
 type TestcaseSet struct {

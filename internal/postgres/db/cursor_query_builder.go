@@ -201,27 +201,30 @@ func buildListContestsByCursorQuery(arg ListContestsByCursorParams) (string, []a
 	)
 }
 
+const submissionOutcomeStatus = "CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END"
+
 func buildListSubmissionsByCursorQuery(arg ListSubmissionsByCursorParams) (string, []any) {
 	builder := cursorQueryBuilder{}
 	if arg.UserID.Valid {
-		builder.add("user_id = " + builder.bind(arg.UserID.Int64, "::bigint"))
+		builder.add("s.user_id = " + builder.bind(arg.UserID.Int64, "::bigint"))
 	}
 	if arg.ProblemID.Valid {
-		builder.add("problem_id = " + builder.bind(arg.ProblemID.Int64, "::bigint"))
+		builder.add("s.problem_id = " + builder.bind(arg.ProblemID.Int64, "::bigint"))
 	}
 	if arg.ContestID.Valid {
-		builder.add("contest_id = " + builder.bind(arg.ContestID.Int64, "::bigint"))
+		builder.add("s.contest_id = " + builder.bind(arg.ContestID.Int64, "::bigint"))
 	}
 	if arg.Status.Valid {
-		builder.add("status = " + builder.bind(arg.Status.String, "::text"))
+		builder.add("(" + submissionOutcomeStatus + ") = " + builder.bind(arg.Status.String, "::text"))
 	}
 	beforeArg := builder.bind(arg.BeforeSubmittedAt.Time, "::timestamptz")
 	beforeIDArg := builder.bind(arg.BeforeID, "::bigint")
-	builder.add("(submitted_at, id) < (" + beforeArg + ", " + beforeIDArg + ")")
+	builder.add("(s.submitted_at, s.id) < (" + beforeArg + ", " + beforeIDArg + ")")
 
 	return builder.finish(
-		"SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, updated_at\nFROM submissions",
-		"submitted_at DESC, id DESC",
+		"SELECT s.id, s.user_id, s.problem_id, s.contest_id, s.language_id, s.testcase_set_id, s.status, s.source_artifact_id, s.effective_attempt_id, s.submitted_at, s.judged_at, s.first_judged_at, s.updated_at, "+
+			submissionOutcomeStatus+"\nFROM submissions s\nLEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id",
+		"s.submitted_at DESC, s.id DESC",
 		arg.Limit,
 	)
 }
@@ -318,10 +321,16 @@ func (q *Queries) ListContestsByCursor(ctx context.Context, arg ListContestsByCu
 	})
 }
 
-func (q *Queries) ListSubmissionsByCursor(ctx context.Context, arg ListSubmissionsByCursorParams) ([]Submission, error) {
+type ListSubmissionsByCursorRow struct {
+	Submission    Submission
+	OutcomeStatus string
+}
+
+func (q *Queries) ListSubmissionsByCursor(ctx context.Context, arg ListSubmissionsByCursorParams) ([]ListSubmissionsByCursorRow, error) {
 	query, args := buildListSubmissionsByCursorQuery(arg)
-	return listCursorRows(ctx, q, query, args, func(rows pgx.Rows) (Submission, error) {
-		var item Submission
+	return listCursorRows(ctx, q, query, args, func(rows pgx.Rows) (ListSubmissionsByCursorRow, error) {
+		var row ListSubmissionsByCursorRow
+		item := &row.Submission
 		err := rows.Scan(
 			&item.ID,
 			&item.UserID,
@@ -331,14 +340,13 @@ func (q *Queries) ListSubmissionsByCursor(ctx context.Context, arg ListSubmissio
 			&item.TestcaseSetID,
 			&item.Status,
 			&item.SourceArtifactID,
-			&item.TimeMs,
-			&item.MemoryKb,
-			&item.Score,
-			&item.ErrorMessage,
+			&item.EffectiveAttemptID,
 			&item.SubmittedAt,
 			&item.JudgedAt,
+			&item.FirstJudgedAt,
 			&item.UpdatedAt,
+			&row.OutcomeStatus,
 		)
-		return item, err
+		return row, err
 	})
 }

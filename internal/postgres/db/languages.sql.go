@@ -56,7 +56,7 @@ func (q *Queries) DisableLanguagesNotListed(ctx context.Context, arg DisableLang
 }
 
 const getLanguageByID = `-- name: GetLanguageByID :one
-SELECT id, engine, engine_language_id, name, version, compile_command, run_command, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
+SELECT id, engine, engine_language_id, name, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
 FROM languages
 WHERE id = $1
 `
@@ -69,9 +69,6 @@ func (q *Queries) GetLanguageByID(ctx context.Context, id int64) (Language, erro
 		&i.Engine,
 		&i.EngineLanguageID,
 		&i.Name,
-		&i.Version,
-		&i.CompileCommand,
-		&i.RunCommand,
 		&i.DefaultTimeLimitMs,
 		&i.DefaultMemoryLimitKb,
 		&i.Enabled,
@@ -82,7 +79,7 @@ func (q *Queries) GetLanguageByID(ctx context.Context, id int64) (Language, erro
 }
 
 const listLanguages = `-- name: ListLanguages :many
-SELECT id, engine, engine_language_id, name, version, compile_command, run_command, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
+SELECT id, engine, engine_language_id, name, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
 FROM languages
 WHERE ($1::boolean IS NULL OR enabled = $1::boolean)
   AND (
@@ -119,9 +116,6 @@ func (q *Queries) ListLanguages(ctx context.Context, arg ListLanguagesParams) ([
 			&i.Engine,
 			&i.EngineLanguageID,
 			&i.Name,
-			&i.Version,
-			&i.CompileCommand,
-			&i.RunCommand,
 			&i.DefaultTimeLimitMs,
 			&i.DefaultMemoryLimitKb,
 			&i.Enabled,
@@ -145,7 +139,7 @@ SET enabled = coalesce($1, enabled),
     default_memory_limit_kb = coalesce($3, default_memory_limit_kb),
     updated_at = now()
 WHERE id = $4
-RETURNING id, engine, engine_language_id, name, version, compile_command, run_command, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
+RETURNING id, engine, engine_language_id, name, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
 `
 
 type UpdateLanguageAdminFieldsParams struct {
@@ -168,9 +162,6 @@ func (q *Queries) UpdateLanguageAdminFields(ctx context.Context, arg UpdateLangu
 		&i.Engine,
 		&i.EngineLanguageID,
 		&i.Name,
-		&i.Version,
-		&i.CompileCommand,
-		&i.RunCommand,
 		&i.DefaultTimeLimitMs,
 		&i.DefaultMemoryLimitKb,
 		&i.Enabled,
@@ -186,33 +177,24 @@ INSERT INTO languages (
     engine,
     engine_language_id,
     name,
-    version,
-    compile_command,
-    run_command,
     default_time_limit_ms,
     default_memory_limit_kb,
     enabled
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, true
+    $1, $2, $3, $4, $5, true
 )
 ON CONFLICT (engine, engine_language_id) DO UPDATE
 SET name = EXCLUDED.name,
-    version = EXCLUDED.version,
-    compile_command = EXCLUDED.compile_command,
-    run_command = EXCLUDED.run_command,
     updated_at = now()
-RETURNING id, engine, engine_language_id, name, version, compile_command, run_command, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
+RETURNING id, engine, engine_language_id, name, default_time_limit_ms, default_memory_limit_kb, enabled, created_at, updated_at
 `
 
 type UpsertCatalogLanguageParams struct {
-	Engine               string      `db:"engine" json:"engine"`
-	EngineLanguageID     string      `db:"engine_language_id" json:"engine_language_id"`
-	Name                 string      `db:"name" json:"name"`
-	Version              pgtype.Text `db:"version" json:"version"`
-	CompileCommand       pgtype.Text `db:"compile_command" json:"compile_command"`
-	RunCommand           pgtype.Text `db:"run_command" json:"run_command"`
-	DefaultTimeLimitMs   int32       `db:"default_time_limit_ms" json:"default_time_limit_ms"`
-	DefaultMemoryLimitKb int32       `db:"default_memory_limit_kb" json:"default_memory_limit_kb"`
+	Engine               string `db:"engine" json:"engine"`
+	EngineLanguageID     string `db:"engine_language_id" json:"engine_language_id"`
+	Name                 string `db:"name" json:"name"`
+	DefaultTimeLimitMs   int32  `db:"default_time_limit_ms" json:"default_time_limit_ms"`
+	DefaultMemoryLimitKb int32  `db:"default_memory_limit_kb" json:"default_memory_limit_kb"`
 }
 
 // Owner: WP4 Submission/Language
@@ -224,9 +206,6 @@ func (q *Queries) UpsertCatalogLanguage(ctx context.Context, arg UpsertCatalogLa
 		arg.Engine,
 		arg.EngineLanguageID,
 		arg.Name,
-		arg.Version,
-		arg.CompileCommand,
-		arg.RunCommand,
 		arg.DefaultTimeLimitMs,
 		arg.DefaultMemoryLimitKb,
 	)
@@ -236,9 +215,6 @@ func (q *Queries) UpsertCatalogLanguage(ctx context.Context, arg UpsertCatalogLa
 		&i.Engine,
 		&i.EngineLanguageID,
 		&i.Name,
-		&i.Version,
-		&i.CompileCommand,
-		&i.RunCommand,
 		&i.DefaultTimeLimitMs,
 		&i.DefaultMemoryLimitKb,
 		&i.Enabled,

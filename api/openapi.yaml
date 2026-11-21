@@ -2383,9 +2383,6 @@ components:
           example: soj-agent
         engine_language_id: { type: string }
         name: { type: string }
-        version: { type: string, nullable: true }
-        compile_command: { type: string, nullable: true }
-        run_command: { type: string, nullable: true }
         default_time_limit_ms: { type: integer }
         default_memory_limit_kb: { type: integer }
         enabled: { type: boolean }
@@ -2569,14 +2566,17 @@ components:
         - problem.archived
         - problem.restored
         - contest.archived
+        - contest.role.granted
+        - contest.role.revoked
+        - role.permissions.updated
     AuditObjectType:
       x-owner: WP1 Data/API Contract
       type: string
-      enum: [user, language, problem, contest]
+      enum: [user, language, problem, contest, role]
     AuditEvent:
       x-owner: WP1 Data/API Contract
       type: object
-      required: [id, action, object_type, object_id, created_at]
+      required: [id, action, object_type, created_at]
       properties:
         id: { type: integer, format: int64 }
         actor_user_id: { type: integer, format: int64 }

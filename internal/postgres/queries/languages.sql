@@ -8,20 +8,14 @@ INSERT INTO languages (
     engine,
     engine_language_id,
     name,
-    version,
-    compile_command,
-    run_command,
     default_time_limit_ms,
     default_memory_limit_kb,
     enabled
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, true
+    $1, $2, $3, $4, $5, true
 )
 ON CONFLICT (engine, engine_language_id) DO UPDATE
 SET name = EXCLUDED.name,
-    version = EXCLUDED.version,
-    compile_command = EXCLUDED.compile_command,
-    run_command = EXCLUDED.run_command,
     updated_at = now()
 RETURNING *;
 

@@ -360,21 +360,23 @@ SELECT
     coalesce(jsonb_object_agg(status_counts.status, status_counts.count) FILTER (WHERE status_counts.status IS NOT NULL), '{}'::jsonb) AS status_counts
 FROM problems p
 LEFT JOIN (
-    SELECT s.status, count(*)::bigint AS count
+    SELECT CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END AS status, count(*)::bigint AS count
     FROM submissions s
+    LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
     WHERE s.problem_id = $1
-    GROUP BY s.status
+    GROUP BY CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END
 ) status_counts ON true
 WHERE p.id = $1
 GROUP BY p.id;
 
 -- name: ListProblemSubmissionCounts :many
 -- Batched submission counts for a page of problems, so a list view never
--- issues one stats query per row. Hits submissions_problem_status_idx.
+-- issues one stats query per row.
 SELECT
     s.problem_id,
     count(*)::bigint AS submission_count,
-    count(*) FILTER (WHERE s.status = 'accepted')::bigint AS accepted_count
+    count(*) FILTER (WHERE s.status = 'judged' AND a.status = 'accepted')::bigint AS accepted_count
 FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
 WHERE s.problem_id = ANY(sqlc.arg('problem_ids')::bigint[])
 GROUP BY s.problem_id;

@@ -118,16 +118,8 @@ func (submissionReaderStoreStub) ListSubmissionsByUserBefore(context.Context, in
 	return nil, nil
 }
 
-func (submissionReaderStoreStub) ListSubmissionSummaries(context.Context, []int64, bool) (map[int64]SubmissionListSummary, error) {
+func (submissionReaderStoreStub) ListSubmissionSummaries(context.Context, []int64) (map[int64]SubmissionListSummary, error) {
 	return nil, nil
-}
-
-func (submissionReaderStoreStub) GetSubmissionResult(context.Context, int64) (SubmissionResultRecord, error) {
-	return SubmissionResultRecord{}, nil
-}
-
-func (submissionReaderStoreStub) GetLatestJudgeAttemptBySubmissionID(context.Context, int64) (JudgeAttemptRecord, error) {
-	return JudgeAttemptRecord{}, nil
 }
 
 func (submissionReaderStoreStub) ListJudgeCaseResults(context.Context, int64) ([]JudgeCaseResultRecord, error) {

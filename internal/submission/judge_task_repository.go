@@ -142,7 +142,7 @@ func (r *SQLRepository) RecoverDeadJudgeTask(ctx context.Context, id int64, next
 		if err != nil {
 			return err
 		}
-		return rebuildContestProblemResult(ctx, q, submissionRecord(updated), projectionLock)
+		return rebuildContestProblemResult(ctx, q, submissionRecord(updated.Submission), projectionLock)
 	})
 	return task, err
 }

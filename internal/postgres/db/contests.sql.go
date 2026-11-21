@@ -464,7 +464,7 @@ func (q *Queries) IncrementContestScoreRevision(ctx context.Context, id int64) (
 }
 
 const listContestProblemResults = `-- name: ListContestProblemResults :many
-SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
+SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, updated_at
 FROM contest_problem_results
 WHERE contest_id = $1
 ORDER BY user_id, problem_id
@@ -488,9 +488,6 @@ func (q *Queries) ListContestProblemResults(ctx context.Context, contestID int64
 			&i.AcceptedAt,
 			&i.PenaltyMinutes,
 			&i.LastSubmissionID,
-			&i.BestSubmissionID,
-			&i.BestAttemptID,
-			&i.LastAttemptID,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -504,7 +501,7 @@ func (q *Queries) ListContestProblemResults(ctx context.Context, contestID int64
 }
 
 const listContestProblemResultsForUsers = `-- name: ListContestProblemResultsForUsers :many
-SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
+SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, updated_at
 FROM contest_problem_results
 WHERE contest_id = $1
   AND user_id = ANY($2::bigint[])
@@ -534,9 +531,6 @@ func (q *Queries) ListContestProblemResultsForUsers(ctx context.Context, arg Lis
 			&i.AcceptedAt,
 			&i.PenaltyMinutes,
 			&i.LastSubmissionID,
-			&i.BestSubmissionID,
-			&i.BestAttemptID,
-			&i.LastAttemptID,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -841,12 +835,12 @@ func (q *Queries) ListContestScoreSnapshotRows(ctx context.Context, arg ListCont
 }
 
 const listContestTerminalSubmissions = `-- name: ListContestTerminalSubmissions :many
-SELECT id, user_id, problem_id, contest_id, status, submitted_at, judged_at, first_judged_at
-FROM submissions
-WHERE contest_id = $1::bigint
-  AND judged_at IS NOT NULL
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-ORDER BY submitted_at, id
+SELECT s.id, s.user_id, s.problem_id, s.contest_id, a.status, s.submitted_at, s.judged_at, s.first_judged_at
+FROM submissions s
+JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE s.contest_id = $1::bigint
+  AND s.status = 'judged'
+ORDER BY s.submitted_at, s.id
 `
 
 type ListContestTerminalSubmissionsRow struct {
@@ -1189,12 +1183,9 @@ INSERT INTO contest_problem_results (
     attempts,
     accepted_at,
     penalty_minutes,
-    last_submission_id,
-    best_submission_id,
-    best_attempt_id,
-    last_attempt_id
+    last_submission_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 ON CONFLICT (contest_id, user_id, problem_id) DO UPDATE
 SET status = EXCLUDED.status,
@@ -1202,11 +1193,8 @@ SET status = EXCLUDED.status,
     accepted_at = EXCLUDED.accepted_at,
     penalty_minutes = EXCLUDED.penalty_minutes,
     last_submission_id = EXCLUDED.last_submission_id,
-    best_submission_id = EXCLUDED.best_submission_id,
-    best_attempt_id = EXCLUDED.best_attempt_id,
-    last_attempt_id = EXCLUDED.last_attempt_id,
     updated_at = now()
-RETURNING contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
+RETURNING contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, updated_at
 `
 
 type UpsertContestProblemResultParams struct {
@@ -1218,9 +1206,6 @@ type UpsertContestProblemResultParams struct {
 	AcceptedAt       pgtype.Timestamptz `db:"accepted_at" json:"accepted_at"`
 	PenaltyMinutes   int32              `db:"penalty_minutes" json:"penalty_minutes"`
 	LastSubmissionID pgtype.Int8        `db:"last_submission_id" json:"last_submission_id"`
-	BestSubmissionID pgtype.Int8        `db:"best_submission_id" json:"best_submission_id"`
-	BestAttemptID    pgtype.Int8        `db:"best_attempt_id" json:"best_attempt_id"`
-	LastAttemptID    pgtype.Int8        `db:"last_attempt_id" json:"last_attempt_id"`
 }
 
 func (q *Queries) UpsertContestProblemResult(ctx context.Context, arg UpsertContestProblemResultParams) (ContestProblemResult, error) {
@@ -1233,9 +1218,6 @@ func (q *Queries) UpsertContestProblemResult(ctx context.Context, arg UpsertCont
 		arg.AcceptedAt,
 		arg.PenaltyMinutes,
 		arg.LastSubmissionID,
-		arg.BestSubmissionID,
-		arg.BestAttemptID,
-		arg.LastAttemptID,
 	)
 	var i ContestProblemResult
 	err := row.Scan(
@@ -1247,9 +1229,6 @@ func (q *Queries) UpsertContestProblemResult(ctx context.Context, arg UpsertCont
 		&i.AcceptedAt,
 		&i.PenaltyMinutes,
 		&i.LastSubmissionID,
-		&i.BestSubmissionID,
-		&i.BestAttemptID,
-		&i.LastAttemptID,
 		&i.UpdatedAt,
 	)
 	return i, err

@@ -34,21 +34,23 @@ type ArtifactRecord struct {
 }
 
 type SubmissionRecord struct {
-	ID               int64
-	UserID           int64
-	ProblemID        int64
-	ContestID        *int64
-	LanguageID       int64
-	TestcaseSetID    int64
-	Status           string
-	SourceArtifactID int64
-	TimeMS           *int32
-	MemoryKB         *int32
-	ErrorMessage     *string
-	SubmittedAt      time.Time
-	JudgedAt         *time.Time
-	FirstJudgedAt    *time.Time
-	UpdatedAt        time.Time
+	ID                 int64
+	UserID             int64
+	ProblemID          int64
+	ContestID          *int64
+	LanguageID         int64
+	TestcaseSetID      int64
+	Status             string
+	SourceArtifactID   int64
+	EffectiveAttemptID *int64
+	// Result fields are read projections, never persisted on submissions.
+	TimeMS        *int32
+	MemoryKB      *int32
+	ErrorMessage  *string
+	SubmittedAt   time.Time
+	JudgedAt      *time.Time
+	FirstJudgedAt *time.Time
+	UpdatedAt     time.Time
 }
 
 type RunRecord struct {
@@ -119,7 +121,6 @@ type JudgeAttemptRecord struct {
 	CheckerHash          *string
 	ValidatorHash        *string
 	Status               string
-	Verdict              *string
 	TimeMS               *int32
 	MemoryKB             *int32
 	FirstFailedCaseIndex *int32
@@ -130,7 +131,6 @@ type JudgeAttemptRecord struct {
 	ErrorClass           *string
 	ErrorMessage         *string
 	Manifest             []byte
-	Metrics              []byte
 	TraceID              *string
 	StartedAt            *time.Time
 	FinishedAt           *time.Time
@@ -152,9 +152,6 @@ type JudgeCaseResultRecord struct {
 	Signal            *string
 	CheckerMessage    *string
 	OutputDiffSummary *string
-	StdoutArtifactID  *int64
-	StderrArtifactID  *int64
-	DiffArtifactID    *int64
 	CreatedAt         time.Time
 }
 
@@ -188,8 +185,8 @@ type SubmissionCursor struct {
 }
 
 type SubmissionListSummary struct {
-	Result        *SubmissionResultRecord
-	LatestAttempt *JudgeAttemptRecord
+	Result           *SubmissionResultRecord
+	EffectiveAttempt *JudgeAttemptRecord
 }
 
 type SQLRepository struct {
@@ -252,9 +249,6 @@ func (r *SQLRepository) ReconcileLanguages(ctx context.Context, profiles []langu
 			Engine:               judge.EngineSOJAgent,
 			EngineLanguageID:     profile.Slug,
 			Name:                 profile.Name,
-			Version:              text(profile.Version),
-			CompileCommand:       text(profile.DisplayCompile()),
-			RunCommand:           text(profile.DisplayRun()),
 			DefaultTimeLimitMs:   int32(profile.TimeLimitMS),
 			DefaultMemoryLimitKb: int32(profile.MemoryLimitKB),
 		}); err != nil {
@@ -371,13 +365,6 @@ func int8Ptr(value *int64) pgtype.Int8 {
 
 func timestamptz(value time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: value, Valid: true}
-}
-
-func judgedAtParam(value time.Time) pgtype.Timestamptz {
-	if value.IsZero() {
-		return pgtype.Timestamptz{}
-	}
-	return timestamptz(value)
 }
 
 func int4Value(value pgtype.Int4) *int32 {

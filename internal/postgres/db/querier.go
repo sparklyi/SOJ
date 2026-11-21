@@ -103,8 +103,7 @@ type Querier interface {
 	GetRefreshTokenByHash(ctx context.Context, tokenHash string) (RefreshToken, error)
 	GetRejudgeBatchByID(ctx context.Context, id int64) (RejudgeBatch, error)
 	GetRunByID(ctx context.Context, id int64) (Run, error)
-	GetSubmissionByID(ctx context.Context, id int64) (Submission, error)
-	GetSubmissionResultBySubmissionID(ctx context.Context, submissionID int64) (SubmissionResult, error)
+	GetSubmissionByID(ctx context.Context, id int64) (GetSubmissionByIDRow, error)
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	IncrementContestScoreRevision(ctx context.Context, id int64) (int64, error)
@@ -136,7 +135,6 @@ type Querier interface {
 	ListJudgeAttemptsBySubmissionID(ctx context.Context, submissionID pgtype.Int8) ([]JudgeAttempt, error)
 	ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID int64) ([]JudgeCaseResult, error)
 	ListLanguages(ctx context.Context, arg ListLanguagesParams) ([]Language, error)
-	ListLatestJudgeAttemptsBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]JudgeAttempt, error)
 	// Run source objects that no run points at.
 	//
 	// These are left by a run whose source was uploaded and whose admission was then
@@ -152,7 +150,7 @@ type Querier interface {
 	ListProblemCheckRunsByProblemID(ctx context.Context, arg ListProblemCheckRunsByProblemIDParams) ([]ProblemCheckRun, error)
 	ListProblemReviewEvents(ctx context.Context, problemID int64) ([]ProblemReviewEvent, error)
 	// Batched submission counts for a page of problems, so a list view never
-	// issues one stats query per row. Hits submissions_problem_status_idx.
+	// issues one stats query per row.
 	ListProblemSubmissionCounts(ctx context.Context, problemIds []int64) ([]ListProblemSubmissionCountsRow, error)
 	ListProblemTags(ctx context.Context, problemID int64) ([]ProblemTag, error)
 	ListProblemTagsByProblemIDs(ctx context.Context, problemIds []int64) ([]ListProblemTagsByProblemIDsRow, error)
@@ -161,9 +159,10 @@ type Querier interface {
 	ListRejudgeBatchItems(ctx context.Context, batchID int64) ([]RejudgeBatchItem, error)
 	ListRejudgeBatches(ctx context.Context, arg ListRejudgeBatchesParams) ([]RejudgeBatch, error)
 	ListScoreboardRegistrations(ctx context.Context, arg ListScoreboardRegistrationsParams) ([]ContestRegistration, error)
-	ListSubmissionResultsBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]SubmissionResult, error)
-	ListSubmissions(ctx context.Context, arg ListSubmissionsParams) ([]Submission, error)
-	ListSubmissionsByUserBefore(ctx context.Context, arg ListSubmissionsByUserBeforeParams) ([]Submission, error)
+	// Callers pass the effective attempt IDs from the submission records they read.
+	ListSubmissionOutcomesByAttemptIDs(ctx context.Context, attemptIds []int64) ([]ListSubmissionOutcomesByAttemptIDsRow, error)
+	ListSubmissions(ctx context.Context, arg ListSubmissionsParams) ([]ListSubmissionsRow, error)
+	ListSubmissionsByUserBefore(ctx context.Context, arg ListSubmissionsByUserBeforeParams) ([]ListSubmissionsByUserBeforeRow, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	LockContestProblemResultProjection(ctx context.Context, arg LockContestProblemResultProjectionParams) (ContestProblemResult, error)
 	LockContestRegistration(ctx context.Context, arg LockContestRegistrationParams) (ContestRegistration, error)
@@ -181,9 +180,8 @@ type Querier interface {
 	MarkJudgeTaskRunning(ctx context.Context, id int64) (JudgeTask, error)
 	MarkRunRunning(ctx context.Context, id int64) (Run, error)
 	MarkStaleRunsSystemError(ctx context.Context, arg MarkStaleRunsSystemErrorParams) ([]Run, error)
-	MarkSubmissionQueued(ctx context.Context, arg MarkSubmissionQueuedParams) (Submission, error)
+	MarkSubmissionQueued(ctx context.Context, id int64) (Submission, error)
 	MarkSubmissionRunning(ctx context.Context, id int64) (Submission, error)
-	MarkSubmissionSystemError(ctx context.Context, arg MarkSubmissionSystemErrorParams) (Submission, error)
 	NextProblemStatementVersion(ctx context.Context, problemID int64) (int32, error)
 	NextTestcaseSetVersion(ctx context.Context, problemID int64) (int32, error)
 	PrepareJudgeTaskForRejudge(ctx context.Context, arg PrepareJudgeTaskForRejudgeParams) (JudgeTask, error)
@@ -212,7 +210,6 @@ type Querier interface {
 	// enablement and limits.
 	UpsertCatalogLanguage(ctx context.Context, arg UpsertCatalogLanguageParams) (Language, error)
 	UpsertContestProblemResult(ctx context.Context, arg UpsertContestProblemResultParams) (ContestProblemResult, error)
-	UpsertSubmissionResult(ctx context.Context, arg UpsertSubmissionResultParams) (SubmissionResult, error)
 }
 
 var _ Querier = (*Queries)(nil)

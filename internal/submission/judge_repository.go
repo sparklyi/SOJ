@@ -91,7 +91,6 @@ func ensureJudgeAttempt(ctx context.Context, q *db.Queries, input EnsureJudgeAtt
 		TestcaseSetHash:  text(input.TestcaseSetHash),
 		Status:           "created",
 		Manifest:         manifest,
-		Metrics:          []byte(`{}`),
 		TraceID:          text(input.TraceID),
 		StartedAt:        timestamptz(startedAt),
 	})
@@ -161,7 +160,7 @@ func completeSubmissionAttempt(ctx context.Context, q *db.Queries, attempt db.Ju
 		return err
 	}
 	record := submissionRecord(submissionRow)
-	if terminalStatus(record.Status) {
+	if terminalStatus(record.Status) || (record.EffectiveAttemptID != nil && attempt.ID <= *record.EffectiveAttemptID) {
 		return nil
 	}
 	projectionLock, err := lockContestProblemProjection(ctx, q, record)
@@ -169,52 +168,18 @@ func completeSubmissionAttempt(ctx context.Context, q *db.Queries, attempt db.Ju
 		return err
 	}
 
-	params := db.UpdateSubmissionStatusParams{
-		Status:       status,
-		TimeMs:       int4(input.Result.TimeMS),
-		MemoryKb:     int4(input.Result.MemoryKB),
-		ErrorMessage: text(input.Result.ErrorMessage),
-		JudgedAt:     judgedAtParam(input.Result.JudgedAt),
-		ID:           attempt.SubmissionID.Int64,
+	// A terminal attempt replaces the effective pointer only after its result
+	// and all case rows have been saved in this same transaction.
+	finished, err := finishJudgeAttempt(ctx, q, attempt, input, status)
+	if err != nil {
+		return err
 	}
-	submissionRow, err = q.UpdateSubmissionStatus(ctx, params)
-	if errors.Is(err, pgx.ErrNoRows) {
-		submissionRow, err = q.GetSubmissionByID(ctx, attempt.SubmissionID.Int64)
-		if err == nil {
-			record = submissionRecord(submissionRow)
-			if terminalStatus(record.Status) {
-				return nil
-			}
-		}
-	}
+	submissionRow, err = publishEffectiveAttempt(ctx, q, record.ID, finished)
 	if err != nil {
 		return err
 	}
 	record = submissionRecord(submissionRow)
 
-	finished, err := finishJudgeAttempt(ctx, q, attempt, input, status)
-	if err != nil {
-		return err
-	}
-	summary := judgeSummary(input.Result)
-	safeSummary, err := json.Marshal(summary)
-	if err != nil {
-		return err
-	}
-	_, err = q.UpsertSubmissionResult(ctx, db.UpsertSubmissionResultParams{
-		SubmissionID:         record.ID,
-		AttemptID:            attempt.ID,
-		Status:               status,
-		TimeMs:               int4(input.Result.TimeMS),
-		MemoryKb:             int4(input.Result.MemoryKB),
-		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
-		FirstFailedGroup:     text(summary.FirstFailedGroup),
-		ErrorClass:           text(summary.ErrorClass),
-		SafeSummary:          safeSummary,
-	})
-	if err != nil {
-		return err
-	}
 	if err := rebuildContestProblemResult(ctx, q, record, projectionLock); err != nil {
 		return err
 	}
@@ -238,11 +203,8 @@ func completeSubmissionAttempt(ctx context.Context, q *db.Queries, attempt db.Ju
 // once.
 func finishJudgeAttempt(ctx context.Context, q *db.Queries, attempt db.JudgeAttempt, input CompleteJudgeAttemptResultInput, status string) (db.JudgeAttempt, error) {
 	summary := judgeSummary(input.Result)
-	manifest, err := judgeManifestJSON(input.Result.Manifest)
-	if err != nil {
-		return db.JudgeAttempt{}, err
-	}
-	metrics, err := json.Marshal(map[string]any{})
+	resultManifest := input.Result.Manifest
+	manifest, err := judgeManifestJSON(resultManifest)
 	if err != nil {
 		return db.JudgeAttempt{}, err
 	}
@@ -253,7 +215,14 @@ func finishJudgeAttempt(ctx context.Context, q *db.Queries, attempt db.JudgeAtte
 	finished, err := q.MarkJudgeAttemptFinished(ctx, db.MarkJudgeAttemptFinishedParams{
 		ID:                   attempt.ID,
 		Status:               status,
-		Verdict:              text(status),
+		JudgeCoreVersion:     text(resultManifest.JudgeCoreVersion),
+		JudgeAgentID:         text(resultManifest.JudgeAgentID),
+		LanguageRuntime:      text(resultManifest.LanguageRuntime),
+		SandboxBackend:       text(resultManifest.SandboxBackend),
+		SandboxProfile:       text(resultManifest.SandboxProfile),
+		TestcaseSetHash:      text(resultManifest.TestcaseSetHash),
+		CheckerHash:          text(resultManifest.CheckerHash),
+		ValidatorHash:        text(resultManifest.ValidatorHash),
 		TimeMs:               int4(input.Result.TimeMS),
 		MemoryKb:             int4(input.Result.MemoryKB),
 		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
@@ -264,7 +233,6 @@ func finishJudgeAttempt(ctx context.Context, q *db.Queries, attempt db.JudgeAtte
 		ErrorClass:           text(summary.ErrorClass),
 		ErrorMessage:         text(input.Result.ErrorMessage),
 		Manifest:             manifest,
-		Metrics:              metrics,
 		TraceID:              text(input.TraceID),
 		FinishedAt:           timestamptz(finishedAt),
 	})
@@ -308,14 +276,6 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 	if err != nil {
 		return db.JudgeAttempt{}, err
 	}
-	safeSummary, err := json.Marshal(summary)
-	if err != nil {
-		return db.JudgeAttempt{}, err
-	}
-	metrics, err := json.Marshal(map[string]any{})
-	if err != nil {
-		return db.JudgeAttempt{}, err
-	}
 
 	finishedAt := result.JudgedAt
 	if finishedAt.IsZero() {
@@ -345,7 +305,6 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 		CheckerHash:          text(result.Manifest.CheckerHash),
 		ValidatorHash:        text(result.Manifest.ValidatorHash),
 		Status:               dbStatus(result.Verdict),
-		Verdict:              text(string(result.Verdict)),
 		TimeMs:               int4(result.TimeMS),
 		MemoryKb:             int4(result.MemoryKB),
 		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
@@ -356,7 +315,6 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 		ErrorClass:           text(summary.ErrorClass),
 		ErrorMessage:         text(result.ErrorMessage),
 		Manifest:             manifest,
-		Metrics:              metrics,
 		TraceID:              text(result.Manifest.TraceID),
 		StartedAt:            timestamptz(finishedAt),
 		FinishedAt:           timestamptz(finishedAt),
@@ -365,10 +323,14 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 		return db.JudgeAttempt{}, err
 	}
 
-	for _, item := range result.Cases {
+	for i, item := range result.Cases {
+		index := item.Index
+		if index == 0 {
+			index = i + 1
+		}
 		_, err := q.CreateJudgeCaseResult(ctx, db.CreateJudgeCaseResultParams{
 			AttemptID:         attempt.ID,
-			CaseIndex:         int32(item.Index),
+			CaseIndex:         int32(index),
 			GroupName:         text(item.GroupName),
 			TestcaseKey:       text(item.TestcaseKey),
 			Status:            dbStatus(item.Verdict),
@@ -385,20 +347,6 @@ func persistJudgeResult(ctx context.Context, q *db.Queries, submission Submissio
 		}
 	}
 
-	_, err = q.UpsertSubmissionResult(ctx, db.UpsertSubmissionResultParams{
-		SubmissionID:         submission.ID,
-		AttemptID:            attempt.ID,
-		Status:               dbStatus(result.Verdict),
-		TimeMs:               int4(result.TimeMS),
-		MemoryKb:             int4(result.MemoryKB),
-		FirstFailedCaseIndex: summary.firstFailedCaseIndex(),
-		FirstFailedGroup:     text(summary.FirstFailedGroup),
-		ErrorClass:           text(summary.ErrorClass),
-		SafeSummary:          safeSummary,
-	})
-	if err != nil {
-		return db.JudgeAttempt{}, err
-	}
 	return attempt, nil
 }
 
@@ -424,12 +372,8 @@ func (s safeJudgeSummary) firstFailedCaseIndex() pgtype.Int4 {
 
 func judgeSummary(result judge.Result) safeJudgeSummary {
 	summary := safeJudgeSummary{
-		Verdict:              string(result.Verdict),
-		TimeMS:               result.TimeMS,
-		MemoryKB:             result.MemoryKB,
 		CompileOutputSummary: truncateSummary(result.CompileOutput),
 		StderrSummary:        truncateSummary(result.Stderr),
-		ErrorMessage:         result.ErrorMessage,
 	}
 	if result.Verdict == judge.VerdictSystemError {
 		summary.ErrorClass = "system_error"
@@ -437,17 +381,17 @@ func judgeSummary(result judge.Result) safeJudgeSummary {
 	if result.Verdict == judge.VerdictCompileError {
 		summary.ErrorClass = "compile_error"
 	}
-	for _, item := range result.Cases {
+	for i, item := range result.Cases {
 		if item.Verdict == judge.VerdictAccepted {
 			continue
 		}
 		index := int32(item.Index)
+		if index == 0 {
+			index = int32(i + 1)
+		}
 		summary.FirstFailedCaseIndex = &index
 		summary.FirstFailedGroup = item.GroupName
 		summary.CheckerMessage = item.CheckerMessage
-		if summary.ErrorMessage == "" {
-			summary.ErrorMessage = item.OutputDiffSummary
-		}
 		break
 	}
 	if summary.CheckerMessage == "" {
@@ -516,9 +460,13 @@ func (r *SQLRepository) ListJudgeCaseResults(ctx context.Context, attemptID int6
 	return out, nil
 }
 
-func (r *SQLRepository) GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error) {
-	row, err := r.q.GetSubmissionResultBySubmissionID(ctx, submissionID)
-	return submissionResultRecord(row), mapNotFound(err, "submission_result.not_found", "submission result not found")
+func publishEffectiveAttempt(ctx context.Context, q *db.Queries, submissionID int64, attempt db.JudgeAttempt) (db.Submission, error) {
+	if !attempt.FinishedAt.Valid || !terminalStatus(attempt.Status) || attempt.Status == statusJudged {
+		return db.Submission{}, fmt.Errorf("judge attempt %d must be finished before publishing a submission outcome", attempt.ID)
+	}
+	return q.UpdateSubmissionStatus(ctx, db.UpdateSubmissionStatusParams{
+		ID: submissionID, EffectiveAttemptID: validInt8(attempt.ID), JudgedAt: attempt.FinishedAt,
+	})
 }
 
 func judgeAttemptRecord(row db.JudgeAttempt) JudgeAttemptRecord {
@@ -542,7 +490,6 @@ func judgeAttemptRecord(row db.JudgeAttempt) JudgeAttemptRecord {
 		CheckerHash:          textValue(row.CheckerHash),
 		ValidatorHash:        textValue(row.ValidatorHash),
 		Status:               row.Status,
-		Verdict:              textValue(row.Verdict),
 		TimeMS:               int4Value(row.TimeMs),
 		MemoryKB:             int4Value(row.MemoryKb),
 		FirstFailedCaseIndex: int4Value(row.FirstFailedCaseIndex),
@@ -553,12 +500,12 @@ func judgeAttemptRecord(row db.JudgeAttempt) JudgeAttemptRecord {
 		ErrorClass:           textValue(row.ErrorClass),
 		ErrorMessage:         textValue(row.ErrorMessage),
 		Manifest:             append([]byte(nil), row.Manifest...),
-		Metrics:              append([]byte(nil), row.Metrics...),
-		TraceID:              textValue(row.TraceID),
-		StartedAt:            timeValue(row.StartedAt),
-		FinishedAt:           timeValue(row.FinishedAt),
-		CreatedAt:            row.CreatedAt.Time,
-		UpdatedAt:            row.UpdatedAt.Time,
+
+		TraceID:    textValue(row.TraceID),
+		StartedAt:  timeValue(row.StartedAt),
+		FinishedAt: timeValue(row.FinishedAt),
+		CreatedAt:  row.CreatedAt.Time,
+		UpdatedAt:  row.UpdatedAt.Time,
 	}
 }
 
@@ -577,27 +524,54 @@ func judgeCaseResultRecord(row db.JudgeCaseResult) JudgeCaseResultRecord {
 		Signal:            textValue(row.Signal),
 		CheckerMessage:    textValue(row.CheckerMessage),
 		OutputDiffSummary: textValue(row.OutputDiffSummary),
-		StdoutArtifactID:  int8Value(row.StdoutArtifactID),
-		StderrArtifactID:  int8Value(row.StderrArtifactID),
-		DiffArtifactID:    int8Value(row.DiffArtifactID),
-		CreatedAt:         row.CreatedAt.Time,
+
+		CreatedAt: row.CreatedAt.Time,
 	}
 }
 
-func submissionResultRecord(row db.SubmissionResult) SubmissionResultRecord {
-	return SubmissionResultRecord{
-		SubmissionID:         row.SubmissionID,
-		AttemptID:            row.AttemptID,
-		Status:               row.Status,
-		TimeMS:               int4Value(row.TimeMs),
-		MemoryKB:             int4Value(row.MemoryKb),
-		FirstFailedCaseIndex: int4Value(row.FirstFailedCaseIndex),
-		FirstFailedGroup:     textValue(row.FirstFailedGroup),
-		ErrorClass:           textValue(row.ErrorClass),
-		SafeSummary:          append([]byte(nil), row.SafeSummary...),
-		CreatedAt:            row.CreatedAt.Time,
-		UpdatedAt:            row.UpdatedAt.Time,
+func submissionResultRecord(attempt JudgeAttemptRecord, firstFailedCaseDiff *string) (SubmissionResultRecord, error) {
+	summary := safeJudgeSummary{Verdict: attempt.Status, FirstFailedCaseIndex: attempt.FirstFailedCaseIndex}
+	if attempt.TimeMS != nil {
+		summary.TimeMS = int(*attempt.TimeMS)
 	}
+	if attempt.MemoryKB != nil {
+		summary.MemoryKB = int(*attempt.MemoryKB)
+	}
+	stringOrEmpty := func(value *string) string {
+		if value == nil {
+			return ""
+		}
+		return *value
+	}
+	summary.CompileOutputSummary = stringOrEmpty(attempt.CompileOutputSummary)
+	summary.StderrSummary = stringOrEmpty(attempt.StderrSummary)
+	summary.FirstFailedGroup = stringOrEmpty(attempt.FirstFailedGroup)
+	summary.CheckerMessage = stringOrEmpty(attempt.CheckerMessage)
+	summary.ErrorClass = stringOrEmpty(attempt.ErrorClass)
+	summary.ErrorMessage = stringOrEmpty(publicAttemptError(attempt))
+	if summary.ErrorMessage == "" && attempt.Status != StatusSystemErr {
+		summary.ErrorMessage = stringOrEmpty(firstFailedCaseDiff)
+	}
+	payload, err := json.Marshal(summary)
+	if err != nil {
+		return SubmissionResultRecord{}, err
+	}
+	return SubmissionResultRecord{
+		SubmissionID: *attempt.SubmissionID, AttemptID: attempt.ID, Status: attempt.Status,
+		TimeMS: attempt.TimeMS, MemoryKB: attempt.MemoryKB, FirstFailedCaseIndex: attempt.FirstFailedCaseIndex,
+		FirstFailedGroup: attempt.FirstFailedGroup, ErrorClass: attempt.ErrorClass, SafeSummary: payload,
+		CreatedAt: attempt.CreatedAt, UpdatedAt: attempt.UpdatedAt,
+	}, nil
+}
+
+// Operational failures may include internal infrastructure details. Keep the
+// original only on the attempt, which is exposed via authorized diagnostics.
+func publicAttemptError(attempt JudgeAttemptRecord) *string {
+	if attempt.Status == StatusSystemErr {
+		message := "judging failed"
+		return &message
+	}
+	return attempt.ErrorMessage
 }
 
 // latestAttemptForSubject finds the attempt a new one would follow, so attempt

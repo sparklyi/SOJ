@@ -21,10 +21,11 @@ func TestGetProblemStatsScopesStatusAggregationToRequestedProblem(t *testing.T) 
 		{name: "generated", query: getProblemStats},
 	} {
 		for _, want := range []string{
-			"SELECT s.status, count(*)::bigint AS count",
+			"SELECT CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END AS status, count(*)::bigint AS count",
 			"FROM submissions s",
+			"LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id",
 			"WHERE s.problem_id = $1",
-			"GROUP BY s.status",
+			"GROUP BY CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END",
 			"coalesce(sum(status_counts.count), 0)::bigint AS total_submissions",
 			"coalesce(sum(status_counts.count) FILTER (WHERE status_counts.status = 'accepted'), 0)::bigint AS accepted_submissions",
 			"jsonb_object_agg(status_counts.status, status_counts.count)",
@@ -99,12 +100,14 @@ func TestTestcaseSetsDropStatusColumn(t *testing.T) {
 		t.Fatalf("testcase set queries still reference the dropped status column:\n%s", generated)
 	}
 
-	migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "000008_drop_testcase_status.up.sql"))
+	baseline, err := os.ReadFile(filepath.Join("..", "..", "migrations", "000001_baseline.up.sql"))
 	if err != nil {
-		t.Fatalf("read drop-testcase-status migration: %v", err)
+		t.Fatalf("read schema baseline: %v", err)
 	}
-	if !strings.Contains(string(migration), "ALTER TABLE testcase_sets DROP COLUMN status") {
-		t.Fatalf("migration does not drop testcase_sets.status:\n%s", migration)
+	_, ddl, ok := strings.Cut(string(baseline), "CREATE TABLE testcase_sets (")
+	ddl, _, closed := strings.Cut(ddl, ";")
+	if !ok || !closed || strings.Contains(ddl, "status") || !strings.Contains(ddl, "is_current") {
+		t.Fatalf("expected testcase_sets.is_current and no status column:\n%s", ddl)
 	}
 }
 

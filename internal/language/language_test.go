@@ -176,7 +176,7 @@ func TestNewRejectsDuplicateAndAppliesDefaults(t *testing.T) {
 	}
 }
 
-func TestRuntimeAndDisplayLabels(t *testing.T) {
+func TestRuntimeLabel(t *testing.T) {
 	catalog, err := New(Profile{
 		Slug:       "go",
 		Name:       "Go",
@@ -192,8 +192,5 @@ func TestRuntimeAndDisplayLabels(t *testing.T) {
 	profile, _ := catalog.Lookup("go")
 	if label := profile.RuntimeLabel(); label != "go@1.24" {
 		t.Fatalf("RuntimeLabel() = %q", label)
-	}
-	if line := profile.DisplayRun(); line != "{{source}}" {
-		t.Fatalf("DisplayRun() = %q", line)
 	}
 }

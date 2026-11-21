@@ -276,9 +276,12 @@ type UpdateLanguageInput struct {
 	DefaultMemoryLimitKB *int32
 }
 
+// statusJudged is a storage-only workflow state, not a verdict.
+const statusJudged = "judged"
+
 func terminalStatus(status string) bool {
 	switch status {
-	case StatusAccepted, StatusWrongAnswer, StatusCompileErr, StatusRuntimeErr, StatusTimeLimit, StatusMemoryLimit, StatusOutputLimit, StatusSystemErr, StatusCanceled:
+	case statusJudged, StatusAccepted, StatusWrongAnswer, StatusCompileErr, StatusRuntimeErr, StatusTimeLimit, StatusMemoryLimit, StatusOutputLimit, StatusSystemErr, StatusCanceled:
 		return true
 	default:
 		return false

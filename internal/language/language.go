@@ -60,12 +60,6 @@ func (p Profile) RuntimeLabel() string {
 	return p.Slug + "@" + p.Version
 }
 
-// DisplayCompile and DisplayRun render argv for the catalog's display columns.
-// The judge never reads those columns; they exist so an administrator can see
-// what a language does.
-func (p Profile) DisplayCompile() string { return strings.Join(p.Compile, " ") }
-func (p Profile) DisplayRun() string     { return strings.Join(p.Run, " ") }
-
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 var placeholderPattern = regexp.MustCompile(`\{\{[A-Za-z_]+\}\}`)

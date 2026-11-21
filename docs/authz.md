@@ -39,7 +39,7 @@ not referenced by a non-test file under `internal/`.
 | `contest_judge` | `contest.read`, `contest.judge` |
 | `admin`, `root` | every permission (full access, synthesized) |
 
-The table above is the `000010_role_permissions.up.sql` seed and can change at
+The table above is the seed in `000001_baseline.up.sql` and can change at
 runtime. `admin` and `root` are full-access roles defined by `fullAccessRoles`:
 they intentionally have no `role_permissions` rows and the resolver expands
 them to the whole directory. `root` is the break-glass account. Neither role has
@@ -150,6 +150,12 @@ source of truth).
   appends one `role.permissions.updated` event (`object_type = 'role'`,
   `object_id = NULL`, `metadata.role/before/after`). Concurrent writes to the
   same role are last-write-wins.
+- Contest role assignments remain contest-scoped. A successful grant or
+  revoke appends `contest.role.granted` or `contest.role.revoked` in the same
+  transaction (`object_type = 'contest'`, `object_id` is the contest ID,
+  `metadata.user_id` is the target user ID as a decimal string, and
+  `metadata.role` is the assigned role code). The shared history remains
+  restricted to callers with `audit.read`.
 
 ### Runtime read path
 

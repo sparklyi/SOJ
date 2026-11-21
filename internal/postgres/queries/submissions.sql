@@ -34,9 +34,10 @@ INSERT INTO submissions (
 RETURNING *;
 
 -- name: GetSubmissionByID :one
-SELECT *
-FROM submissions
-WHERE id = $1;
+SELECT sqlc.embed(s), (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END)::text AS outcome_status
+FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE s.id = $1;
 
 -- name: LockSubmissionByID :one
 SELECT *
@@ -64,7 +65,6 @@ INSERT INTO judge_attempts (
     checker_hash,
     validator_hash,
     status,
-    verdict,
     time_ms,
     memory_kb,
     first_failed_case_index,
@@ -75,7 +75,6 @@ INSERT INTO judge_attempts (
     error_class,
     error_message,
     manifest,
-    metrics,
     trace_id,
     started_at,
     finished_at
@@ -98,7 +97,6 @@ INSERT INTO judge_attempts (
     sqlc.narg('checker_hash'),
     sqlc.narg('validator_hash'),
     sqlc.arg('status'),
-    sqlc.narg('verdict'),
     sqlc.narg('time_ms'),
     sqlc.narg('memory_kb'),
     sqlc.narg('first_failed_case_index'),
@@ -109,7 +107,6 @@ INSERT INTO judge_attempts (
     sqlc.narg('error_class'),
     sqlc.narg('error_message'),
     sqlc.arg('manifest'),
-    sqlc.arg('metrics'),
     sqlc.narg('trace_id'),
     sqlc.narg('started_at'),
     sqlc.narg('finished_at')
@@ -134,11 +131,13 @@ WHERE submission_id = $1
 ORDER BY attempt_no DESC, id DESC
 LIMIT 1;
 
--- name: ListLatestJudgeAttemptsBySubmissionIDs :many
-SELECT DISTINCT ON (submission_id) *
-FROM judge_attempts
-WHERE submission_id = ANY(sqlc.arg('submission_ids')::bigint[])
-ORDER BY submission_id, attempt_no DESC, id DESC;
+-- name: ListSubmissionOutcomesByAttemptIDs :many
+-- Callers pass the effective attempt IDs from the submission records they read.
+SELECT sqlc.embed(a), c.output_diff_summary AS first_failed_case_diff
+FROM judge_attempts a
+LEFT JOIN judge_case_results c
+       ON c.attempt_id = a.id AND c.case_index = a.first_failed_case_index
+WHERE a.id = ANY(sqlc.arg('attempt_ids')::bigint[]);
 
 -- name: GetLatestJudgeAttemptByRunID :one
 SELECT *
@@ -162,7 +161,14 @@ ORDER BY id;
 -- name: MarkJudgeAttemptFinished :one
 UPDATE judge_attempts
 SET status = sqlc.arg('status'),
-    verdict = sqlc.narg('verdict'),
+    judge_core_version = coalesce(sqlc.narg('judge_core_version'), judge_core_version),
+    judge_agent_id = coalesce(sqlc.narg('judge_agent_id'), judge_agent_id),
+    language_runtime = coalesce(sqlc.narg('language_runtime'), language_runtime),
+    sandbox_backend = coalesce(sqlc.narg('sandbox_backend'), sandbox_backend),
+    sandbox_profile = coalesce(sqlc.narg('sandbox_profile'), sandbox_profile),
+    testcase_set_hash = coalesce(sqlc.narg('testcase_set_hash'), testcase_set_hash),
+    checker_hash = coalesce(sqlc.narg('checker_hash'), checker_hash),
+    validator_hash = coalesce(sqlc.narg('validator_hash'), validator_hash),
     time_ms = sqlc.narg('time_ms'),
     memory_kb = sqlc.narg('memory_kb'),
     first_failed_case_index = sqlc.narg('first_failed_case_index'),
@@ -173,8 +179,7 @@ SET status = sqlc.arg('status'),
     error_class = sqlc.narg('error_class'),
     error_message = sqlc.narg('error_message'),
     manifest = sqlc.arg('manifest'),
-    metrics = sqlc.arg('metrics'),
-    trace_id = sqlc.narg('trace_id'),
+    trace_id = coalesce(sqlc.narg('trace_id'), trace_id),
     finished_at = coalesce(sqlc.narg('finished_at'), finished_at, now()),
     updated_at = now()
 WHERE id = sqlc.arg('id')
@@ -193,10 +198,7 @@ INSERT INTO judge_case_results (
     exit_code,
     signal,
     checker_message,
-    output_diff_summary,
-    stdout_artifact_id,
-    stderr_artifact_id,
-    diff_artifact_id
+    output_diff_summary
 ) VALUES (
     sqlc.arg('attempt_id'),
     sqlc.arg('case_index'),
@@ -209,10 +211,7 @@ INSERT INTO judge_case_results (
     sqlc.narg('exit_code'),
     sqlc.narg('signal'),
     sqlc.narg('checker_message'),
-    sqlc.narg('output_diff_summary'),
-    sqlc.narg('stdout_artifact_id'),
-    sqlc.narg('stderr_artifact_id'),
-    sqlc.narg('diff_artifact_id')
+    sqlc.narg('output_diff_summary')
 )
 RETURNING *;
 
@@ -222,49 +221,7 @@ FROM judge_case_results
 WHERE attempt_id = $1
 ORDER BY case_index;
 
--- name: UpsertSubmissionResult :one
-INSERT INTO submission_results (
-    submission_id,
-    attempt_id,
-    status,
-    time_ms,
-    memory_kb,
-    first_failed_case_index,
-    first_failed_group,
-    error_class,
-    safe_summary
-) VALUES (
-    sqlc.arg('submission_id'),
-    sqlc.arg('attempt_id'),
-    sqlc.arg('status'),
-    sqlc.narg('time_ms'),
-    sqlc.narg('memory_kb'),
-    sqlc.narg('first_failed_case_index'),
-    sqlc.narg('first_failed_group'),
-    sqlc.narg('error_class'),
-    sqlc.arg('safe_summary')
-)
-ON CONFLICT (submission_id) DO UPDATE
-SET attempt_id = EXCLUDED.attempt_id,
-    status = EXCLUDED.status,
-    time_ms = EXCLUDED.time_ms,
-    memory_kb = EXCLUDED.memory_kb,
-    first_failed_case_index = EXCLUDED.first_failed_case_index,
-    first_failed_group = EXCLUDED.first_failed_group,
-    error_class = EXCLUDED.error_class,
-    safe_summary = EXCLUDED.safe_summary,
-    updated_at = now()
-RETURNING *;
 
--- name: GetSubmissionResultBySubmissionID :one
-SELECT *
-FROM submission_results
-WHERE submission_id = $1;
-
--- name: ListSubmissionResultsBySubmissionIDs :many
-SELECT *
-FROM submission_results
-WHERE submission_id = ANY(sqlc.arg('submission_ids')::bigint[]);
 
 -- name: GetReadyTestcaseSetByID :one
 SELECT *
@@ -273,32 +230,35 @@ WHERE id = $1
   AND problem_id = $2;
 
 -- name: ListSubmissions :many
-SELECT *
-FROM submissions
-WHERE (sqlc.narg('user_id')::bigint IS NULL OR user_id = sqlc.narg('user_id')::bigint)
-  AND (sqlc.narg('problem_id')::bigint IS NULL OR problem_id = sqlc.narg('problem_id')::bigint)
-  AND (sqlc.narg('contest_id')::bigint IS NULL OR contest_id = sqlc.narg('contest_id')::bigint)
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
-ORDER BY submitted_at DESC, id DESC
+SELECT sqlc.embed(s), (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END)::text AS outcome_status
+FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE (sqlc.narg('user_id')::bigint IS NULL OR s.user_id = sqlc.narg('user_id')::bigint)
+  AND (sqlc.narg('problem_id')::bigint IS NULL OR s.problem_id = sqlc.narg('problem_id')::bigint)
+  AND (sqlc.narg('contest_id')::bigint IS NULL OR s.contest_id = sqlc.narg('contest_id')::bigint)
+  AND (sqlc.narg('status')::text IS NULL OR (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END) = sqlc.narg('status')::text)
+ORDER BY s.submitted_at DESC, s.id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
 -- name: CountSubmissions :one
 SELECT count(*)::bigint
-FROM submissions
-WHERE (sqlc.narg('user_id')::bigint IS NULL OR user_id = sqlc.narg('user_id')::bigint)
-  AND (sqlc.narg('problem_id')::bigint IS NULL OR problem_id = sqlc.narg('problem_id')::bigint)
-  AND (sqlc.narg('contest_id')::bigint IS NULL OR contest_id = sqlc.narg('contest_id')::bigint)
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
+FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE (sqlc.narg('user_id')::bigint IS NULL OR s.user_id = sqlc.narg('user_id')::bigint)
+  AND (sqlc.narg('problem_id')::bigint IS NULL OR s.problem_id = sqlc.narg('problem_id')::bigint)
+  AND (sqlc.narg('contest_id')::bigint IS NULL OR s.contest_id = sqlc.narg('contest_id')::bigint)
+  AND (sqlc.narg('status')::text IS NULL OR (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END) = sqlc.narg('status')::text);
 
 -- name: ListSubmissionsByUserBefore :many
-SELECT *
-FROM submissions
-WHERE user_id = sqlc.arg('user_id')
-  AND (submitted_at, id) < (
+SELECT sqlc.embed(s), (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END)::text AS outcome_status
+FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE s.user_id = sqlc.arg('user_id')
+  AND (s.submitted_at, s.id) < (
       sqlc.arg('before_submitted_at')::timestamptz,
       sqlc.arg('before_id')::bigint
   )
-ORDER BY submitted_at DESC, id DESC
+ORDER BY s.submitted_at DESC, s.id DESC
 LIMIT sqlc.arg('limit');
 
 -- name: EnsureContestProblemResultProjection :exec
@@ -329,16 +289,14 @@ FOR UPDATE;
 
 -- name: ListContestProblemSubmissionsForProjection :many
 SELECT s.id,
-       s.status,
-       s.submitted_at,
-       sr.attempt_id,
-       s.first_judged_at
+       a.status,
+       s.submitted_at
 FROM submissions s
-LEFT JOIN submission_results sr ON sr.submission_id = s.id
+JOIN judge_attempts a ON a.id = s.effective_attempt_id
 WHERE s.contest_id = sqlc.arg('contest_id')
   AND s.user_id = sqlc.arg('user_id')
   AND s.problem_id = sqlc.arg('problem_id')
-  AND s.status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND s.status = 'judged'
 ORDER BY s.submitted_at, s.id;
 
 -- name: CreateRejudgeBatch :one
@@ -443,14 +401,14 @@ SELECT *
 FROM submissions
 WHERE problem_id = $1
   AND contest_id IS NULL
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND status = 'judged'
 ORDER BY id;
 
 -- name: ListEligibleContestSubmissionsForRejudge :many
 SELECT *
 FROM submissions
 WHERE contest_id = $1
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND status = 'judged'
 ORDER BY id;
 
 -- name: CreateRejudgeBatchItem :one
@@ -492,14 +450,10 @@ RETURNING *;
 -- name: PrepareSubmissionForRejudge :one
 UPDATE submissions
 SET status = 'queued',
-    time_ms = NULL,
-    memory_kb = NULL,
-    score = 0,
-    error_message = NULL,
     judged_at = NULL,
     updated_at = now()
 WHERE id = $1
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND status = 'judged'
 RETURNING *;
 
 -- name: StartRejudgeBatchItem :one
@@ -555,16 +509,13 @@ RETURNING *;
 
 -- name: RestoreSubmissionAfterCanceledRejudge :one
 UPDATE submissions
-SET status = submission_results.status,
-    time_ms = submission_results.time_ms,
-    memory_kb = submission_results.memory_kb,
-    score = submission_results.score,
-    error_message = NULL,
-    judged_at = coalesce(submissions.judged_at, submission_results.updated_at),
+SET status = 'judged',
+    judged_at = judge_attempts.finished_at,
     updated_at = now()
-FROM submission_results
+FROM judge_attempts
 WHERE submissions.id = sqlc.arg('submission_id')
-  AND submission_results.submission_id = submissions.id
+  AND judge_attempts.id = submissions.effective_attempt_id
+  AND judge_attempts.submission_id = submissions.id
   AND submissions.status = 'queued'
 RETURNING submissions.*;
 
@@ -600,23 +551,13 @@ RETURNING rejudge_batches.*;
 
 -- name: UpdateSubmissionStatus :one
 UPDATE submissions
-SET status = sqlc.arg('status'),
-    time_ms = sqlc.narg('time_ms'),
-    memory_kb = sqlc.narg('memory_kb'),
-    error_message = sqlc.narg('error_message'),
-    judged_at = CASE
-        WHEN judged_at IS NULL
-          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce(sqlc.narg('judged_at'), now())
-        ELSE judged_at
-    END,
-    first_judged_at = CASE
-        WHEN first_judged_at IS NULL
-          AND sqlc.arg('status')::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce(sqlc.narg('judged_at'), now())
-        ELSE first_judged_at
-    END,
+SET status = 'judged',
+    effective_attempt_id = sqlc.arg('effective_attempt_id'),
+    judged_at = coalesce(sqlc.narg('judged_at'), now()),
+    first_judged_at = coalesce(first_judged_at, sqlc.narg('judged_at'), now()),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND status IN ('queued', 'running')
 RETURNING *;
 
 -- name: MarkSubmissionRunning :one
@@ -630,21 +571,9 @@ RETURNING *;
 -- name: MarkSubmissionQueued :one
 UPDATE submissions
 SET status = 'queued',
-    error_message = sqlc.arg('error_message'),
     updated_at = now()
 WHERE id = sqlc.arg('id')
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-RETURNING *;
-
--- name: MarkSubmissionSystemError :one
-UPDATE submissions
-SET status = 'system_error',
-    error_message = sqlc.arg('error_message'),
-    judged_at = CASE WHEN judged_at IS NULL THEN now() ELSE judged_at END,
-    first_judged_at = CASE WHEN first_judged_at IS NULL THEN now() ELSE first_judged_at END,
-    updated_at = now()
-WHERE id = sqlc.arg('id')
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND status IN ('queued', 'running')
 RETURNING *;
 
 -- name: CreateJudgeTask :one
@@ -782,14 +711,15 @@ WITH recovered AS (
       AND EXISTS (
           SELECT 1
           FROM submissions
+          JOIN judge_attempts ON judge_attempts.id = submissions.effective_attempt_id
           WHERE submissions.id = judge_tasks.submission_id
-            AND submissions.status = 'system_error'
+            AND submissions.status = 'judged'
+            AND judge_attempts.status = 'system_error'
       )
     RETURNING *
 ), recovered_submissions AS (
     UPDATE submissions
     SET status = 'queued',
-        error_message = sqlc.arg('last_error'),
         judged_at = NULL,
         updated_at = now()
     FROM recovered
@@ -823,13 +753,12 @@ WITH reset_tasks AS (
           SELECT 1
           FROM submissions
           WHERE submissions.id = judge_tasks.submission_id
-            AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+            AND submissions.status IN ('queued', 'running')
       )
     RETURNING *
 ), reset_submissions AS (
     UPDATE submissions
     SET status = 'queued',
-        error_message = sqlc.arg('last_error'),
         updated_at = now()
     FROM reset_tasks
     WHERE submissions.id = reset_tasks.submission_id

@@ -23,7 +23,6 @@ type contestProjectionSubmission struct {
 	ID          int64
 	Status      string
 	SubmittedAt time.Time
-	AttemptID   *int64
 }
 
 type contestProblemProjection struct {
@@ -32,9 +31,6 @@ type contestProblemProjection struct {
 	AcceptedAt       *time.Time
 	PenaltyMinutes   int32
 	LastSubmissionID *int64
-	BestSubmissionID *int64
-	BestAttemptID    *int64
-	LastAttemptID    *int64
 }
 
 func lockContestProblemProjection(ctx context.Context, q *db.Queries, submission SubmissionRecord) (contestProblemProjectionLock, error) {
@@ -102,7 +98,6 @@ func rebuildContestProblemResult(ctx context.Context, q *db.Queries, submission 
 			ID:          row.ID,
 			Status:      row.Status,
 			SubmittedAt: row.SubmittedAt.Time,
-			AttemptID:   int8Value(row.AttemptID),
 		})
 	}
 	projection := buildContestProblemProjection(lock.contestStart, items)
@@ -119,9 +114,6 @@ func rebuildContestProblemResult(ctx context.Context, q *db.Queries, submission 
 		AcceptedAt:       acceptedAt,
 		PenaltyMinutes:   projection.PenaltyMinutes,
 		LastSubmissionID: int8Ptr(projection.LastSubmissionID),
-		BestSubmissionID: int8Ptr(projection.BestSubmissionID),
-		BestAttemptID:    int8Ptr(projection.BestAttemptID),
-		LastAttemptID:    int8Ptr(projection.LastAttemptID),
 	})
 	if err != nil {
 		return err
@@ -170,7 +162,6 @@ func buildContestProblemProjection(contestStart time.Time, submissions []contest
 		projection.Attempts++
 		lastSubmissionID := submission.ID
 		projection.LastSubmissionID = &lastSubmissionID
-		projection.LastAttemptID = copyInt64Ptr(submission.AttemptID)
 		if submission.Status != StatusAccepted {
 			continue
 		}
@@ -178,8 +169,6 @@ func buildContestProblemProjection(contestStart time.Time, submissions []contest
 		projection.Status = StatusAccepted
 		projection.AcceptedAt = &acceptedAt
 		projection.PenaltyMinutes = int32(acceptedAt.Sub(contestStart).Minutes()) + (projection.Attempts-1)*20
-		projection.BestSubmissionID = &lastSubmissionID
-		projection.BestAttemptID = copyInt64Ptr(submission.AttemptID)
 		break
 	}
 	return projection

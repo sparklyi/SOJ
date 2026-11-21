@@ -137,7 +137,7 @@ func (taskFailureStoreStub) MarkSubmissionSystemError(_ context.Context, id int6
 	return SubmissionRecord{ID: id, Status: StatusSystemErr}, nil
 }
 
-func (taskFailureStoreStub) MarkSubmissionQueued(_ context.Context, id int64, _ string) (SubmissionRecord, error) {
+func (taskFailureStoreStub) MarkSubmissionQueued(_ context.Context, id int64) (SubmissionRecord, error) {
 	return SubmissionRecord{ID: id, Status: StatusQueued}, nil
 }
 
