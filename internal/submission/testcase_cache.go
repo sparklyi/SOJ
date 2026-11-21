@@ -85,7 +85,7 @@ func (c *TestcaseCache) Load(ctx context.Context, ref judgeevents.TestcaseSetRef
 	}
 	if cases, ok := c.get(key); ok {
 		c.record("hit")
-		return cases, nil
+		return applyTestcaseLimits(cases, ref), nil
 	}
 	c.record("miss")
 
@@ -100,8 +100,6 @@ func (c *TestcaseCache) Load(ctx context.Context, ref judgeevents.TestcaseSetRef
 		started := time.Now()
 		cases, findings := problem.LoadArchive(bytes.NewReader(data), int64(len(data)), problem.ArchiveOptions{
 			ExpectedSHA256: ref.ChecksumSHA256,
-			TimeLimit:      time.Duration(ref.TimeLimitMS) * time.Millisecond,
-			MemoryKB:       ref.MemoryKB,
 		})
 		err = problem.ArchiveFindingsError(findings)
 		if c.metrics != nil {
@@ -126,7 +124,17 @@ func (c *TestcaseCache) Load(ctx context.Context, ref judgeevents.TestcaseSetRef
 		c.record("error")
 		return nil, errors.New("testcase cache load returned an unexpected value type")
 	}
-	return cloneTestcases(cases), nil
+	return applyTestcaseLimits(cloneTestcases(cases), ref), nil
+}
+
+// Apply event-specific limits only to the caller's copy, not the shared archive.
+func applyTestcaseLimits(cases []problem.Testcase, ref judgeevents.TestcaseSetRef) []problem.Testcase {
+	limit := time.Duration(ref.TimeLimitMS) * time.Millisecond
+	for i := range cases {
+		cases[i].TimeLimit = limit
+		cases[i].MemoryKB = ref.MemoryKB
+	}
+	return cases
 }
 
 func testcaseCacheKeyFromRef(ref judgeevents.TestcaseSetRef) (testcaseCacheKey, error) {

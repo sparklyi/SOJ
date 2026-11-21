@@ -42,6 +42,33 @@ func TestTestcaseCacheReusesParsedCases(t *testing.T) {
 	}
 }
 
+func TestTestcaseCacheUsesLimitsFromEachReference(t *testing.T) {
+	archive := testcaseCacheArchive(t, map[string]string{"1.in": "1\n", "1.ans": "1\n"})
+	store := &testcaseCacheStorage{objects: map[string][]byte{"cases.zip": archive}}
+	cache := NewTestcaseCache(store, TestcaseCacheOptions{})
+	ref := testcaseCacheRef(archive, 3)
+
+	first, err := cache.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("first Load: %v", err)
+	}
+	ref.TimeLimitMS = 2500
+	ref.MemoryKB = 131072
+	second, err := cache.Load(t.Context(), ref)
+	if err != nil {
+		t.Fatalf("second Load: %v", err)
+	}
+	if got := second[0]; got.TimeLimit != 2500*time.Millisecond || got.MemoryKB != 131072 {
+		t.Errorf("cache hit limits = (%v, %d KB), want (2.5s, 131072 KB)", got.TimeLimit, got.MemoryKB)
+	}
+	if got := first[0]; got.TimeLimit != time.Second || got.MemoryKB != 262144 {
+		t.Errorf("first result limits = (%v, %d KB), want (1s, 262144 KB)", got.TimeLimit, got.MemoryKB)
+	}
+	if store.gets != 1 {
+		t.Errorf("storage gets = %d, want 1", store.gets)
+	}
+}
+
 func TestTestcaseCacheSingleflightLoadsOnce(t *testing.T) {
 	archive := testcaseCacheArchive(t, map[string]string{
 		"1.in":  "1\n",
