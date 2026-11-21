@@ -215,11 +215,13 @@ CANCELED_DB_ROWS="$(compose exec -T postgres psql -U soj -d soj -Atc "
 select count(*)
 from rejudge_batch_items rbi
 join submissions s on s.id = rbi.submission_id
+join judge_attempts a on a.id = s.effective_attempt_id
 join judge_tasks jt on jt.id = rbi.task_id
 where rbi.batch_id = $CANCEL_REJUDGE_BATCH_ID
   and rbi.submission_id = $SUBMISSION_ID
   and rbi.status = 'canceled'
-  and s.status = 'accepted'
+  and s.status = 'judged'
+  and a.status = 'accepted'
   and jt.status = 'done';
 " | tr -d '\r[:space:]')"
 if [[ "$CANCELED_DB_ROWS" != "1" ]]; then
@@ -281,22 +283,19 @@ ASYNC_DB_ROWS="$(compose exec -T postgres psql -U soj -d soj -Atc "
 select count(*)
 from submissions s
 join judge_tasks jt on jt.submission_id = s.id
-join judge_attempts ja on ja.submission_id = s.id and ja.task_id = jt.id
-join submission_results sr on sr.submission_id = s.id and sr.attempt_id = ja.id
+join judge_attempts ja on ja.id = s.effective_attempt_id and ja.task_id = jt.id
 where s.id in ($SUBMISSION_ID, $CONTEST_SUBMISSION_ID)
-  and s.status = 'accepted'
+  and s.status = 'judged'
   and ja.status = 'accepted'
-  and sr.status = 'accepted'
   and jt.status = 'done';
 " | tr -d '\r[:space:]')"
 if [[ "$ASYNC_DB_ROWS" != "2" ]]; then
   echo "async judge DB state rows = $ASYNC_DB_ROWS, want 2" >&2
   compose exec -T postgres psql -U soj -d soj -c "
-select s.id as submission_id, s.status as submission_status, jt.status as task_status, ja.id as attempt_id, ja.status as attempt_status, sr.status as result_status
+select s.id as submission_id, s.status as submission_status, jt.status as task_status, ja.id as attempt_id, ja.status as attempt_status
 from submissions s
 left join judge_tasks jt on jt.submission_id = s.id
-left join judge_attempts ja on ja.submission_id = s.id
-left join submission_results sr on sr.submission_id = s.id
+left join judge_attempts ja on ja.id = s.effective_attempt_id
 where s.id in ($SUBMISSION_ID, $CONTEST_SUBMISSION_ID)
 order by s.id, ja.id;
 " >&2

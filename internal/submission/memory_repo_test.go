@@ -24,11 +24,9 @@ type memoryRepo struct {
 	attempts                  map[int64]JudgeAttemptRecord
 	attemptKeys               map[string]int64
 	cases                     map[int64][]JudgeCaseResultRecord
-	results                   map[int64]SubmissionResultRecord
 	processedEvents           map[string]bool
 	submissionUpdates         int
 	submissionSummaryLoads    int
-	submissionResultReads     int
 	latestJudgeAttemptReads   int
 	judgeCaseResultReads      int
 	listSubmissionCalls       int
@@ -48,7 +46,6 @@ func newMemoryRepo() *memoryRepo {
 		attempts:        make(map[int64]JudgeAttemptRecord),
 		attemptKeys:     make(map[string]int64),
 		cases:           make(map[int64][]JudgeCaseResultRecord),
-		results:         make(map[int64]SubmissionResultRecord),
 		processedEvents: make(map[string]bool),
 	}
 }
@@ -175,35 +172,30 @@ func (r *memoryRepo) ListSubmissionsByUserBefore(ctx context.Context, userID int
 	}
 	return rows, nil
 }
-func (r *memoryRepo) ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error) {
+func (r *memoryRepo) ListSubmissionSummaries(_ context.Context, attemptIDs []int64) (map[int64]SubmissionListSummary, error) {
 	r.submissionSummaryLoads++
-	summaries := make(map[int64]SubmissionListSummary, len(submissionIDs))
-	for _, submissionID := range submissionIDs {
-		if result, ok := r.results[submissionID]; ok {
-			summary := summaries[submissionID]
-			summary.Result = &result
-			summaries[submissionID] = summary
-		}
-		if !includeAttempts {
+	summaries := make(map[int64]SubmissionListSummary, len(attemptIDs))
+	for _, attemptID := range attemptIDs {
+		attempt, ok := r.attempts[attemptID]
+		if !ok || attempt.SubmissionID == nil {
 			continue
 		}
-		var latest JudgeAttemptRecord
-		for _, attempt := range r.attempts {
-			if attempt.SubmissionID == nil || *attempt.SubmissionID != submissionID {
-				continue
-			}
-			if latest.ID == 0 || attempt.AttemptNo > latest.AttemptNo || (attempt.AttemptNo == latest.AttemptNo && attempt.ID > latest.ID) {
-				latest = attempt
+		var caseDiff *string
+		for _, item := range r.cases[attemptID] {
+			if attempt.FirstFailedCaseIndex != nil && item.CaseIndex == *attempt.FirstFailedCaseIndex {
+				caseDiff = item.OutputDiffSummary
+				break
 			}
 		}
-		if latest.ID != 0 {
-			summary := summaries[submissionID]
-			summary.LatestAttempt = &latest
-			summaries[submissionID] = summary
+		result, err := submissionResultRecord(attempt, caseDiff)
+		if err != nil {
+			return nil, err
 		}
+		summaries[attemptID] = SubmissionListSummary{Result: &result, EffectiveAttempt: &attempt}
 	}
 	return summaries, nil
 }
+
 func (r *memoryRepo) MarkSubmissionRunning(ctx context.Context, id int64) (SubmissionRecord, error) {
 	row := r.submissions[id]
 	if row.Status == StatusQueued {
@@ -212,32 +204,24 @@ func (r *memoryRepo) MarkSubmissionRunning(ctx context.Context, id int64) (Submi
 	r.submissions[id] = row
 	return row, nil
 }
-func (r *memoryRepo) MarkSubmissionQueued(ctx context.Context, id int64, reason string) (SubmissionRecord, error) {
+func (r *memoryRepo) MarkSubmissionQueued(ctx context.Context, id int64) (SubmissionRecord, error) {
 	row := r.submissions[id]
 	if !terminalStatus(row.Status) {
 		row.Status = StatusQueued
-		row.ErrorMessage = stringPtr(reason)
 	}
 	r.submissions[id] = row
 	return row, nil
 }
 func (r *memoryRepo) MarkSubmissionSystemError(ctx context.Context, id int64, reason string) (SubmissionRecord, error) {
-	row := r.submissions[id]
-	if !terminalStatus(row.Status) {
-		row.Status = StatusSystemErr
-		row.ErrorMessage = stringPtr(reason)
+	if row := r.submissions[id]; terminalStatus(row.Status) {
+		return row, nil
 	}
-	r.submissions[id] = row
-	return row, nil
+	return r.CompleteSubmissionWithResult(ctx, id, judge.Result{Verdict: judge.VerdictSystemError, ErrorMessage: reason})
 }
 func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result) (SubmissionRecord, error) {
 	row := r.submissions[id]
 	row.Status = dbStatus(result.Verdict)
-	row.TimeMS = int32Ptr(int32(result.TimeMS))
-	row.MemoryKB = int32Ptr(int32(result.MemoryKB))
-	row.ErrorMessage = stringPtr(result.ErrorMessage)
 	r.submissionUpdates++
-	r.submissions[id] = row
 	attemptNo := int32(1)
 	for _, attempt := range r.attempts {
 		if attempt.SubmissionID != nil && *attempt.SubmissionID == id && attempt.AttemptNo >= attemptNo {
@@ -262,7 +246,6 @@ func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64,
 		CheckerHash:          stringPtr(result.Manifest.CheckerHash),
 		ValidatorHash:        stringPtr(result.Manifest.ValidatorHash),
 		Status:               dbStatus(result.Verdict),
-		Verdict:              stringPtr(string(result.Verdict)),
 		TimeMS:               int32Ptr(int32(result.TimeMS)),
 		MemoryKB:             int32Ptr(int32(result.MemoryKB)),
 		FirstFailedCaseIndex: firstFailedCaseIndex(result.Cases),
@@ -292,16 +275,9 @@ func (r *memoryRepo) CompleteSubmissionWithResult(ctx context.Context, id int64,
 			OutputDiffSummary: stringPtr(item.OutputDiffSummary),
 		})
 	}
-	r.results[id] = SubmissionResultRecord{
-		SubmissionID:         id,
-		AttemptID:            attemptID,
-		Status:               row.Status,
-		TimeMS:               int32Ptr(int32(result.TimeMS)),
-		MemoryKB:             int32Ptr(int32(result.MemoryKB)),
-		FirstFailedCaseIndex: firstFailedCaseIndex(result.Cases),
-		FirstFailedGroup:     firstFailedGroup(result.Cases),
-		SafeSummary:          []byte(`{"verdict":"` + string(result.Verdict) + `"}`),
-	}
+	row.EffectiveAttemptID = &attemptID
+	r.submissions[id] = row
+	applyEffectiveOutcome(&row, attempt)
 	return row, nil
 }
 func (r *memoryRepo) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submissionID int64) (JudgeAttemptRecord, error) {
@@ -338,14 +314,6 @@ func (r *memoryRepo) GetLatestJudgeAttemptByRunID(ctx context.Context, runID int
 func (r *memoryRepo) ListJudgeCaseResults(ctx context.Context, attemptID int64) ([]JudgeCaseResultRecord, error) {
 	r.judgeCaseResultReads++
 	return append([]JudgeCaseResultRecord(nil), r.cases[attemptID]...), nil
-}
-func (r *memoryRepo) GetSubmissionResult(ctx context.Context, submissionID int64) (SubmissionResultRecord, error) {
-	r.submissionResultReads++
-	row, ok := r.results[submissionID]
-	if !ok {
-		return SubmissionResultRecord{}, apperror.NotFound("submission_result.not_found", "submission result not found")
-	}
-	return row, nil
 }
 
 // sameSubject reports whether an existing attempt belongs to the same submission
@@ -435,7 +403,6 @@ func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input Compl
 		run.ErrorMessage = stringPtr(input.Result.ErrorMessage)
 		r.runs[run.ID] = run
 		attempt.Status = run.Status
-		attempt.Verdict = stringPtr(run.Status)
 		r.attempts[attemptID] = attempt
 		r.processedEvents[input.EventID] = true
 		return true, nil
@@ -445,15 +412,15 @@ func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input Compl
 	}
 	submission := r.submissions[*attempt.SubmissionID]
 	status := dbStatus(input.Status)
+	if terminalStatus(submission.Status) || (submission.EffectiveAttemptID != nil && attemptID <= *submission.EffectiveAttemptID) {
+		return false, nil
+	}
 	submission.Status = status
-	submission.TimeMS = int32Ptr(int32(input.Result.TimeMS))
-	submission.MemoryKB = int32Ptr(int32(input.Result.MemoryKB))
-	submission.ErrorMessage = stringPtr(input.Result.ErrorMessage)
+	submission.EffectiveAttemptID = &attemptID
 	r.submissions[submission.ID] = submission
 	r.submissionUpdates++
 
 	attempt.Status = status
-	attempt.Verdict = stringPtr(status)
 	attempt.TimeMS = int32Ptr(int32(input.Result.TimeMS))
 	attempt.MemoryKB = int32Ptr(int32(input.Result.MemoryKB))
 	attempt.TraceID = stringPtr(input.TraceID)
@@ -463,14 +430,7 @@ func (r *memoryRepo) CompleteJudgeAttemptResult(ctx context.Context, input Compl
 	}
 	attempt.FinishedAt = &finishedAt
 	r.attempts[attemptID] = attempt
-	r.results[submission.ID] = SubmissionResultRecord{
-		SubmissionID: submission.ID,
-		AttemptID:    attemptID,
-		Status:       status,
-		TimeMS:       int32Ptr(int32(input.Result.TimeMS)),
-		MemoryKB:     int32Ptr(int32(input.Result.MemoryKB)),
-		SafeSummary:  []byte(`{"verdict":"` + status + `"}`),
-	}
+
 	r.processedEvents[input.EventID] = true
 	return true, nil
 }
@@ -566,7 +526,6 @@ func (r *memoryRepo) RecoverDeadJudgeTask(ctx context.Context, id int64, nextRun
 	row.LastError = reason
 	r.tasks[id] = row
 	submission.Status = StatusQueued
-	submission.ErrorMessage = stringPtr(reason)
 	submission.JudgedAt = nil
 	r.submissions[*row.SubmissionID] = submission
 	return row, nil
@@ -703,7 +662,6 @@ func (r *memoryRepo) ResetStaleJudgeTasks(ctx context.Context, staleBefore time.
 		}
 		if submission := r.submissions[*row.SubmissionID]; submission.Status == StatusRunning {
 			submission.Status = StatusQueued
-			submission.ErrorMessage = stringPtr(reason)
 			r.submissions[*row.SubmissionID] = submission
 		}
 		rows = append(rows, row)

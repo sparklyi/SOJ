@@ -26,7 +26,7 @@ This mode runs real Go/C++ toolchains in the judge-agent container, but it is no
 
 ## Judge Event Flow
 
-The worker process has two production loops: a dispatcher that claims `judge_tasks` and publishes `judge.request.v2` references to the `redis.stream`, and a result consumer that reads `judge.result.v1` from `redis.result_stream`. The result consumer acknowledges Redis only after the PostgreSQL transaction updates `judge_attempts`, `submission_results`, `judge_tasks`, and contest projections.
+The worker process has two production loops: a dispatcher that claims `judge_tasks` and publishes `judge.request.v2` references to the `redis.stream`, and a result consumer that reads `judge.result.v1` from `redis.result_stream`. The result consumer acknowledges Redis only after the PostgreSQL transaction updates `judge_attempts`, the submission’s effective-attempt pointer, `judge_tasks`, and contest projections.
 
 `soj-judge-agent` consumes requests from `redis.stream` and publishes results to `redis.result_stream`. The agent does not receive business database credentials. The result consumer group is created from Redis stream ID `0` so already-published result events are not skipped during first startup or recovery.
 
@@ -255,3 +255,5 @@ docker compose -f deploy/docker-compose.yaml up --build -d
 ```
 
 `down -v` deletes PostgreSQL, Redis, and MinIO volumes.
+
+Schema initialization and existing database cutover are described in [Schema cutover](schema-cutover.md).

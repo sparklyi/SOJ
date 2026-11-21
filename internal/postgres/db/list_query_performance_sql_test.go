@@ -10,18 +10,18 @@ import (
 )
 
 func TestInitialSchemaAddsIndexableSearchAndOrderingPaths(t *testing.T) {
-	schema := readInitialSchema(t)
+	schema := strings.Join(strings.Fields(readInitialSchema(t)), " ")
 
 	for _, want := range []string{
 		"CREATE EXTENSION IF NOT EXISTS pg_trgm",
-		"CREATE INDEX problems_public_catalog_recent_idx\n    ON problems (created_at DESC, id DESC)\n    WHERE status = 'published' AND visibility = 'public'",
+		"CREATE INDEX problems_public_catalog_recent_idx\n    ON problems (created_at DESC, id DESC)\n    WHERE ((status = 'published') AND (visibility = 'public'))",
 		"CREATE INDEX problems_recent_idx\n    ON problems (created_at DESC, id DESC)",
 		"CREATE INDEX problems_owner_recent_idx\n    ON problems (owner_user_id, created_at DESC, id DESC)",
 		"CREATE INDEX submissions_user_submitted_id_idx\n    ON submissions (user_id, submitted_at DESC, id DESC)",
 		"CREATE INDEX submissions_problem_submitted_id_idx\n    ON submissions (problem_id, submitted_at DESC, id DESC)",
 		"CREATE INDEX submissions_contest_submitted_id_idx\n    ON submissions (contest_id, submitted_at DESC, id DESC)",
 		"CREATE INDEX submissions_recent_idx\n    ON submissions (submitted_at DESC, id DESC)",
-		"CREATE INDEX contests_public_recent_idx\n    ON contests (start_at DESC, id DESC)\n    WHERE visibility = 'public'",
+		"CREATE INDEX contests_public_recent_idx\n    ON contests (start_at DESC, id DESC)\n    WHERE (visibility = 'public')",
 		"CREATE INDEX contests_recent_idx\n    ON contests (start_at DESC, id DESC)",
 		"CREATE INDEX users_recent_idx\n    ON users (created_at DESC, id DESC)",
 		"CREATE INDEX users_email_trgm_idx\n    ON users USING gin (email gin_trgm_ops)",
@@ -30,7 +30,7 @@ func TestInitialSchemaAddsIndexableSearchAndOrderingPaths(t *testing.T) {
 		"CREATE INDEX problems_slug_trgm_idx\n    ON problems USING gin (slug gin_trgm_ops)",
 		"CREATE INDEX contests_title_trgm_idx\n    ON contests USING gin (title gin_trgm_ops)",
 	} {
-		if !strings.Contains(schema, want) {
+		if !strings.Contains(schema, strings.Join(strings.Fields(want), " ")) {
 			t.Fatalf("initial schema missing %q", want)
 		}
 	}
@@ -38,9 +38,9 @@ func TestInitialSchemaAddsIndexableSearchAndOrderingPaths(t *testing.T) {
 
 func TestOwnSubmissionCursorQueryUsesSeekPagination(t *testing.T) {
 	for _, want := range []string{
-		"WHERE user_id = $1",
-		"(submitted_at, id) < (\n      $2::timestamptz,\n      $3::bigint\n  )",
-		"ORDER BY submitted_at DESC, id DESC",
+		"WHERE s.user_id = $1",
+		"(s.submitted_at, s.id) < (\n      $2::timestamptz,\n      $3::bigint\n  )",
+		"ORDER BY s.submitted_at DESC, s.id DESC",
 		"LIMIT $4",
 	} {
 		if !strings.Contains(listSubmissionsByUserBefore, want) {
@@ -142,12 +142,12 @@ func TestCursorQueryBuildersAppendOnlyActiveFilters(t *testing.T) {
 			Limit:             51,
 		})
 		assertIndexableCursorQuery(t, query, []string{
-			"user_id = $1::bigint",
-			"problem_id = $2::bigint",
-			"contest_id = $3::bigint",
-			"status = $4::text",
-			"(submitted_at, id) < ($5::timestamptz, $6::bigint)",
-			"ORDER BY submitted_at DESC, id DESC",
+			"s.user_id = $1::bigint",
+			"s.problem_id = $2::bigint",
+			"s.contest_id = $3::bigint",
+			"(" + submissionOutcomeStatus + ") = $4::text",
+			"(s.submitted_at, s.id) < ($5::timestamptz, $6::bigint)",
+			"ORDER BY s.submitted_at DESC, s.id DESC",
 			"LIMIT $7",
 		})
 		assertQueryArgs(t, args, []any{int64(10), int64(20), int64(30), "accepted", before, int64(168), int32(51)})

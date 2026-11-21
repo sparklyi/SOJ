@@ -63,7 +63,7 @@ func createSubmissionRow(ctx context.Context, q *db.Queries, arg SubmissionRecor
 
 func (r *SQLRepository) GetSubmission(ctx context.Context, id int64) (SubmissionRecord, error) {
 	row, err := r.q.GetSubmissionByID(ctx, id)
-	return submissionRecord(row), mapNotFound(err, "submission.not_found", "submission not found")
+	return submissionRecordWithStatus(row.Submission, row.OutcomeStatus), mapNotFound(err, "submission.not_found", "submission not found")
 }
 
 func (r *SQLRepository) ListSubmissions(ctx context.Context, input ListSubmissionsInput) ([]SubmissionRecord, int64, error) {
@@ -90,7 +90,7 @@ func (r *SQLRepository) ListSubmissions(ctx context.Context, input ListSubmissio
 	}
 	out := make([]SubmissionRecord, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, submissionRecord(row))
+		out = append(out, submissionRecordWithStatus(row.Submission, row.OutcomeStatus))
 	}
 	return out, total, nil
 }
@@ -114,7 +114,7 @@ func (r *SQLRepository) ListSubmissionsByCursor(ctx context.Context, input ListS
 	}
 	out := make([]SubmissionRecord, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, submissionRecord(row))
+		out = append(out, submissionRecordWithStatus(row.Submission, row.OutcomeStatus))
 	}
 	return out, nil
 }
@@ -131,41 +131,33 @@ func (r *SQLRepository) ListSubmissionsByUserBefore(ctx context.Context, userID 
 	}
 	out := make([]SubmissionRecord, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, submissionRecord(row))
+		out = append(out, submissionRecordWithStatus(row.Submission, row.OutcomeStatus))
 	}
 	return out, nil
 }
 
-func (r *SQLRepository) ListSubmissionSummaries(ctx context.Context, submissionIDs []int64, includeAttempts bool) (map[int64]SubmissionListSummary, error) {
-	summaries := make(map[int64]SubmissionListSummary, len(submissionIDs))
-	if len(submissionIDs) == 0 {
+// ListSubmissionSummaries uses the exact effective pointers captured by the
+// preceding submission read. A concurrent rejudge cannot mix another attempt's
+// diagnostics or cases with those rows.
+func (r *SQLRepository) ListSubmissionSummaries(ctx context.Context, attemptIDs []int64) (map[int64]SubmissionListSummary, error) {
+	summaries := make(map[int64]SubmissionListSummary, len(attemptIDs))
+	if len(attemptIDs) == 0 {
 		return summaries, nil
 	}
-	resultRows, err := r.q.ListSubmissionResultsBySubmissionIDs(ctx, submissionIDs)
+	rows, err := r.q.ListSubmissionOutcomesByAttemptIDs(ctx, attemptIDs)
 	if err != nil {
 		return nil, err
 	}
-	for _, row := range resultRows {
-		result := submissionResultRecord(row)
-		summary := summaries[result.SubmissionID]
-		summary.Result = &result
-		summaries[result.SubmissionID] = summary
-	}
-	if !includeAttempts {
-		return summaries, nil
-	}
-	attemptRows, err := r.q.ListLatestJudgeAttemptsBySubmissionIDs(ctx, submissionIDs)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range attemptRows {
-		attempt := judgeAttemptRecord(row)
+	for _, row := range rows {
+		attempt := judgeAttemptRecord(row.JudgeAttempt)
 		if attempt.SubmissionID == nil {
 			continue
 		}
-		summary := summaries[*attempt.SubmissionID]
-		summary.LatestAttempt = &attempt
-		summaries[*attempt.SubmissionID] = summary
+		result, err := submissionResultRecord(attempt, textValue(row.FirstFailedCaseDiff))
+		if err != nil {
+			return nil, err
+		}
+		summaries[attempt.ID] = SubmissionListSummary{Result: &result, EffectiveAttempt: &attempt}
 	}
 	return summaries, nil
 }
@@ -175,8 +167,8 @@ func (r *SQLRepository) MarkSubmissionRunning(ctx context.Context, id int64) (Su
 	return submissionRecord(row), err
 }
 
-func (r *SQLRepository) MarkSubmissionQueued(ctx context.Context, id int64, reason string) (SubmissionRecord, error) {
-	row, err := r.q.MarkSubmissionQueued(ctx, db.MarkSubmissionQueuedParams{ID: id, ErrorMessage: text(reason)})
+func (r *SQLRepository) MarkSubmissionQueued(ctx context.Context, id int64) (SubmissionRecord, error) {
+	row, err := r.q.MarkSubmissionQueued(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r.GetSubmission(ctx, id)
 	}
@@ -209,33 +201,17 @@ func markSubmissionSystemError(ctx context.Context, q *db.Queries, id int64, rea
 	if err != nil {
 		return SubmissionRecord{}, err
 	}
-	row, err := q.MarkSubmissionSystemError(ctx, db.MarkSubmissionSystemErrorParams{ID: id, ErrorMessage: text(reason)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return record, nil
-	}
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	record = submissionRecord(row)
-	if err := rebuildContestProblemResult(ctx, q, record, projectionLock); err != nil {
-		return SubmissionRecord{}, err
-	}
-	return record, nil
+	// Dispatch and transport failures can happen before any worker creates a
+	// judge attempt. Give a terminal failure the same single outcome source.
+	return completeLockedSubmission(ctx, q, record, projectionLock, judge.Result{
+		Verdict: judge.VerdictSystemError, ErrorMessage: reason,
+	})
 }
 
 func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int64, result judge.Result) (SubmissionRecord, error) {
 	if r.txRunner == nil {
 		return SubmissionRecord{}, errors.New("transaction runner is required to complete submission with judge result")
 	}
-	params := db.UpdateSubmissionStatusParams{
-		Status:       dbStatus(result.Verdict),
-		TimeMs:       int4(result.TimeMS),
-		MemoryKb:     int4(result.MemoryKB),
-		ErrorMessage: text(result.ErrorMessage),
-		JudgedAt:     judgedAtParam(result.JudgedAt),
-		ID:           id,
-	}
-
 	var record SubmissionRecord
 	err := postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
 		q := r.q.WithTx(tx)
@@ -251,32 +227,35 @@ func (r *SQLRepository) CompleteSubmissionWithResult(ctx context.Context, id int
 		if err != nil {
 			return err
 		}
-		row, err := q.UpdateSubmissionStatus(ctx, params)
-		if errors.Is(err, pgx.ErrNoRows) {
-			row, err = q.GetSubmissionByID(ctx, id)
-			record = submissionRecord(row)
-			return err
-		}
-		record = submissionRecord(row)
-		if err != nil {
-			return err
-		}
-		if _, err := persistJudgeResult(ctx, q, record, result); err != nil {
-			return err
-		}
-		return rebuildContestProblemResult(ctx, q, record, projectionLock)
+		record, err = completeLockedSubmission(ctx, q, record, projectionLock, result)
+		return err
 	})
 	return record, err
 }
 
-func copyInt64Ptr(value *int64) *int64 {
-	if value == nil {
-		return nil
+func completeLockedSubmission(ctx context.Context, q *db.Queries, record SubmissionRecord, projectionLock contestProblemProjectionLock, result judge.Result) (SubmissionRecord, error) {
+	attempt, err := persistJudgeResult(ctx, q, record, result)
+	if err != nil {
+		return SubmissionRecord{}, err
 	}
-	result := *value
-	return &result
+	row, err := publishEffectiveAttempt(ctx, q, record.ID, attempt)
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	record = submissionRecordWithStatus(row, attempt.Status)
+	if err := rebuildContestProblemResult(ctx, q, record, projectionLock); err != nil {
+		return SubmissionRecord{}, err
+	}
+	applyEffectiveOutcome(&record, judgeAttemptRecord(attempt))
+	return record, nil
 }
 
 func submissionRecord(row db.Submission) SubmissionRecord {
-	return SubmissionRecord{ID: row.ID, UserID: row.UserID, ProblemID: row.ProblemID, ContestID: int8Value(row.ContestID), LanguageID: row.LanguageID, TestcaseSetID: row.TestcaseSetID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, TimeMS: int4Value(row.TimeMs), MemoryKB: int4Value(row.MemoryKb), ErrorMessage: textValue(row.ErrorMessage), SubmittedAt: row.SubmittedAt.Time, JudgedAt: timeValue(row.JudgedAt), FirstJudgedAt: timeValue(row.FirstJudgedAt), UpdatedAt: row.UpdatedAt.Time}
+	return SubmissionRecord{ID: row.ID, UserID: row.UserID, ProblemID: row.ProblemID, ContestID: int8Value(row.ContestID), LanguageID: row.LanguageID, TestcaseSetID: row.TestcaseSetID, Status: row.Status, SourceArtifactID: row.SourceArtifactID.Int64, EffectiveAttemptID: int8Value(row.EffectiveAttemptID), SubmittedAt: row.SubmittedAt.Time, JudgedAt: timeValue(row.JudgedAt), FirstJudgedAt: timeValue(row.FirstJudgedAt), UpdatedAt: row.UpdatedAt.Time}
+}
+
+func submissionRecordWithStatus(row db.Submission, status string) SubmissionRecord {
+	record := submissionRecord(row)
+	record.Status = status
+	return record
 }

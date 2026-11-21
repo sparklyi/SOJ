@@ -2,7 +2,6 @@ package submission
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -15,9 +14,7 @@ type submissionReaderStore interface {
 	ListSubmissions(context.Context, ListSubmissionsInput) ([]SubmissionRecord, int64, error)
 	ListSubmissionsByCursor(context.Context, ListSubmissionsInput) ([]SubmissionRecord, error)
 	ListSubmissionsByUserBefore(context.Context, int64, SubmissionCursor, int32) ([]SubmissionRecord, error)
-	ListSubmissionSummaries(context.Context, []int64, bool) (map[int64]SubmissionListSummary, error)
-	GetSubmissionResult(context.Context, int64) (SubmissionResultRecord, error)
-	GetLatestJudgeAttemptBySubmissionID(context.Context, int64) (JudgeAttemptRecord, error)
+	ListSubmissionSummaries(context.Context, []int64) (map[int64]SubmissionListSummary, error)
 	ListJudgeCaseResults(context.Context, int64) ([]JudgeCaseResultRecord, error)
 	GetArtifact(context.Context, int64) (ArtifactRecord, error)
 }
@@ -211,30 +208,25 @@ func (s *SubmissionReader) submissionListViews(ctx context.Context, actor auth.A
 	if err != nil {
 		return nil, err
 	}
-	submissionIDs := make([]int64, 0, len(records))
-	includeAttempts := false
+	attemptIDs := make([]int64, 0, len(records))
 	for _, record := range records {
-		visibility := visibilities[record.ID]
-		if visibility.ShowResult && terminalStatus(record.Status) {
-			submissionIDs = append(submissionIDs, record.ID)
-			includeAttempts = includeAttempts || visibility.ShowAdminDiagnostics
+		if terminalStatus(record.Status) && visibilities[record.ID].ShowResult && record.EffectiveAttemptID != nil {
+			attemptIDs = append(attemptIDs, *record.EffectiveAttemptID)
 		}
 	}
-	summaries, err := s.store.ListSubmissionSummaries(ctx, submissionIDs, includeAttempts)
-	if err != nil {
-		return nil, err
+	var summaries map[int64]SubmissionListSummary
+	if len(attemptIDs) > 0 {
+		summaries, err = s.store.ListSubmissionSummaries(ctx, attemptIDs)
+		if err != nil {
+			return nil, err
+		}
 	}
 	views := make([]SubmissionView, 0, len(records))
 	for _, record := range records {
 		visibility := visibilities[record.ID]
 		view := SubmissionView{Submission: record, Visibility: visibility.Visibility}
-		if visibility.ShowResult && terminalStatus(record.Status) {
-			if summary, ok := summaries[record.ID]; ok && summary.Result != nil {
-				view.Result = summary.Result
-				if visibility.ShowAdminDiagnostics && summary.LatestAttempt != nil {
-					view.AdminDiagnostics = summary.LatestAttempt
-				}
-			}
+		if terminalStatus(record.Status) && visibility.ShowResult && record.EffectiveAttemptID != nil {
+			applySubmissionSummary(&view, visibility, summaries[*record.EffectiveAttemptID])
 		}
 		views = append(views, view)
 	}
@@ -246,40 +238,40 @@ func (s *SubmissionReader) submissionView(ctx context.Context, actor auth.Actor,
 	if err != nil {
 		return SubmissionView{}, err
 	}
-
 	view := SubmissionView{Submission: record, Visibility: visibility.Visibility}
-	if !visibility.ShowResult || !terminalStatus(record.Status) {
+
+	if !terminalStatus(record.Status) || !visibility.ShowResult || record.EffectiveAttemptID == nil {
 		return view, nil
 	}
-	result, err := s.store.GetSubmissionResult(ctx, record.ID)
+	summaries, err := s.store.ListSubmissionSummaries(ctx, []int64{*record.EffectiveAttemptID})
 	if err != nil {
-		var appErr *apperror.Error
-		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
-			return view, nil
-		}
 		return SubmissionView{}, err
 	}
-	view.Result = &result
-
-	attempt, err := s.store.GetLatestJudgeAttemptBySubmissionID(ctx, record.ID)
-	if err != nil {
-		var appErr *apperror.Error
-		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
-			return view, nil
-		}
-		return SubmissionView{}, err
-	}
-	if visibility.ShowAdminDiagnostics {
-		view.AdminDiagnostics = &attempt
-	}
-	if visibility.ShowCases {
-		cases, err := s.store.ListJudgeCaseResults(ctx, attempt.ID)
+	applySubmissionSummary(&view, visibility, summaries[*record.EffectiveAttemptID])
+	if visibility.ShowCases && view.Result != nil {
+		view.Cases, err = s.store.ListJudgeCaseResults(ctx, view.Result.AttemptID)
 		if err != nil {
 			return SubmissionView{}, err
 		}
-		view.Cases = cases
 	}
 	return view, nil
+}
+
+func applySubmissionSummary(view *SubmissionView, visibility SubmissionResultVisibility, summary SubmissionListSummary) {
+	if summary.Result == nil || summary.EffectiveAttempt == nil || summary.Result.SubmissionID != view.Submission.ID {
+		return
+	}
+	view.Result = summary.Result
+	applyEffectiveOutcome(&view.Submission, *summary.EffectiveAttempt)
+	if visibility.ShowAdminDiagnostics {
+		view.AdminDiagnostics = summary.EffectiveAttempt
+	}
+}
+
+func applyEffectiveOutcome(record *SubmissionRecord, attempt JudgeAttemptRecord) {
+	record.TimeMS = attempt.TimeMS
+	record.MemoryKB = attempt.MemoryKB
+	record.ErrorMessage = publicAttemptError(attempt)
 }
 
 func (s *SubmissionReader) submissionListVisibilities(ctx context.Context, actor auth.Actor, records []SubmissionRecord) (map[int64]SubmissionResultVisibility, error) {

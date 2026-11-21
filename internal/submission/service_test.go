@@ -96,11 +96,12 @@ func TestCompleteSubmissionPersistsJudgeEvidence(t *testing.T) {
 		t.Fatalf("case results = %+v", cases)
 	}
 
-	projection, err := repo.GetSubmissionResult(context.Background(), 1)
+	summaries, err := repo.ListSubmissionSummaries(context.Background(), []int64{attempt.ID})
 	if err != nil {
-		t.Fatalf("GetSubmissionResult returned error: %v", err)
+		t.Fatalf("ListSubmissionSummaries returned error: %v", err)
 	}
-	if projection.AttemptID != attempt.ID || projection.Status != StatusWrongAnswer || projection.FirstFailedCaseIndex == nil || *projection.FirstFailedCaseIndex != 2 {
+	projection := summaries[attempt.ID].Result
+	if projection == nil || projection.AttemptID != attempt.ID || projection.Status != StatusWrongAnswer || projection.FirstFailedCaseIndex == nil || *projection.FirstFailedCaseIndex != 2 {
 		t.Fatalf("projection = %+v attempt = %+v", projection, attempt)
 	}
 	if !bytes.Contains(projection.SafeSummary, []byte(`"verdict":"wrong_answer"`)) {
@@ -665,14 +666,14 @@ func TestWorkerRetryAndDeadLetterSynchronizeSubmissionStatus(t *testing.T) {
 	if err := worker.ProcessMessage(ctx, queue.Message{ID: "1-0", TaskID: 7}); err != nil {
 		t.Fatalf("ProcessMessage returned error: %v", err)
 	}
-	if repo.tasks[7].Status != "pending" || repo.submissions[9].Status != StatusQueued || repo.submissions[9].ErrorMessage == nil {
+	if repo.tasks[7].Status != "pending" || repo.submissions[9].Status != StatusQueued || repo.tasks[7].LastError == "" {
 		t.Fatalf("retry task=%+v submission=%+v", repo.tasks[7], repo.submissions[9])
 	}
 
 	if err := worker.ProcessMessage(ctx, queue.Message{ID: "2-0", TaskID: 7}); err != nil {
 		t.Fatalf("ProcessMessage returned error: %v", err)
 	}
-	if repo.tasks[7].Status != "dead" || repo.submissions[9].Status != StatusSystemErr || repo.submissions[9].ErrorMessage == nil {
+	if repo.tasks[7].Status != "dead" || repo.submissions[9].Status != StatusSystemErr || repo.submissions[9].EffectiveAttemptID == nil || repo.attempts[*repo.submissions[9].EffectiveAttemptID].ErrorMessage == nil {
 		t.Fatalf("dead task=%+v submission=%+v", repo.tasks[7], repo.submissions[9])
 	}
 }
@@ -807,8 +808,8 @@ func TestListSubmissionsBuildsBatchedSummariesWithoutCaseDetails(t *testing.T) {
 			t.Fatalf("submission %d is missing admin diagnostics", view.Submission.ID)
 		}
 	}
-	if repo.submissionSummaryLoads != 1 || repo.submissionResultReads != 0 || repo.latestJudgeAttemptReads != 0 || repo.judgeCaseResultReads != 0 {
-		t.Fatalf("list detail reads: summaries=%d results=%d attempts=%d cases=%d, want 1/0/0/0", repo.submissionSummaryLoads, repo.submissionResultReads, repo.latestJudgeAttemptReads, repo.judgeCaseResultReads)
+	if repo.submissionSummaryLoads != 1 || repo.latestJudgeAttemptReads != 0 || repo.judgeCaseResultReads != 0 {
+		t.Fatalf("list detail reads: summaries=%d attempts=%d cases=%d, want 1/0/0", repo.submissionSummaryLoads, repo.latestJudgeAttemptReads, repo.judgeCaseResultReads)
 	}
 	if policy.batchCalls != 1 || policy.singleCalls != 0 {
 		t.Fatalf("contest visibility calls: batch=%d single=%d, want 1/0", policy.batchCalls, policy.singleCalls)
@@ -1061,15 +1062,15 @@ func seedSubmissionListSummaries(repo *memoryRepo, userID, contestID int64) {
 		submissionID := id
 		attemptID := id + 100
 		repo.submissions[submissionID] = SubmissionRecord{
-			ID:          submissionID,
-			UserID:      userID,
-			ProblemID:   11,
-			ContestID:   &contestID,
-			LanguageID:  71,
-			Status:      StatusAccepted,
-			SubmittedAt: time.Unix(id, 0).UTC(),
+			ID:                 submissionID,
+			UserID:             userID,
+			ProblemID:          11,
+			ContestID:          &contestID,
+			LanguageID:         71,
+			Status:             StatusAccepted,
+			SubmittedAt:        time.Unix(id, 0).UTC(),
+			EffectiveAttemptID: &attemptID,
 		}
-		repo.results[submissionID] = SubmissionResultRecord{SubmissionID: submissionID, AttemptID: attemptID, Status: StatusAccepted}
 		repo.attempts[attemptID] = JudgeAttemptRecord{ID: attemptID, SubmissionID: &submissionID, AttemptNo: 1, Status: StatusAccepted}
 		repo.cases[attemptID] = []JudgeCaseResultRecord{{ID: attemptID + 100, AttemptID: attemptID, CaseIndex: 1, Status: StatusAccepted, Score: 100}}
 	}
@@ -1288,8 +1289,7 @@ func TestFrozenContestSubmissionHidesResultForContestant(t *testing.T) {
 
 func TestQueuedRejudgeSubmissionDoesNotExposePreviousResult(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, Status: StatusQueued}
-	repo.results[1] = SubmissionResultRecord{SubmissionID: 1, AttemptID: 9, Status: StatusAccepted}
+	repo.submissions[1] = SubmissionRecord{ID: 1, UserID: 5, ProblemID: 11, Status: StatusQueued, EffectiveAttemptID: int64Ptr(9)}
 	repo.attempts[9] = JudgeAttemptRecord{ID: 9, SubmissionID: int64Ptr(1), Status: StatusAccepted}
 	service := newServiceForTest(serviceTestOptions{Repository: repo})
 

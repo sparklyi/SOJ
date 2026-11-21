@@ -8,22 +8,15 @@ import (
 )
 
 func TestTerminalStatusUpdatesAreGuardedInSQL(t *testing.T) {
-	terminalGuard := "status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')"
-	for name, query := range map[string]string{
-		"UpdateSubmissionStatus": updateSubmissionStatus,
-		"UpdateRunStatus":        updateRunStatus,
-	} {
-		if !strings.Contains(query, terminalGuard) {
-			t.Fatalf("%s missing terminal guard:\n%s", name, query)
-		}
+	if !strings.Contains(updateRunStatus, "status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')") {
+		t.Fatalf("run update must not overwrite a terminal verdict: %s", updateRunStatus)
 	}
-	for _, want := range []string{"first_judged_at", "coalesce($", "judged_at"} {
+	for _, want := range []string{"SET status = 'judged'", "effective_attempt_id =", "first_judged_at = coalesce(first_judged_at", "judged_at = coalesce(", "AND status IN ('queued', 'running')"} {
 		if !strings.Contains(updateSubmissionStatus, want) {
 			t.Fatalf("UpdateSubmissionStatus missing %q:\n%s", want, updateSubmissionStatus)
 		}
 	}
 }
-
 func TestResetStaleJudgeTasksSQLResetsTasksAndSubmissions(t *testing.T) {
 	for _, want := range []string{
 		"UPDATE judge_tasks",
@@ -46,7 +39,8 @@ func TestRecoverDeadJudgeTaskSQLQueuesOnlyDeadSystemErrorTasks(t *testing.T) {
 		"attempts = 0",
 		"WHERE judge_tasks.id = $3",
 		"status = 'dead'",
-		"submissions.status = 'system_error'",
+		"submissions.status = 'judged'",
+		"judge_attempts.status = 'system_error'",
 		"UPDATE submissions",
 		"status = 'queued'",
 		"judged_at = NULL",
@@ -109,27 +103,37 @@ func TestJudgeTaskDispatchSQLHasStrictClaimAndMarkBoundaries(t *testing.T) {
 	}
 }
 
-func TestJudgeResultSchemaHasDurableAttemptAndProjectionTables(t *testing.T) {
+func TestJudgeResultSchemaHasDurableOwnedEffectiveAttempt(t *testing.T) {
 	schema := readInitialSchema(t)
 	for _, want := range []string{
 		"CREATE TABLE judge_attempts",
 		"CREATE TABLE judge_case_results",
-		"CHECK ((submission_id IS NOT NULL)::int + (run_id IS NOT NULL)::int = 1)",
 		"CREATE UNIQUE INDEX judge_attempts_submission_attempt_uidx",
 		"CREATE UNIQUE INDEX judge_attempts_run_attempt_uidx",
 		"CREATE UNIQUE INDEX judge_case_results_attempt_case_uidx",
-		"submission_id bigint NOT NULL REFERENCES submissions(id) ON DELETE CASCADE",
-		"attempt_id bigint NOT NULL REFERENCES judge_attempts(id) ON DELETE CASCADE",
-		"PRIMARY KEY (submission_id)",
-		"safe_summary jsonb NOT NULL DEFAULT '{}'::jsonb",
+		"FOREIGN KEY (attempt_id) REFERENCES judge_attempts(id) ON DELETE CASCADE",
+		"UNIQUE (submission_id, id)",
+		"FOREIGN KEY (id, effective_attempt_id) REFERENCES judge_attempts(submission_id, id)",
+		"CHECK (status IN ('queued', 'running', 'judged'))",
 	} {
 		if !strings.Contains(schema, want) {
-			t.Fatalf("initial schema missing %q", want)
+			t.Fatalf("baseline schema missing %q", want)
 		}
 	}
-	submissionResultsSchema := tableSchema(t, schema, "submission_results", "contest_problem_results")
-	if strings.Contains(submissionResultsSchema, "details jsonb NOT NULL DEFAULT '{}'::jsonb") {
-		t.Fatalf("submission_results should not keep generic details jsonb")
+	if strings.Contains(schema, "CREATE TABLE submission_results") {
+		t.Fatal("submission results must not be stored in a second table")
+	}
+	for table, fields := range map[string][]string{
+		"submissions":        {"time_ms", "memory_kb", "score", "error_message"},
+		"judge_attempts":     {"metrics", "score", "verdict"},
+		"judge_case_results": {"stdout_artifact_id", "stderr_artifact_id", "diff_artifact_id"},
+	} {
+		body := tableSchema(t, schema, table)
+		for _, field := range fields {
+			if strings.Contains(body, "\n    "+field+" ") {
+				t.Fatalf("%s must not store %s", table, field)
+			}
+		}
 	}
 }
 
@@ -149,17 +153,14 @@ func TestArtifactSchemaSupportsJudgeArtifacts(t *testing.T) {
 	}
 }
 
-func TestContestProjectionReferencesJudgeAttempts(t *testing.T) {
-	schema := readInitialSchema(t)
-	for _, want := range []string{
-		"best_submission_id bigint REFERENCES submissions(id)",
-		"best_attempt_id bigint REFERENCES judge_attempts(id)",
-		"last_attempt_id bigint REFERENCES judge_attempts(id)",
-		"CREATE INDEX contest_problem_results_best_attempt_idx",
-		"CREATE INDEX contest_problem_results_last_attempt_idx",
-	} {
-		if !strings.Contains(schema, want) {
-			t.Fatalf("contest projection schema missing %q", want)
+func TestContestProjectionStoresOnlyCurrentFields(t *testing.T) {
+	schema := tableSchema(t, readInitialSchema(t), "contest_problem_results")
+	if !strings.Contains(schema, "last_submission_id bigint") {
+		t.Fatal("projection must retain the last submission shown in a scoreboard cell")
+	}
+	for _, field := range []string{"best_submission_id", "best_attempt_id", "last_attempt_id"} {
+		if strings.Contains(schema, field) {
+			t.Fatalf("projection still stores unused %s", field)
 		}
 	}
 }
@@ -180,8 +181,8 @@ func TestContestProjectionQueriesSerializeAndRebuildFromCurrentResults(t *testin
 		t.Fatalf("contest projection queries must serialize and advance contest revision")
 	}
 	for _, want := range []string{
-		"LEFT JOIN submission_results sr ON sr.submission_id = s.id",
-		"s.status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')",
+		"JOIN judge_attempts a ON a.id = s.effective_attempt_id",
+		"s.status = 'judged'",
 		"ORDER BY s.submitted_at, s.id",
 	} {
 		if !strings.Contains(listContestProblemSubmissionsForProjection, want) {
@@ -209,47 +210,31 @@ func TestJudgeResultQueriesExposeAttemptsCasesAndProjection(t *testing.T) {
 		"MarkJudgeAttemptFinished":            markJudgeAttemptFinished,
 		"CreateJudgeCaseResult":               createJudgeCaseResult,
 		"ListJudgeCaseResultsByAttemptID":     listJudgeCaseResultsByAttemptID,
-		"UpsertSubmissionResult":              upsertSubmissionResult,
-		"GetSubmissionResultBySubmissionID":   getSubmissionResultBySubmissionID,
 	} {
-		if !strings.Contains(query, "judge_") && !strings.Contains(query, "submission_results") {
+		if !strings.Contains(query, "judge_") {
 			t.Fatalf("%s does not target judge result tables:\n%s", name, query)
 		}
 	}
-	if !strings.Contains(upsertSubmissionResult, "ON CONFLICT (submission_id) DO UPDATE") {
-		t.Fatalf("UpsertSubmissionResult should maintain current projection:\n%s", upsertSubmissionResult)
-	}
 }
 
-func TestSubmissionListSummaryQueriesAreBatchedWithoutCases(t *testing.T) {
-	for name, query := range map[string]string{
-		"ListSubmissionResultsBySubmissionIDs":   listSubmissionResultsBySubmissionIDs,
-		"ListLatestJudgeAttemptsBySubmissionIDs": listLatestJudgeAttemptsBySubmissionIDs,
-	} {
-		if !strings.Contains(query, "WHERE submission_id = ANY($1::bigint[])") {
-			t.Fatalf("%s does not batch by submission ID:\n%s", name, query)
-		}
-		if strings.Contains(query, "judge_case_results") {
-			t.Fatalf("%s must not fetch case details:\n%s", name, query)
-		}
-	}
+func TestSubmissionListSummaryUsesBatchedEffectiveAttempts(t *testing.T) {
 	for _, want := range []string{
-		"SELECT DISTINCT ON (submission_id)",
-		"ORDER BY submission_id, attempt_no DESC, id DESC",
+		"WHERE a.id = ANY($1::bigint[])",
+		"c.attempt_id = a.id AND c.case_index = a.first_failed_case_index",
 	} {
-		if !strings.Contains(listLatestJudgeAttemptsBySubmissionIDs, want) {
-			t.Fatalf("ListLatestJudgeAttemptsBySubmissionIDs missing %q:\n%s", want, listLatestJudgeAttemptsBySubmissionIDs)
+		if !strings.Contains(listSubmissionOutcomesByAttemptIDs, want) {
+			t.Fatalf("ListSubmissionOutcomesByAttemptIDs missing %q:\n%s", want, listSubmissionOutcomesByAttemptIDs)
 		}
 	}
-}
 
+}
 func TestProblemCheckSchemaAndQueriesExposeRunsAndFindings(t *testing.T) {
 	schema := readInitialSchema(t)
 	for _, want := range []string{
 		"CREATE TABLE problem_check_runs",
 		"CREATE TABLE problem_check_findings",
-		"problem_id bigint NOT NULL REFERENCES problems(id) ON DELETE CASCADE",
-		"run_id bigint NOT NULL REFERENCES problem_check_runs(id) ON DELETE CASCADE",
+		"FOREIGN KEY (problem_id) REFERENCES problems(id) ON DELETE CASCADE",
+		"FOREIGN KEY (run_id) REFERENCES problem_check_runs(id) ON DELETE CASCADE",
 		"CREATE INDEX problem_check_runs_problem_created_idx",
 		"CREATE INDEX problem_check_findings_run_severity_idx",
 	} {
@@ -278,13 +263,9 @@ func TestProblemCheckSchemaAndQueriesExposeRunsAndFindings(t *testing.T) {
 			t.Fatalf("GetLatestCompletedProblemCheckRun missing %q:\n%s", want, getLatestCompletedProblemCheckRun)
 		}
 	}
-	statementMigration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "000002_problem_check_statement.up.sql"))
-	if err != nil {
-		t.Fatalf("read statement migration: %v", err)
-	}
-	for _, want := range []string{"ADD COLUMN statement_id", "problem_check_runs_publish_gate_idx"} {
-		if !strings.Contains(string(statementMigration), want) {
-			t.Fatalf("statement migration missing %q", want)
+	for _, want := range []string{"statement_id bigint", "problem_check_runs_publish_gate_idx"} {
+		if !strings.Contains(schema, want) {
+			t.Fatalf("baseline missing %q", want)
 		}
 	}
 	if !strings.Contains(completeProblemCheckRun, "AND status IN ('queued', 'running')") {
@@ -302,11 +283,11 @@ func TestRejudgeBatchSchemaAndQueriesExposeProgressLifecycle(t *testing.T) {
 		"CREATE TABLE rejudge_batch_items",
 		"UNIQUE (batch_id, submission_id)",
 		"CREATE UNIQUE INDEX rejudge_batch_items_active_submission_uidx",
-		"WHERE status IN ('queued', 'running')",
+		"WHERE (status IN ('queued', 'running'))",
 		"CREATE INDEX rejudge_batch_items_batch_status_idx",
 		"CREATE INDEX rejudge_batch_items_task_id_idx",
 		"CREATE UNIQUE INDEX rejudge_batch_items_attempt_id_uidx",
-		"rejudge_batch_id bigint REFERENCES rejudge_batches(id) ON DELETE SET NULL",
+		"FOREIGN KEY (rejudge_batch_id) REFERENCES rejudge_batches(id) ON DELETE SET NULL",
 		"CREATE INDEX rejudge_batches_status_updated_idx",
 		"CREATE INDEX rejudge_batches_problem_created_idx",
 		"CREATE INDEX judge_attempts_rejudge_batch_id_idx",
@@ -396,8 +377,8 @@ func TestFinalScoreSnapshotCandidatesRefreshAfterProjectionRevision(t *testing.T
 func TestScoreSnapshotSchemaUsesVersionedUniqueGenerationKey(t *testing.T) {
 	schema := readInitialSchema(t)
 	for _, want := range []string{
-		"score_revision bigint NOT NULL DEFAULT 0",
-		"source_revision bigint NOT NULL DEFAULT 0",
+		"score_revision bigint DEFAULT 0 NOT NULL",
+		"source_revision bigint DEFAULT 0 NOT NULL",
 		"CREATE UNIQUE INDEX contest_score_snapshots_contest_kind_revision_uidx",
 		"ON contest_score_snapshots (contest_id, kind, source_revision)",
 	} {
@@ -409,7 +390,7 @@ func TestScoreSnapshotSchemaUsesVersionedUniqueGenerationKey(t *testing.T) {
 
 func readInitialSchema(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "..", "migrations", "000001_init.up.sql")
+	path := filepath.Join("..", "..", "migrations", "000001_baseline.up.sql")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read initial migration: %v", err)
@@ -417,17 +398,13 @@ func readInitialSchema(t *testing.T) string {
 	return string(content)
 }
 
-func tableSchema(t *testing.T, schema, tableName, nextTableName string) string {
+func tableSchema(t *testing.T, schema, tableName string) string {
 	t.Helper()
-	start := strings.Index(schema, "CREATE TABLE "+tableName)
-	if start < 0 {
+	_, body, found := strings.Cut(schema, "CREATE TABLE "+tableName+" (")
+	if !found {
 		t.Fatalf("schema missing table %s", tableName)
 	}
-	end := strings.Index(schema[start:], "CREATE TABLE "+nextTableName)
-	if end < 0 {
-		t.Fatalf("schema missing table %s after %s", nextTableName, tableName)
-	}
-	return schema[start : start+end]
+	return strings.SplitN(body, "\n);", 2)[0]
 }
 
 // A run and a submission share the judge_tasks table but not the stream, so the

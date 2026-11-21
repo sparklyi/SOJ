@@ -56,67 +56,90 @@ func RunMigrate(ctx context.Context, args []string, stdout, stderr io.Writer) (e
 	return migrateUp(ctx, conn, cfg.Migrations.Dir, stdout)
 }
 
-func migrateUp(ctx context.Context, conn *pgx.Conn, dir string, stdout io.Writer) error {
-	if _, err := conn.Exec(ctx, `create table if not exists schema_migrations (
-	version text primary key,
-	applied_at timestamptz not null default now()
-)`); err != nil {
-		return err
-	}
+const baselineVersion = "000001_baseline"
+const migrationLockID int64 = 6276700125626430680
 
+func migrateUp(ctx context.Context, conn *pgx.Conn, dir string, stdout io.Writer) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
+		return fmt.Errorf("read migration directory: %w", err)
 	}
 
 	var files []string
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
-			continue
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".up.sql") {
+			files = append(files, entry.Name())
 		}
-		files = append(files, entry.Name())
 	}
 	sort.Strings(files)
+	if len(files) == 0 {
+		return fmt.Errorf("no migrations in %s", dir)
+	}
 
 	for _, file := range files {
 		version := strings.TrimSuffix(file, ".up.sql")
-		applied, err := migrationApplied(ctx, conn, version)
-		if err != nil {
-			return err
-		}
-		if applied {
-			continue
-		}
 		content, err := os.ReadFile(filepath.Join(dir, file))
 		if err != nil {
 			return err
 		}
-		tx, err := conn.BeginTx(ctx, pgx.TxOptions{})
+		applied, err := applyMigration(ctx, conn, version, content)
 		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, string(content)); err != nil {
-			_ = tx.Rollback(ctx)
 			return fmt.Errorf("%s: %w", file, err)
 		}
-		if _, err := tx.Exec(ctx, `insert into schema_migrations(version) values ($1)`, version); err != nil {
-			_ = tx.Rollback(ctx)
-			return err
+		if applied {
+			_, _ = fmt.Fprintf(stdout, "applied %s\n", file)
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(stdout, "applied %s\n", file)
 	}
-
 	return nil
 }
 
-func migrationApplied(ctx context.Context, conn *pgx.Conn, version string) (bool, error) {
-	var exists bool
-	err := conn.QueryRow(ctx, `select exists(select 1 from schema_migrations where version = $1)`, version).Scan(&exists)
-	return exists, err
+func applyMigration(ctx context.Context, conn *pgx.Conn, version string, content []byte) (bool, error) {
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, migrationLockID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version text PRIMARY KEY,
+		applied_at timestamptz NOT NULL DEFAULT now()
+	)`); err != nil {
+		return false, err
+	}
+
+	var applied bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT FROM schema_migrations WHERE version = $1)`, version).Scan(&applied); err != nil {
+		return false, err
+	}
+	if applied {
+		return false, nil
+	}
+	if version == baselineVersion {
+		var initialized bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT FROM schema_migrations)
+			OR EXISTS (
+				SELECT FROM pg_catalog.pg_class
+				WHERE relnamespace = current_schema()::regnamespace
+				  AND relkind IN ('r', 'p')
+				  AND relname <> 'schema_migrations'
+			)`).Scan(&initialized); err != nil {
+			return false, err
+		}
+		if initialized {
+			return false, errors.New("database already has tables or migration history; see docs/schema-cutover.md")
+		}
+	}
+
+	if _, err := tx.Exec(ctx, string(content)); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES ($1)`, version); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }

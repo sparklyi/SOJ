@@ -311,7 +311,7 @@ type taskProcessStore interface {
 type taskFailureStore interface {
 	RetryJudgeTask(context.Context, int64, time.Time, string) (JudgeTaskRecord, error)
 	MarkJudgeTaskDead(context.Context, int64, string) (JudgeTaskRecord, error)
-	MarkSubmissionQueued(context.Context, int64, string) (SubmissionRecord, error)
+	MarkSubmissionQueued(context.Context, int64) (SubmissionRecord, error)
 }
 
 // TaskFailureHandler owns retry and terminal failure transitions.
@@ -350,7 +350,7 @@ func (h *TaskFailureHandler) retryOrDead(ctx context.Context, message queue.Mess
 	if _, err := h.store.RetryJudgeTask(ctx, task.ID, h.now().Add(h.backoff(task.Attempts)), reason); err != nil {
 		return "error", err
 	}
-	if _, err := h.store.MarkSubmissionQueued(ctx, *task.SubmissionID, reason); err != nil {
+	if _, err := h.store.MarkSubmissionQueued(ctx, *task.SubmissionID); err != nil {
 		return "error", err
 	}
 	return "retry", h.queue.Ack(ctx, message.ID)

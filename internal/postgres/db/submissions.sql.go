@@ -346,11 +346,12 @@ func (q *Queries) CountRejudgeBatches(ctx context.Context, arg CountRejudgeBatch
 
 const countSubmissions = `-- name: CountSubmissions :one
 SELECT count(*)::bigint
-FROM submissions
-WHERE ($1::bigint IS NULL OR user_id = $1::bigint)
-  AND ($2::bigint IS NULL OR problem_id = $2::bigint)
-  AND ($3::bigint IS NULL OR contest_id = $3::bigint)
-  AND ($4::text IS NULL OR status = $4::text)
+FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE ($1::bigint IS NULL OR s.user_id = $1::bigint)
+  AND ($2::bigint IS NULL OR s.problem_id = $2::bigint)
+  AND ($3::bigint IS NULL OR s.contest_id = $3::bigint)
+  AND ($4::text IS NULL OR (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END) = $4::text)
 `
 
 type CountSubmissionsParams struct {
@@ -444,7 +445,6 @@ INSERT INTO judge_attempts (
     checker_hash,
     validator_hash,
     status,
-    verdict,
     time_ms,
     memory_kb,
     first_failed_case_index,
@@ -455,7 +455,6 @@ INSERT INTO judge_attempts (
     error_class,
     error_message,
     manifest,
-    metrics,
     trace_id,
     started_at,
     finished_at
@@ -490,11 +489,9 @@ INSERT INTO judge_attempts (
     $28,
     $29,
     $30,
-    $31,
-    $32,
-    $33
+    $31
 )
-RETURNING id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+RETURNING id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, trace_id, started_at, finished_at, created_at, updated_at
 `
 
 type CreateJudgeAttemptParams struct {
@@ -516,7 +513,6 @@ type CreateJudgeAttemptParams struct {
 	CheckerHash          pgtype.Text        `db:"checker_hash" json:"checker_hash"`
 	ValidatorHash        pgtype.Text        `db:"validator_hash" json:"validator_hash"`
 	Status               string             `db:"status" json:"status"`
-	Verdict              pgtype.Text        `db:"verdict" json:"verdict"`
 	TimeMs               pgtype.Int4        `db:"time_ms" json:"time_ms"`
 	MemoryKb             pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
 	FirstFailedCaseIndex pgtype.Int4        `db:"first_failed_case_index" json:"first_failed_case_index"`
@@ -527,7 +523,6 @@ type CreateJudgeAttemptParams struct {
 	ErrorClass           pgtype.Text        `db:"error_class" json:"error_class"`
 	ErrorMessage         pgtype.Text        `db:"error_message" json:"error_message"`
 	Manifest             []byte             `db:"manifest" json:"manifest"`
-	Metrics              []byte             `db:"metrics" json:"metrics"`
 	TraceID              pgtype.Text        `db:"trace_id" json:"trace_id"`
 	StartedAt            pgtype.Timestamptz `db:"started_at" json:"started_at"`
 	FinishedAt           pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
@@ -553,7 +548,6 @@ func (q *Queries) CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttempt
 		arg.CheckerHash,
 		arg.ValidatorHash,
 		arg.Status,
-		arg.Verdict,
 		arg.TimeMs,
 		arg.MemoryKb,
 		arg.FirstFailedCaseIndex,
@@ -564,7 +558,6 @@ func (q *Queries) CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttempt
 		arg.ErrorClass,
 		arg.ErrorMessage,
 		arg.Manifest,
-		arg.Metrics,
 		arg.TraceID,
 		arg.StartedAt,
 		arg.FinishedAt,
@@ -590,8 +583,6 @@ func (q *Queries) CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttempt
 		&i.CheckerHash,
 		&i.ValidatorHash,
 		&i.Status,
-		&i.Verdict,
-		&i.Score,
 		&i.TimeMs,
 		&i.MemoryKb,
 		&i.FirstFailedCaseIndex,
@@ -602,7 +593,6 @@ func (q *Queries) CreateJudgeAttempt(ctx context.Context, arg CreateJudgeAttempt
 		&i.ErrorClass,
 		&i.ErrorMessage,
 		&i.Manifest,
-		&i.Metrics,
 		&i.TraceID,
 		&i.StartedAt,
 		&i.FinishedAt,
@@ -625,10 +615,7 @@ INSERT INTO judge_case_results (
     exit_code,
     signal,
     checker_message,
-    output_diff_summary,
-    stdout_artifact_id,
-    stderr_artifact_id,
-    diff_artifact_id
+    output_diff_summary
 ) VALUES (
     $1,
     $2,
@@ -641,12 +628,9 @@ INSERT INTO judge_case_results (
     $9,
     $10,
     $11,
-    $12,
-    $13,
-    $14,
-    $15
+    $12
 )
-RETURNING id, attempt_id, case_index, group_name, testcase_key, status, score, time_ms, memory_kb, exit_code, signal, checker_message, output_diff_summary, stdout_artifact_id, stderr_artifact_id, diff_artifact_id, created_at
+RETURNING id, attempt_id, case_index, group_name, testcase_key, status, score, time_ms, memory_kb, exit_code, signal, checker_message, output_diff_summary, created_at
 `
 
 type CreateJudgeCaseResultParams struct {
@@ -662,9 +646,6 @@ type CreateJudgeCaseResultParams struct {
 	Signal            pgtype.Text `db:"signal" json:"signal"`
 	CheckerMessage    pgtype.Text `db:"checker_message" json:"checker_message"`
 	OutputDiffSummary pgtype.Text `db:"output_diff_summary" json:"output_diff_summary"`
-	StdoutArtifactID  pgtype.Int8 `db:"stdout_artifact_id" json:"stdout_artifact_id"`
-	StderrArtifactID  pgtype.Int8 `db:"stderr_artifact_id" json:"stderr_artifact_id"`
-	DiffArtifactID    pgtype.Int8 `db:"diff_artifact_id" json:"diff_artifact_id"`
 }
 
 func (q *Queries) CreateJudgeCaseResult(ctx context.Context, arg CreateJudgeCaseResultParams) (JudgeCaseResult, error) {
@@ -681,9 +662,6 @@ func (q *Queries) CreateJudgeCaseResult(ctx context.Context, arg CreateJudgeCase
 		arg.Signal,
 		arg.CheckerMessage,
 		arg.OutputDiffSummary,
-		arg.StdoutArtifactID,
-		arg.StderrArtifactID,
-		arg.DiffArtifactID,
 	)
 	var i JudgeCaseResult
 	err := row.Scan(
@@ -700,9 +678,6 @@ func (q *Queries) CreateJudgeCaseResult(ctx context.Context, arg CreateJudgeCase
 		&i.Signal,
 		&i.CheckerMessage,
 		&i.OutputDiffSummary,
-		&i.StdoutArtifactID,
-		&i.StderrArtifactID,
-		&i.DiffArtifactID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -927,7 +902,7 @@ INSERT INTO submissions (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7
 )
-RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
+RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, submitted_at, judged_at, first_judged_at, updated_at, effective_attempt_id
 `
 
 type CreateSubmissionParams struct {
@@ -960,14 +935,11 @@ func (q *Queries) CreateSubmission(ctx context.Context, arg CreateSubmissionPara
 		&i.TestcaseSetID,
 		&i.Status,
 		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
 		&i.SubmittedAt,
 		&i.JudgedAt,
 		&i.FirstJudgedAt,
 		&i.UpdatedAt,
+		&i.EffectiveAttemptID,
 	)
 	return i, err
 }
@@ -1172,7 +1144,7 @@ func (q *Queries) GetArtifactByID(ctx context.Context, id int64) (Artifact, erro
 }
 
 const getJudgeAttemptByID = `-- name: GetJudgeAttemptByID :one
-SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE id = $1
 `
@@ -1200,8 +1172,6 @@ func (q *Queries) GetJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttem
 		&i.CheckerHash,
 		&i.ValidatorHash,
 		&i.Status,
-		&i.Verdict,
-		&i.Score,
 		&i.TimeMs,
 		&i.MemoryKb,
 		&i.FirstFailedCaseIndex,
@@ -1212,7 +1182,6 @@ func (q *Queries) GetJudgeAttemptByID(ctx context.Context, id int64) (JudgeAttem
 		&i.ErrorClass,
 		&i.ErrorMessage,
 		&i.Manifest,
-		&i.Metrics,
 		&i.TraceID,
 		&i.StartedAt,
 		&i.FinishedAt,
@@ -1295,7 +1264,7 @@ func (q *Queries) GetJudgeTaskBySubmissionID(ctx context.Context, submissionID p
 }
 
 const getLatestJudgeAttemptByRunID = `-- name: GetLatestJudgeAttemptByRunID :one
-SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE run_id = $1
 ORDER BY attempt_no DESC, id DESC
@@ -1325,8 +1294,6 @@ func (q *Queries) GetLatestJudgeAttemptByRunID(ctx context.Context, runID pgtype
 		&i.CheckerHash,
 		&i.ValidatorHash,
 		&i.Status,
-		&i.Verdict,
-		&i.Score,
 		&i.TimeMs,
 		&i.MemoryKb,
 		&i.FirstFailedCaseIndex,
@@ -1337,7 +1304,6 @@ func (q *Queries) GetLatestJudgeAttemptByRunID(ctx context.Context, runID pgtype
 		&i.ErrorClass,
 		&i.ErrorMessage,
 		&i.Manifest,
-		&i.Metrics,
 		&i.TraceID,
 		&i.StartedAt,
 		&i.FinishedAt,
@@ -1348,7 +1314,7 @@ func (q *Queries) GetLatestJudgeAttemptByRunID(ctx context.Context, runID pgtype
 }
 
 const getLatestJudgeAttemptBySubmissionID = `-- name: GetLatestJudgeAttemptBySubmissionID :one
-SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE submission_id = $1
 ORDER BY attempt_no DESC, id DESC
@@ -1378,8 +1344,6 @@ func (q *Queries) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submi
 		&i.CheckerHash,
 		&i.ValidatorHash,
 		&i.Status,
-		&i.Verdict,
-		&i.Score,
 		&i.TimeMs,
 		&i.MemoryKb,
 		&i.FirstFailedCaseIndex,
@@ -1390,7 +1354,6 @@ func (q *Queries) GetLatestJudgeAttemptBySubmissionID(ctx context.Context, submi
 		&i.ErrorClass,
 		&i.ErrorMessage,
 		&i.Manifest,
-		&i.Metrics,
 		&i.TraceID,
 		&i.StartedAt,
 		&i.FinishedAt,
@@ -1517,73 +1480,49 @@ func (q *Queries) GetRunByID(ctx context.Context, id int64) (Run, error) {
 }
 
 const getSubmissionByID = `-- name: GetSubmissionByID :one
-SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
-FROM submissions
-WHERE id = $1
+SELECT s.id, s.user_id, s.problem_id, s.contest_id, s.language_id, s.testcase_set_id, s.status, s.source_artifact_id, s.submitted_at, s.judged_at, s.first_judged_at, s.updated_at, s.effective_attempt_id, (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END)::text AS outcome_status
+FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE s.id = $1
 `
 
-func (q *Queries) GetSubmissionByID(ctx context.Context, id int64) (Submission, error) {
-	row := q.db.QueryRow(ctx, getSubmissionByID, id)
-	var i Submission
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.ProblemID,
-		&i.ContestID,
-		&i.LanguageID,
-		&i.TestcaseSetID,
-		&i.Status,
-		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
-		&i.SubmittedAt,
-		&i.JudgedAt,
-		&i.FirstJudgedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+type GetSubmissionByIDRow struct {
+	Submission    Submission `db:"submission" json:"submission"`
+	OutcomeStatus string     `db:"outcome_status" json:"outcome_status"`
 }
 
-const getSubmissionResultBySubmissionID = `-- name: GetSubmissionResultBySubmissionID :one
-SELECT submission_id, attempt_id, status, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, error_class, safe_summary, created_at, updated_at
-FROM submission_results
-WHERE submission_id = $1
-`
-
-func (q *Queries) GetSubmissionResultBySubmissionID(ctx context.Context, submissionID int64) (SubmissionResult, error) {
-	row := q.db.QueryRow(ctx, getSubmissionResultBySubmissionID, submissionID)
-	var i SubmissionResult
+func (q *Queries) GetSubmissionByID(ctx context.Context, id int64) (GetSubmissionByIDRow, error) {
+	row := q.db.QueryRow(ctx, getSubmissionByID, id)
+	var i GetSubmissionByIDRow
 	err := row.Scan(
-		&i.SubmissionID,
-		&i.AttemptID,
-		&i.Status,
-		&i.Score,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.FirstFailedCaseIndex,
-		&i.FirstFailedGroup,
-		&i.ErrorClass,
-		&i.SafeSummary,
-		&i.CreatedAt,
-		&i.UpdatedAt,
+		&i.Submission.ID,
+		&i.Submission.UserID,
+		&i.Submission.ProblemID,
+		&i.Submission.ContestID,
+		&i.Submission.LanguageID,
+		&i.Submission.TestcaseSetID,
+		&i.Submission.Status,
+		&i.Submission.SourceArtifactID,
+		&i.Submission.SubmittedAt,
+		&i.Submission.JudgedAt,
+		&i.Submission.FirstJudgedAt,
+		&i.Submission.UpdatedAt,
+		&i.Submission.EffectiveAttemptID,
+		&i.OutcomeStatus,
 	)
 	return i, err
 }
 
 const listContestProblemSubmissionsForProjection = `-- name: ListContestProblemSubmissionsForProjection :many
 SELECT s.id,
-       s.status,
-       s.submitted_at,
-       sr.attempt_id,
-       s.first_judged_at
+       a.status,
+       s.submitted_at
 FROM submissions s
-LEFT JOIN submission_results sr ON sr.submission_id = s.id
+JOIN judge_attempts a ON a.id = s.effective_attempt_id
 WHERE s.contest_id = $1
   AND s.user_id = $2
   AND s.problem_id = $3
-  AND s.status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND s.status = 'judged'
 ORDER BY s.submitted_at, s.id
 `
 
@@ -1594,11 +1533,9 @@ type ListContestProblemSubmissionsForProjectionParams struct {
 }
 
 type ListContestProblemSubmissionsForProjectionRow struct {
-	ID            int64              `db:"id" json:"id"`
-	Status        string             `db:"status" json:"status"`
-	SubmittedAt   pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
-	AttemptID     pgtype.Int8        `db:"attempt_id" json:"attempt_id"`
-	FirstJudgedAt pgtype.Timestamptz `db:"first_judged_at" json:"first_judged_at"`
+	ID          int64              `db:"id" json:"id"`
+	Status      string             `db:"status" json:"status"`
+	SubmittedAt pgtype.Timestamptz `db:"submitted_at" json:"submitted_at"`
 }
 
 func (q *Queries) ListContestProblemSubmissionsForProjection(ctx context.Context, arg ListContestProblemSubmissionsForProjectionParams) ([]ListContestProblemSubmissionsForProjectionRow, error) {
@@ -1610,13 +1547,7 @@ func (q *Queries) ListContestProblemSubmissionsForProjection(ctx context.Context
 	var items []ListContestProblemSubmissionsForProjectionRow
 	for rows.Next() {
 		var i ListContestProblemSubmissionsForProjectionRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Status,
-			&i.SubmittedAt,
-			&i.AttemptID,
-			&i.FirstJudgedAt,
-		); err != nil {
+		if err := rows.Scan(&i.ID, &i.Status, &i.SubmittedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1628,10 +1559,10 @@ func (q *Queries) ListContestProblemSubmissionsForProjection(ctx context.Context
 }
 
 const listEligibleContestSubmissionsForRejudge = `-- name: ListEligibleContestSubmissionsForRejudge :many
-SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
+SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, submitted_at, judged_at, first_judged_at, updated_at, effective_attempt_id
 FROM submissions
 WHERE contest_id = $1
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND status = 'judged'
 ORDER BY id
 `
 
@@ -1653,14 +1584,11 @@ func (q *Queries) ListEligibleContestSubmissionsForRejudge(ctx context.Context, 
 			&i.TestcaseSetID,
 			&i.Status,
 			&i.SourceArtifactID,
-			&i.TimeMs,
-			&i.MemoryKb,
-			&i.Score,
-			&i.ErrorMessage,
 			&i.SubmittedAt,
 			&i.JudgedAt,
 			&i.FirstJudgedAt,
 			&i.UpdatedAt,
+			&i.EffectiveAttemptID,
 		); err != nil {
 			return nil, err
 		}
@@ -1673,11 +1601,11 @@ func (q *Queries) ListEligibleContestSubmissionsForRejudge(ctx context.Context, 
 }
 
 const listEligibleProblemSubmissionsForRejudge = `-- name: ListEligibleProblemSubmissionsForRejudge :many
-SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
+SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, submitted_at, judged_at, first_judged_at, updated_at, effective_attempt_id
 FROM submissions
 WHERE problem_id = $1
   AND contest_id IS NULL
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+  AND status = 'judged'
 ORDER BY id
 `
 
@@ -1699,14 +1627,11 @@ func (q *Queries) ListEligibleProblemSubmissionsForRejudge(ctx context.Context, 
 			&i.TestcaseSetID,
 			&i.Status,
 			&i.SourceArtifactID,
-			&i.TimeMs,
-			&i.MemoryKb,
-			&i.Score,
-			&i.ErrorMessage,
 			&i.SubmittedAt,
 			&i.JudgedAt,
 			&i.FirstJudgedAt,
 			&i.UpdatedAt,
+			&i.EffectiveAttemptID,
 		); err != nil {
 			return nil, err
 		}
@@ -1773,7 +1698,7 @@ func (q *Queries) ListExpiredRuns(ctx context.Context, arg ListExpiredRunsParams
 }
 
 const listJudgeAttemptsByRejudgeBatch = `-- name: ListJudgeAttemptsByRejudgeBatch :many
-SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE rejudge_batch_id = $1
 ORDER BY id
@@ -1808,8 +1733,6 @@ func (q *Queries) ListJudgeAttemptsByRejudgeBatch(ctx context.Context, rejudgeBa
 			&i.CheckerHash,
 			&i.ValidatorHash,
 			&i.Status,
-			&i.Verdict,
-			&i.Score,
 			&i.TimeMs,
 			&i.MemoryKb,
 			&i.FirstFailedCaseIndex,
@@ -1820,7 +1743,6 @@ func (q *Queries) ListJudgeAttemptsByRejudgeBatch(ctx context.Context, rejudgeBa
 			&i.ErrorClass,
 			&i.ErrorMessage,
 			&i.Manifest,
-			&i.Metrics,
 			&i.TraceID,
 			&i.StartedAt,
 			&i.FinishedAt,
@@ -1838,7 +1760,7 @@ func (q *Queries) ListJudgeAttemptsByRejudgeBatch(ctx context.Context, rejudgeBa
 }
 
 const listJudgeAttemptsBySubmissionID = `-- name: ListJudgeAttemptsBySubmissionID :many
-SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE submission_id = $1
 ORDER BY attempt_no DESC, id DESC
@@ -1873,8 +1795,6 @@ func (q *Queries) ListJudgeAttemptsBySubmissionID(ctx context.Context, submissio
 			&i.CheckerHash,
 			&i.ValidatorHash,
 			&i.Status,
-			&i.Verdict,
-			&i.Score,
 			&i.TimeMs,
 			&i.MemoryKb,
 			&i.FirstFailedCaseIndex,
@@ -1885,7 +1805,6 @@ func (q *Queries) ListJudgeAttemptsBySubmissionID(ctx context.Context, submissio
 			&i.ErrorClass,
 			&i.ErrorMessage,
 			&i.Manifest,
-			&i.Metrics,
 			&i.TraceID,
 			&i.StartedAt,
 			&i.FinishedAt,
@@ -1903,7 +1822,7 @@ func (q *Queries) ListJudgeAttemptsBySubmissionID(ctx context.Context, submissio
 }
 
 const listJudgeCaseResultsByAttemptID = `-- name: ListJudgeCaseResultsByAttemptID :many
-SELECT id, attempt_id, case_index, group_name, testcase_key, status, score, time_ms, memory_kb, exit_code, signal, checker_message, output_diff_summary, stdout_artifact_id, stderr_artifact_id, diff_artifact_id, created_at
+SELECT id, attempt_id, case_index, group_name, testcase_key, status, score, time_ms, memory_kb, exit_code, signal, checker_message, output_diff_summary, created_at
 FROM judge_case_results
 WHERE attempt_id = $1
 ORDER BY case_index
@@ -1932,75 +1851,7 @@ func (q *Queries) ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID
 			&i.Signal,
 			&i.CheckerMessage,
 			&i.OutputDiffSummary,
-			&i.StdoutArtifactID,
-			&i.StderrArtifactID,
-			&i.DiffArtifactID,
 			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listLatestJudgeAttemptsBySubmissionIDs = `-- name: ListLatestJudgeAttemptsBySubmissionIDs :many
-SELECT DISTINCT ON (submission_id) id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
-FROM judge_attempts
-WHERE submission_id = ANY($1::bigint[])
-ORDER BY submission_id, attempt_no DESC, id DESC
-`
-
-func (q *Queries) ListLatestJudgeAttemptsBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]JudgeAttempt, error) {
-	rows, err := q.db.Query(ctx, listLatestJudgeAttemptsBySubmissionIDs, submissionIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []JudgeAttempt
-	for rows.Next() {
-		var i JudgeAttempt
-		if err := rows.Scan(
-			&i.ID,
-			&i.SubmissionID,
-			&i.RunID,
-			&i.TaskID,
-			&i.RejudgeBatchID,
-			&i.AttemptNo,
-			&i.ProtocolVersion,
-			&i.JudgeCoreVersion,
-			&i.JudgeEngine,
-			&i.JudgeAgentID,
-			&i.LanguageID,
-			&i.LanguageRuntime,
-			&i.SandboxBackend,
-			&i.SandboxProfile,
-			&i.TestcaseSetID,
-			&i.TestcaseSetHash,
-			&i.CheckerHash,
-			&i.ValidatorHash,
-			&i.Status,
-			&i.Verdict,
-			&i.Score,
-			&i.TimeMs,
-			&i.MemoryKb,
-			&i.FirstFailedCaseIndex,
-			&i.FirstFailedGroup,
-			&i.CompileOutputSummary,
-			&i.StderrSummary,
-			&i.CheckerMessage,
-			&i.ErrorClass,
-			&i.ErrorMessage,
-			&i.Manifest,
-			&i.Metrics,
-			&i.TraceID,
-			&i.StartedAt,
-			&i.FinishedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2167,34 +2018,65 @@ func (q *Queries) ListRejudgeBatches(ctx context.Context, arg ListRejudgeBatches
 	return items, nil
 }
 
-const listSubmissionResultsBySubmissionIDs = `-- name: ListSubmissionResultsBySubmissionIDs :many
-SELECT submission_id, attempt_id, status, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, error_class, safe_summary, created_at, updated_at
-FROM submission_results
-WHERE submission_id = ANY($1::bigint[])
+const listSubmissionOutcomesByAttemptIDs = `-- name: ListSubmissionOutcomesByAttemptIDs :many
+SELECT a.id, a.submission_id, a.run_id, a.task_id, a.rejudge_batch_id, a.attempt_no, a.protocol_version, a.judge_core_version, a.judge_engine, a.judge_agent_id, a.language_id, a.language_runtime, a.sandbox_backend, a.sandbox_profile, a.testcase_set_id, a.testcase_set_hash, a.checker_hash, a.validator_hash, a.status, a.time_ms, a.memory_kb, a.first_failed_case_index, a.first_failed_group, a.compile_output_summary, a.stderr_summary, a.checker_message, a.error_class, a.error_message, a.manifest, a.trace_id, a.started_at, a.finished_at, a.created_at, a.updated_at, c.output_diff_summary AS first_failed_case_diff
+FROM judge_attempts a
+LEFT JOIN judge_case_results c
+       ON c.attempt_id = a.id AND c.case_index = a.first_failed_case_index
+WHERE a.id = ANY($1::bigint[])
 `
 
-func (q *Queries) ListSubmissionResultsBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]SubmissionResult, error) {
-	rows, err := q.db.Query(ctx, listSubmissionResultsBySubmissionIDs, submissionIds)
+type ListSubmissionOutcomesByAttemptIDsRow struct {
+	JudgeAttempt        JudgeAttempt `db:"judge_attempt" json:"judge_attempt"`
+	FirstFailedCaseDiff pgtype.Text  `db:"first_failed_case_diff" json:"first_failed_case_diff"`
+}
+
+// Callers pass the effective attempt IDs from the submission records they read.
+func (q *Queries) ListSubmissionOutcomesByAttemptIDs(ctx context.Context, attemptIds []int64) ([]ListSubmissionOutcomesByAttemptIDsRow, error) {
+	rows, err := q.db.Query(ctx, listSubmissionOutcomesByAttemptIDs, attemptIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SubmissionResult
+	var items []ListSubmissionOutcomesByAttemptIDsRow
 	for rows.Next() {
-		var i SubmissionResult
+		var i ListSubmissionOutcomesByAttemptIDsRow
 		if err := rows.Scan(
-			&i.SubmissionID,
-			&i.AttemptID,
-			&i.Status,
-			&i.Score,
-			&i.TimeMs,
-			&i.MemoryKb,
-			&i.FirstFailedCaseIndex,
-			&i.FirstFailedGroup,
-			&i.ErrorClass,
-			&i.SafeSummary,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.JudgeAttempt.ID,
+			&i.JudgeAttempt.SubmissionID,
+			&i.JudgeAttempt.RunID,
+			&i.JudgeAttempt.TaskID,
+			&i.JudgeAttempt.RejudgeBatchID,
+			&i.JudgeAttempt.AttemptNo,
+			&i.JudgeAttempt.ProtocolVersion,
+			&i.JudgeAttempt.JudgeCoreVersion,
+			&i.JudgeAttempt.JudgeEngine,
+			&i.JudgeAttempt.JudgeAgentID,
+			&i.JudgeAttempt.LanguageID,
+			&i.JudgeAttempt.LanguageRuntime,
+			&i.JudgeAttempt.SandboxBackend,
+			&i.JudgeAttempt.SandboxProfile,
+			&i.JudgeAttempt.TestcaseSetID,
+			&i.JudgeAttempt.TestcaseSetHash,
+			&i.JudgeAttempt.CheckerHash,
+			&i.JudgeAttempt.ValidatorHash,
+			&i.JudgeAttempt.Status,
+			&i.JudgeAttempt.TimeMs,
+			&i.JudgeAttempt.MemoryKb,
+			&i.JudgeAttempt.FirstFailedCaseIndex,
+			&i.JudgeAttempt.FirstFailedGroup,
+			&i.JudgeAttempt.CompileOutputSummary,
+			&i.JudgeAttempt.StderrSummary,
+			&i.JudgeAttempt.CheckerMessage,
+			&i.JudgeAttempt.ErrorClass,
+			&i.JudgeAttempt.ErrorMessage,
+			&i.JudgeAttempt.Manifest,
+			&i.JudgeAttempt.TraceID,
+			&i.JudgeAttempt.StartedAt,
+			&i.JudgeAttempt.FinishedAt,
+			&i.JudgeAttempt.CreatedAt,
+			&i.JudgeAttempt.UpdatedAt,
+			&i.FirstFailedCaseDiff,
 		); err != nil {
 			return nil, err
 		}
@@ -2207,13 +2089,14 @@ func (q *Queries) ListSubmissionResultsBySubmissionIDs(ctx context.Context, subm
 }
 
 const listSubmissions = `-- name: ListSubmissions :many
-SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
-FROM submissions
-WHERE ($1::bigint IS NULL OR user_id = $1::bigint)
-  AND ($2::bigint IS NULL OR problem_id = $2::bigint)
-  AND ($3::bigint IS NULL OR contest_id = $3::bigint)
-  AND ($4::text IS NULL OR status = $4::text)
-ORDER BY submitted_at DESC, id DESC
+SELECT s.id, s.user_id, s.problem_id, s.contest_id, s.language_id, s.testcase_set_id, s.status, s.source_artifact_id, s.submitted_at, s.judged_at, s.first_judged_at, s.updated_at, s.effective_attempt_id, (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END)::text AS outcome_status
+FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE ($1::bigint IS NULL OR s.user_id = $1::bigint)
+  AND ($2::bigint IS NULL OR s.problem_id = $2::bigint)
+  AND ($3::bigint IS NULL OR s.contest_id = $3::bigint)
+  AND ($4::text IS NULL OR (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END) = $4::text)
+ORDER BY s.submitted_at DESC, s.id DESC
 LIMIT $6 OFFSET $5
 `
 
@@ -2226,7 +2109,12 @@ type ListSubmissionsParams struct {
 	Limit     int32       `db:"limit" json:"limit"`
 }
 
-func (q *Queries) ListSubmissions(ctx context.Context, arg ListSubmissionsParams) ([]Submission, error) {
+type ListSubmissionsRow struct {
+	Submission    Submission `db:"submission" json:"submission"`
+	OutcomeStatus string     `db:"outcome_status" json:"outcome_status"`
+}
+
+func (q *Queries) ListSubmissions(ctx context.Context, arg ListSubmissionsParams) ([]ListSubmissionsRow, error) {
 	rows, err := q.db.Query(ctx, listSubmissions,
 		arg.UserID,
 		arg.ProblemID,
@@ -2239,26 +2127,24 @@ func (q *Queries) ListSubmissions(ctx context.Context, arg ListSubmissionsParams
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Submission
+	var items []ListSubmissionsRow
 	for rows.Next() {
-		var i Submission
+		var i ListSubmissionsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.ProblemID,
-			&i.ContestID,
-			&i.LanguageID,
-			&i.TestcaseSetID,
-			&i.Status,
-			&i.SourceArtifactID,
-			&i.TimeMs,
-			&i.MemoryKb,
-			&i.Score,
-			&i.ErrorMessage,
-			&i.SubmittedAt,
-			&i.JudgedAt,
-			&i.FirstJudgedAt,
-			&i.UpdatedAt,
+			&i.Submission.ID,
+			&i.Submission.UserID,
+			&i.Submission.ProblemID,
+			&i.Submission.ContestID,
+			&i.Submission.LanguageID,
+			&i.Submission.TestcaseSetID,
+			&i.Submission.Status,
+			&i.Submission.SourceArtifactID,
+			&i.Submission.SubmittedAt,
+			&i.Submission.JudgedAt,
+			&i.Submission.FirstJudgedAt,
+			&i.Submission.UpdatedAt,
+			&i.Submission.EffectiveAttemptID,
+			&i.OutcomeStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -2271,14 +2157,15 @@ func (q *Queries) ListSubmissions(ctx context.Context, arg ListSubmissionsParams
 }
 
 const listSubmissionsByUserBefore = `-- name: ListSubmissionsByUserBefore :many
-SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
-FROM submissions
-WHERE user_id = $1
-  AND (submitted_at, id) < (
+SELECT s.id, s.user_id, s.problem_id, s.contest_id, s.language_id, s.testcase_set_id, s.status, s.source_artifact_id, s.submitted_at, s.judged_at, s.first_judged_at, s.updated_at, s.effective_attempt_id, (CASE WHEN s.status = 'judged' THEN a.status ELSE s.status END)::text AS outcome_status
+FROM submissions s
+LEFT JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE s.user_id = $1
+  AND (s.submitted_at, s.id) < (
       $2::timestamptz,
       $3::bigint
   )
-ORDER BY submitted_at DESC, id DESC
+ORDER BY s.submitted_at DESC, s.id DESC
 LIMIT $4
 `
 
@@ -2289,7 +2176,12 @@ type ListSubmissionsByUserBeforeParams struct {
 	Limit             int32              `db:"limit" json:"limit"`
 }
 
-func (q *Queries) ListSubmissionsByUserBefore(ctx context.Context, arg ListSubmissionsByUserBeforeParams) ([]Submission, error) {
+type ListSubmissionsByUserBeforeRow struct {
+	Submission    Submission `db:"submission" json:"submission"`
+	OutcomeStatus string     `db:"outcome_status" json:"outcome_status"`
+}
+
+func (q *Queries) ListSubmissionsByUserBefore(ctx context.Context, arg ListSubmissionsByUserBeforeParams) ([]ListSubmissionsByUserBeforeRow, error) {
 	rows, err := q.db.Query(ctx, listSubmissionsByUserBefore,
 		arg.UserID,
 		arg.BeforeSubmittedAt,
@@ -2300,26 +2192,24 @@ func (q *Queries) ListSubmissionsByUserBefore(ctx context.Context, arg ListSubmi
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Submission
+	var items []ListSubmissionsByUserBeforeRow
 	for rows.Next() {
-		var i Submission
+		var i ListSubmissionsByUserBeforeRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.ProblemID,
-			&i.ContestID,
-			&i.LanguageID,
-			&i.TestcaseSetID,
-			&i.Status,
-			&i.SourceArtifactID,
-			&i.TimeMs,
-			&i.MemoryKb,
-			&i.Score,
-			&i.ErrorMessage,
-			&i.SubmittedAt,
-			&i.JudgedAt,
-			&i.FirstJudgedAt,
-			&i.UpdatedAt,
+			&i.Submission.ID,
+			&i.Submission.UserID,
+			&i.Submission.ProblemID,
+			&i.Submission.ContestID,
+			&i.Submission.LanguageID,
+			&i.Submission.TestcaseSetID,
+			&i.Submission.Status,
+			&i.Submission.SourceArtifactID,
+			&i.Submission.SubmittedAt,
+			&i.Submission.JudgedAt,
+			&i.Submission.FirstJudgedAt,
+			&i.Submission.UpdatedAt,
+			&i.Submission.EffectiveAttemptID,
+			&i.OutcomeStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -2332,7 +2222,7 @@ func (q *Queries) ListSubmissionsByUserBefore(ctx context.Context, arg ListSubmi
 }
 
 const lockContestProblemResultProjection = `-- name: LockContestProblemResultProjection :one
-SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, best_submission_id, best_attempt_id, last_attempt_id, updated_at
+SELECT contest_id, user_id, problem_id, status, attempts, accepted_at, penalty_minutes, last_submission_id, updated_at
 FROM contest_problem_results
 WHERE contest_id = $1
   AND user_id = $2
@@ -2358,16 +2248,13 @@ func (q *Queries) LockContestProblemResultProjection(ctx context.Context, arg Lo
 		&i.AcceptedAt,
 		&i.PenaltyMinutes,
 		&i.LastSubmissionID,
-		&i.BestSubmissionID,
-		&i.BestAttemptID,
-		&i.LastAttemptID,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const lockJudgeAttemptByID = `-- name: LockJudgeAttemptByID :one
-SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+SELECT id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, trace_id, started_at, finished_at, created_at, updated_at
 FROM judge_attempts
 WHERE id = $1
 FOR UPDATE
@@ -2396,8 +2283,6 @@ func (q *Queries) LockJudgeAttemptByID(ctx context.Context, id int64) (JudgeAtte
 		&i.CheckerHash,
 		&i.ValidatorHash,
 		&i.Status,
-		&i.Verdict,
-		&i.Score,
 		&i.TimeMs,
 		&i.MemoryKb,
 		&i.FirstFailedCaseIndex,
@@ -2408,7 +2293,6 @@ func (q *Queries) LockJudgeAttemptByID(ctx context.Context, id int64) (JudgeAtte
 		&i.ErrorClass,
 		&i.ErrorMessage,
 		&i.Manifest,
-		&i.Metrics,
 		&i.TraceID,
 		&i.StartedAt,
 		&i.FinishedAt,
@@ -2475,7 +2359,7 @@ func (q *Queries) LockRunByID(ctx context.Context, id int64) (Run, error) {
 }
 
 const lockSubmissionByID = `-- name: LockSubmissionByID :one
-SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
+SELECT id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, submitted_at, judged_at, first_judged_at, updated_at, effective_attempt_id
 FROM submissions
 WHERE id = $1
 FOR UPDATE
@@ -2493,14 +2377,11 @@ func (q *Queries) LockSubmissionByID(ctx context.Context, id int64) (Submission,
 		&i.TestcaseSetID,
 		&i.Status,
 		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
 		&i.SubmittedAt,
 		&i.JudgedAt,
 		&i.FirstJudgedAt,
 		&i.UpdatedAt,
+		&i.EffectiveAttemptID,
 	)
 	return i, err
 }
@@ -2522,28 +2403,41 @@ func (q *Queries) LockUserForRunAdmission(ctx context.Context, id int64) (int64,
 const markJudgeAttemptFinished = `-- name: MarkJudgeAttemptFinished :one
 UPDATE judge_attempts
 SET status = $1,
-    verdict = $2,
-    time_ms = $3,
-    memory_kb = $4,
-    first_failed_case_index = $5,
-    first_failed_group = $6,
-    compile_output_summary = $7,
-    stderr_summary = $8,
-    checker_message = $9,
-    error_class = $10,
-    error_message = $11,
-    manifest = $12,
-    metrics = $13,
-    trace_id = $14,
-    finished_at = coalesce($15, finished_at, now()),
+    judge_core_version = coalesce($2, judge_core_version),
+    judge_agent_id = coalesce($3, judge_agent_id),
+    language_runtime = coalesce($4, language_runtime),
+    sandbox_backend = coalesce($5, sandbox_backend),
+    sandbox_profile = coalesce($6, sandbox_profile),
+    testcase_set_hash = coalesce($7, testcase_set_hash),
+    checker_hash = coalesce($8, checker_hash),
+    validator_hash = coalesce($9, validator_hash),
+    time_ms = $10,
+    memory_kb = $11,
+    first_failed_case_index = $12,
+    first_failed_group = $13,
+    compile_output_summary = $14,
+    stderr_summary = $15,
+    checker_message = $16,
+    error_class = $17,
+    error_message = $18,
+    manifest = $19,
+    trace_id = coalesce($20, trace_id),
+    finished_at = coalesce($21, finished_at, now()),
     updated_at = now()
-WHERE id = $16
-RETURNING id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, verdict, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, metrics, trace_id, started_at, finished_at, created_at, updated_at
+WHERE id = $22
+RETURNING id, submission_id, run_id, task_id, rejudge_batch_id, attempt_no, protocol_version, judge_core_version, judge_engine, judge_agent_id, language_id, language_runtime, sandbox_backend, sandbox_profile, testcase_set_id, testcase_set_hash, checker_hash, validator_hash, status, time_ms, memory_kb, first_failed_case_index, first_failed_group, compile_output_summary, stderr_summary, checker_message, error_class, error_message, manifest, trace_id, started_at, finished_at, created_at, updated_at
 `
 
 type MarkJudgeAttemptFinishedParams struct {
 	Status               string             `db:"status" json:"status"`
-	Verdict              pgtype.Text        `db:"verdict" json:"verdict"`
+	JudgeCoreVersion     pgtype.Text        `db:"judge_core_version" json:"judge_core_version"`
+	JudgeAgentID         pgtype.Text        `db:"judge_agent_id" json:"judge_agent_id"`
+	LanguageRuntime      pgtype.Text        `db:"language_runtime" json:"language_runtime"`
+	SandboxBackend       pgtype.Text        `db:"sandbox_backend" json:"sandbox_backend"`
+	SandboxProfile       pgtype.Text        `db:"sandbox_profile" json:"sandbox_profile"`
+	TestcaseSetHash      pgtype.Text        `db:"testcase_set_hash" json:"testcase_set_hash"`
+	CheckerHash          pgtype.Text        `db:"checker_hash" json:"checker_hash"`
+	ValidatorHash        pgtype.Text        `db:"validator_hash" json:"validator_hash"`
 	TimeMs               pgtype.Int4        `db:"time_ms" json:"time_ms"`
 	MemoryKb             pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
 	FirstFailedCaseIndex pgtype.Int4        `db:"first_failed_case_index" json:"first_failed_case_index"`
@@ -2554,7 +2448,6 @@ type MarkJudgeAttemptFinishedParams struct {
 	ErrorClass           pgtype.Text        `db:"error_class" json:"error_class"`
 	ErrorMessage         pgtype.Text        `db:"error_message" json:"error_message"`
 	Manifest             []byte             `db:"manifest" json:"manifest"`
-	Metrics              []byte             `db:"metrics" json:"metrics"`
 	TraceID              pgtype.Text        `db:"trace_id" json:"trace_id"`
 	FinishedAt           pgtype.Timestamptz `db:"finished_at" json:"finished_at"`
 	ID                   int64              `db:"id" json:"id"`
@@ -2563,7 +2456,14 @@ type MarkJudgeAttemptFinishedParams struct {
 func (q *Queries) MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAttemptFinishedParams) (JudgeAttempt, error) {
 	row := q.db.QueryRow(ctx, markJudgeAttemptFinished,
 		arg.Status,
-		arg.Verdict,
+		arg.JudgeCoreVersion,
+		arg.JudgeAgentID,
+		arg.LanguageRuntime,
+		arg.SandboxBackend,
+		arg.SandboxProfile,
+		arg.TestcaseSetHash,
+		arg.CheckerHash,
+		arg.ValidatorHash,
 		arg.TimeMs,
 		arg.MemoryKb,
 		arg.FirstFailedCaseIndex,
@@ -2574,7 +2474,6 @@ func (q *Queries) MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAtt
 		arg.ErrorClass,
 		arg.ErrorMessage,
 		arg.Manifest,
-		arg.Metrics,
 		arg.TraceID,
 		arg.FinishedAt,
 		arg.ID,
@@ -2600,8 +2499,6 @@ func (q *Queries) MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAtt
 		&i.CheckerHash,
 		&i.ValidatorHash,
 		&i.Status,
-		&i.Verdict,
-		&i.Score,
 		&i.TimeMs,
 		&i.MemoryKb,
 		&i.FirstFailedCaseIndex,
@@ -2612,7 +2509,6 @@ func (q *Queries) MarkJudgeAttemptFinished(ctx context.Context, arg MarkJudgeAtt
 		&i.ErrorClass,
 		&i.ErrorMessage,
 		&i.Manifest,
-		&i.Metrics,
 		&i.TraceID,
 		&i.StartedAt,
 		&i.FinishedAt,
@@ -2834,20 +2730,14 @@ func (q *Queries) MarkStaleRunsSystemError(ctx context.Context, arg MarkStaleRun
 const markSubmissionQueued = `-- name: MarkSubmissionQueued :one
 UPDATE submissions
 SET status = 'queued',
-    error_message = $1,
     updated_at = now()
-WHERE id = $2
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
+WHERE id = $1
+  AND status IN ('queued', 'running')
+RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, submitted_at, judged_at, first_judged_at, updated_at, effective_attempt_id
 `
 
-type MarkSubmissionQueuedParams struct {
-	ErrorMessage pgtype.Text `db:"error_message" json:"error_message"`
-	ID           int64       `db:"id" json:"id"`
-}
-
-func (q *Queries) MarkSubmissionQueued(ctx context.Context, arg MarkSubmissionQueuedParams) (Submission, error) {
-	row := q.db.QueryRow(ctx, markSubmissionQueued, arg.ErrorMessage, arg.ID)
+func (q *Queries) MarkSubmissionQueued(ctx context.Context, id int64) (Submission, error) {
+	row := q.db.QueryRow(ctx, markSubmissionQueued, id)
 	var i Submission
 	err := row.Scan(
 		&i.ID,
@@ -2858,14 +2748,11 @@ func (q *Queries) MarkSubmissionQueued(ctx context.Context, arg MarkSubmissionQu
 		&i.TestcaseSetID,
 		&i.Status,
 		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
 		&i.SubmittedAt,
 		&i.JudgedAt,
 		&i.FirstJudgedAt,
 		&i.UpdatedAt,
+		&i.EffectiveAttemptID,
 	)
 	return i, err
 }
@@ -2876,7 +2763,7 @@ SET status = 'running',
     updated_at = now()
 WHERE id = $1
   AND status = 'queued'
-RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
+RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, submitted_at, judged_at, first_judged_at, updated_at, effective_attempt_id
 `
 
 func (q *Queries) MarkSubmissionRunning(ctx context.Context, id int64) (Submission, error) {
@@ -2891,55 +2778,11 @@ func (q *Queries) MarkSubmissionRunning(ctx context.Context, id int64) (Submissi
 		&i.TestcaseSetID,
 		&i.Status,
 		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
 		&i.SubmittedAt,
 		&i.JudgedAt,
 		&i.FirstJudgedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const markSubmissionSystemError = `-- name: MarkSubmissionSystemError :one
-UPDATE submissions
-SET status = 'system_error',
-    error_message = $1,
-    judged_at = CASE WHEN judged_at IS NULL THEN now() ELSE judged_at END,
-    first_judged_at = CASE WHEN first_judged_at IS NULL THEN now() ELSE first_judged_at END,
-    updated_at = now()
-WHERE id = $2
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
-`
-
-type MarkSubmissionSystemErrorParams struct {
-	ErrorMessage pgtype.Text `db:"error_message" json:"error_message"`
-	ID           int64       `db:"id" json:"id"`
-}
-
-func (q *Queries) MarkSubmissionSystemError(ctx context.Context, arg MarkSubmissionSystemErrorParams) (Submission, error) {
-	row := q.db.QueryRow(ctx, markSubmissionSystemError, arg.ErrorMessage, arg.ID)
-	var i Submission
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.ProblemID,
-		&i.ContestID,
-		&i.LanguageID,
-		&i.TestcaseSetID,
-		&i.Status,
-		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
-		&i.SubmittedAt,
-		&i.JudgedAt,
-		&i.FirstJudgedAt,
-		&i.UpdatedAt,
+		&i.EffectiveAttemptID,
 	)
 	return i, err
 }
@@ -2985,15 +2828,11 @@ func (q *Queries) PrepareJudgeTaskForRejudge(ctx context.Context, arg PrepareJud
 const prepareSubmissionForRejudge = `-- name: PrepareSubmissionForRejudge :one
 UPDATE submissions
 SET status = 'queued',
-    time_ms = NULL,
-    memory_kb = NULL,
-    score = 0,
-    error_message = NULL,
     judged_at = NULL,
     updated_at = now()
 WHERE id = $1
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
+  AND status = 'judged'
+RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, submitted_at, judged_at, first_judged_at, updated_at, effective_attempt_id
 `
 
 func (q *Queries) PrepareSubmissionForRejudge(ctx context.Context, id int64) (Submission, error) {
@@ -3008,14 +2847,11 @@ func (q *Queries) PrepareSubmissionForRejudge(ctx context.Context, id int64) (Su
 		&i.TestcaseSetID,
 		&i.Status,
 		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
 		&i.SubmittedAt,
 		&i.JudgedAt,
 		&i.FirstJudgedAt,
 		&i.UpdatedAt,
+		&i.EffectiveAttemptID,
 	)
 	return i, err
 }
@@ -3033,14 +2869,15 @@ WITH recovered AS (
       AND EXISTS (
           SELECT 1
           FROM submissions
+          JOIN judge_attempts ON judge_attempts.id = submissions.effective_attempt_id
           WHERE submissions.id = judge_tasks.submission_id
-            AND submissions.status = 'system_error'
+            AND submissions.status = 'judged'
+            AND judge_attempts.status = 'system_error'
       )
     RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 ), recovered_submissions AS (
     UPDATE submissions
     SET status = 'queued',
-        error_message = $2,
         judged_at = NULL,
         updated_at = now()
     FROM recovered
@@ -3156,13 +2993,12 @@ WITH reset_tasks AS (
           SELECT 1
           FROM submissions
           WHERE submissions.id = judge_tasks.submission_id
-            AND submissions.status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
+            AND submissions.status IN ('queued', 'running')
       )
     RETURNING id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
 ), reset_submissions AS (
     UPDATE submissions
     SET status = 'queued',
-        error_message = $1,
         updated_at = now()
     FROM reset_tasks
     WHERE submissions.id = reset_tasks.submission_id
@@ -3225,18 +3061,15 @@ func (q *Queries) ResetStaleJudgeTasks(ctx context.Context, arg ResetStaleJudgeT
 
 const restoreSubmissionAfterCanceledRejudge = `-- name: RestoreSubmissionAfterCanceledRejudge :one
 UPDATE submissions
-SET status = submission_results.status,
-    time_ms = submission_results.time_ms,
-    memory_kb = submission_results.memory_kb,
-    score = submission_results.score,
-    error_message = NULL,
-    judged_at = coalesce(submissions.judged_at, submission_results.updated_at),
+SET status = 'judged',
+    judged_at = judge_attempts.finished_at,
     updated_at = now()
-FROM submission_results
+FROM judge_attempts
 WHERE submissions.id = $1
-  AND submission_results.submission_id = submissions.id
+  AND judge_attempts.id = submissions.effective_attempt_id
+  AND judge_attempts.submission_id = submissions.id
   AND submissions.status = 'queued'
-RETURNING submissions.id, submissions.user_id, submissions.problem_id, submissions.contest_id, submissions.language_id, submissions.testcase_set_id, submissions.status, submissions.source_artifact_id, submissions.time_ms, submissions.memory_kb, submissions.score, submissions.error_message, submissions.submitted_at, submissions.judged_at, submissions.first_judged_at, submissions.updated_at
+RETURNING submissions.id, submissions.user_id, submissions.problem_id, submissions.contest_id, submissions.language_id, submissions.testcase_set_id, submissions.status, submissions.source_artifact_id, submissions.submitted_at, submissions.judged_at, submissions.first_judged_at, submissions.updated_at, submissions.effective_attempt_id
 `
 
 func (q *Queries) RestoreSubmissionAfterCanceledRejudge(ctx context.Context, submissionID int64) (Submission, error) {
@@ -3251,14 +3084,11 @@ func (q *Queries) RestoreSubmissionAfterCanceledRejudge(ctx context.Context, sub
 		&i.TestcaseSetID,
 		&i.Status,
 		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
 		&i.SubmittedAt,
 		&i.JudgedAt,
 		&i.FirstJudgedAt,
 		&i.UpdatedAt,
+		&i.EffectiveAttemptID,
 	)
 	return i, err
 }
@@ -3480,44 +3310,24 @@ func (q *Queries) UpdateRunStatus(ctx context.Context, arg UpdateRunStatusParams
 
 const updateSubmissionStatus = `-- name: UpdateSubmissionStatus :one
 UPDATE submissions
-SET status = $1,
-    time_ms = $2,
-    memory_kb = $3,
-    error_message = $4,
-    judged_at = CASE
-        WHEN judged_at IS NULL
-          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce($5, now())
-        ELSE judged_at
-    END,
-    first_judged_at = CASE
-        WHEN first_judged_at IS NULL
-          AND $1::text IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled') THEN coalesce($5, now())
-        ELSE first_judged_at
-    END,
+SET status = 'judged',
+    effective_attempt_id = $1,
+    judged_at = coalesce($2, now()),
+    first_judged_at = coalesce(first_judged_at, $2, now()),
     updated_at = now()
-WHERE id = $6
-  AND status NOT IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, time_ms, memory_kb, score, error_message, submitted_at, judged_at, first_judged_at, updated_at
+WHERE id = $3
+  AND status IN ('queued', 'running')
+RETURNING id, user_id, problem_id, contest_id, language_id, testcase_set_id, status, source_artifact_id, submitted_at, judged_at, first_judged_at, updated_at, effective_attempt_id
 `
 
 type UpdateSubmissionStatusParams struct {
-	Status       string             `db:"status" json:"status"`
-	TimeMs       pgtype.Int4        `db:"time_ms" json:"time_ms"`
-	MemoryKb     pgtype.Int4        `db:"memory_kb" json:"memory_kb"`
-	ErrorMessage pgtype.Text        `db:"error_message" json:"error_message"`
-	JudgedAt     pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
-	ID           int64              `db:"id" json:"id"`
+	EffectiveAttemptID pgtype.Int8        `db:"effective_attempt_id" json:"effective_attempt_id"`
+	JudgedAt           pgtype.Timestamptz `db:"judged_at" json:"judged_at"`
+	ID                 int64              `db:"id" json:"id"`
 }
 
 func (q *Queries) UpdateSubmissionStatus(ctx context.Context, arg UpdateSubmissionStatusParams) (Submission, error) {
-	row := q.db.QueryRow(ctx, updateSubmissionStatus,
-		arg.Status,
-		arg.TimeMs,
-		arg.MemoryKb,
-		arg.ErrorMessage,
-		arg.JudgedAt,
-		arg.ID,
-	)
+	row := q.db.QueryRow(ctx, updateSubmissionStatus, arg.EffectiveAttemptID, arg.JudgedAt, arg.ID)
 	var i Submission
 	err := row.Scan(
 		&i.ID,
@@ -3528,91 +3338,11 @@ func (q *Queries) UpdateSubmissionStatus(ctx context.Context, arg UpdateSubmissi
 		&i.TestcaseSetID,
 		&i.Status,
 		&i.SourceArtifactID,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.Score,
-		&i.ErrorMessage,
 		&i.SubmittedAt,
 		&i.JudgedAt,
 		&i.FirstJudgedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const upsertSubmissionResult = `-- name: UpsertSubmissionResult :one
-INSERT INTO submission_results (
-    submission_id,
-    attempt_id,
-    status,
-    time_ms,
-    memory_kb,
-    first_failed_case_index,
-    first_failed_group,
-    error_class,
-    safe_summary
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9
-)
-ON CONFLICT (submission_id) DO UPDATE
-SET attempt_id = EXCLUDED.attempt_id,
-    status = EXCLUDED.status,
-    time_ms = EXCLUDED.time_ms,
-    memory_kb = EXCLUDED.memory_kb,
-    first_failed_case_index = EXCLUDED.first_failed_case_index,
-    first_failed_group = EXCLUDED.first_failed_group,
-    error_class = EXCLUDED.error_class,
-    safe_summary = EXCLUDED.safe_summary,
-    updated_at = now()
-RETURNING submission_id, attempt_id, status, score, time_ms, memory_kb, first_failed_case_index, first_failed_group, error_class, safe_summary, created_at, updated_at
-`
-
-type UpsertSubmissionResultParams struct {
-	SubmissionID         int64       `db:"submission_id" json:"submission_id"`
-	AttemptID            int64       `db:"attempt_id" json:"attempt_id"`
-	Status               string      `db:"status" json:"status"`
-	TimeMs               pgtype.Int4 `db:"time_ms" json:"time_ms"`
-	MemoryKb             pgtype.Int4 `db:"memory_kb" json:"memory_kb"`
-	FirstFailedCaseIndex pgtype.Int4 `db:"first_failed_case_index" json:"first_failed_case_index"`
-	FirstFailedGroup     pgtype.Text `db:"first_failed_group" json:"first_failed_group"`
-	ErrorClass           pgtype.Text `db:"error_class" json:"error_class"`
-	SafeSummary          []byte      `db:"safe_summary" json:"safe_summary"`
-}
-
-func (q *Queries) UpsertSubmissionResult(ctx context.Context, arg UpsertSubmissionResultParams) (SubmissionResult, error) {
-	row := q.db.QueryRow(ctx, upsertSubmissionResult,
-		arg.SubmissionID,
-		arg.AttemptID,
-		arg.Status,
-		arg.TimeMs,
-		arg.MemoryKb,
-		arg.FirstFailedCaseIndex,
-		arg.FirstFailedGroup,
-		arg.ErrorClass,
-		arg.SafeSummary,
-	)
-	var i SubmissionResult
-	err := row.Scan(
-		&i.SubmissionID,
-		&i.AttemptID,
-		&i.Status,
-		&i.Score,
-		&i.TimeMs,
-		&i.MemoryKb,
-		&i.FirstFailedCaseIndex,
-		&i.FirstFailedGroup,
-		&i.ErrorClass,
-		&i.SafeSummary,
-		&i.CreatedAt,
-		&i.UpdatedAt,
+		&i.EffectiveAttemptID,
 	)
 	return i, err
 }

@@ -20,7 +20,7 @@ PostgreSQL is the source of truth. Redis Stream messages are delivery hints and 
 
 ## Dead Letter Policy
 
-When a task exhausts retries, the worker first marks PostgreSQL `judge_tasks.status = dead` and `submissions.status = system_error`, then writes a dead-letter message to `soj:judge:tasks:dead`, then acknowledges the original Redis message. If dead-letter publishing fails, PostgreSQL remains the operational source of truth.
+When a task exhausts retries, the worker first marks PostgreSQL `judge_tasks.status = dead` and records a finished `system_error` attempt as the submission’s effective result (`submissions.status = judged`). It then writes a dead-letter message to `soj:judge:tasks:dead` and acknowledges the original Redis message. If dead-letter publishing fails, PostgreSQL remains the operational source of truth.
 
 ## Local Judge
 

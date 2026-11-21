@@ -217,12 +217,9 @@ INSERT INTO contest_problem_results (
     attempts,
     accepted_at,
     penalty_minutes,
-    last_submission_id,
-    best_submission_id,
-    best_attempt_id,
-    last_attempt_id
+    last_submission_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 ON CONFLICT (contest_id, user_id, problem_id) DO UPDATE
 SET status = EXCLUDED.status,
@@ -230,9 +227,6 @@ SET status = EXCLUDED.status,
     accepted_at = EXCLUDED.accepted_at,
     penalty_minutes = EXCLUDED.penalty_minutes,
     last_submission_id = EXCLUDED.last_submission_id,
-    best_submission_id = EXCLUDED.best_submission_id,
-    best_attempt_id = EXCLUDED.best_attempt_id,
-    last_attempt_id = EXCLUDED.last_attempt_id,
     updated_at = now()
 RETURNING *;
 
@@ -250,12 +244,12 @@ WHERE contest_id = sqlc.arg('contest_id')
 ORDER BY user_id, problem_id;
 
 -- name: ListContestTerminalSubmissions :many
-SELECT id, user_id, problem_id, contest_id, status, submitted_at, judged_at, first_judged_at
-FROM submissions
-WHERE contest_id = $1::bigint
-  AND judged_at IS NOT NULL
-  AND status IN ('accepted', 'wrong_answer', 'compile_error', 'runtime_error', 'time_limit', 'memory_limit', 'output_limit', 'system_error', 'canceled')
-ORDER BY submitted_at, id;
+SELECT s.id, s.user_id, s.problem_id, s.contest_id, a.status, s.submitted_at, s.judged_at, s.first_judged_at
+FROM submissions s
+JOIN judge_attempts a ON a.id = s.effective_attempt_id
+WHERE s.contest_id = $1::bigint
+  AND s.status = 'judged'
+ORDER BY s.submitted_at, s.id;
 
 -- name: ListContestScoreSnapshotCandidates :many
 SELECT id,

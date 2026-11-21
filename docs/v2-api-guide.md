@@ -124,7 +124,7 @@ Submission and run creation reject a language that administrators disabled with 
 
 Submission result visibility:
 
-- `result` is the current safe projection from `submission_results`; complete evidence stays in `judge_attempts` and `judge_case_results`.
+- `result` is the safe view of the effective judge attempt selected by the submission. Detailed evidence stays in `judge_attempts` and `judge_case_results`.
 - `cases` contains sanitized case summaries only. It does not expose testcase keys, artifact ids, storage keys, raw manifest, stdout, stderr, or full diffs.
 - `admin_diagnostics` is present only for admin/root or contest owner contexts that are explicitly allowed by the service policy.
 - ACM contest submissions after freeze return `visibility: "frozen"` and omit `result`, `cases`, and `admin_diagnostics` for contestants until final visibility opens.

@@ -83,7 +83,7 @@ func TestCursorQueriesExecuteAgainstPostgres(t *testing.T) {
 		BeforeID:          1<<63 - 1,
 		Limit:             10,
 	})
-	if err != nil || len(submissions) != 1 || submissions[0].ID != fixture.submissionID {
+	if err != nil || len(submissions) != 1 || submissions[0].Submission.ID != fixture.submissionID || submissions[0].OutcomeStatus != "accepted" {
 		t.Fatalf("list submissions: rows=%v err=%v", submissions, err)
 	}
 }
@@ -129,7 +129,7 @@ func seedCursorQueryIntegrationData(t *testing.T, ctx context.Context, tx integr
 	}
 	statements := []statement{
 		{
-			// Roles live in user_role_assignments, not on users: migration 000004 only
+			// Roles live in user_role_assignments, not on users: the schema only
 			// migrates a legacy users.role column away when a database still has it.
 			// ListUsersByCursor does not read roles, so no assignment is needed.
 			query: `INSERT INTO users (id, email, password_hash, username, status) VALUES
@@ -155,7 +155,7 @@ func seedCursorQueryIntegrationData(t *testing.T, ctx context.Context, tx integr
 			args: []any{fixture.languageID, fixture.token + "-go"},
 		},
 		{
-			// testcase_sets.status was dropped by migration 000008; currentness is
+			// Testcase sets do not have a status column; currentness is
 			// is_current alone.
 			query: `INSERT INTO testcase_sets (id, problem_id, version, storage_key, checksum_sha256, size_bytes, case_count, is_current, created_by)
 				VALUES ($1, $2, 1, $3, repeat('a', 64), 1, 1, true, $4)`,
@@ -177,8 +177,19 @@ func seedCursorQueryIntegrationData(t *testing.T, ctx context.Context, tx integr
 		},
 		{
 			query: `INSERT INTO submissions (id, user_id, problem_id, language_id, testcase_set_id, status)
-				VALUES ($1, $2, $3, $4, $5, 'accepted')`,
+				VALUES ($1, $2, $3, $4, $5, 'queued')`,
 			args: []any{fixture.submissionID, fixture.userOneID, fixture.publicProblemID, fixture.languageID, fixture.testcaseSetID},
+		},
+		{
+			query: `INSERT INTO judge_attempts
+				(submission_id, attempt_no, protocol_version, judge_core_version, judge_engine, language_id, status, finished_at)
+				VALUES ($1, 1, 'test-protocol', 'test-core', 'test-engine', $2, 'accepted', now())`,
+			args: []any{fixture.submissionID, fixture.languageID},
+		},
+		{
+			query: `UPDATE submissions s SET status = 'judged', effective_attempt_id = a.id, judged_at = a.finished_at, first_judged_at = a.finished_at
+				FROM judge_attempts a WHERE a.submission_id = s.id AND s.id = $1`,
+			args: []any{fixture.submissionID},
 		},
 	}
 	for _, statement := range statements {

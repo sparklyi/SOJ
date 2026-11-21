@@ -25,6 +25,8 @@ const (
 	ActionProblemArchived        Action = "problem.archived"
 	ActionProblemRestored        Action = "problem.restored"
 	ActionContestArchived        Action = "contest.archived"
+	ActionContestRoleGranted     Action = "contest.role.granted"
+	ActionContestRoleRevoked     Action = "contest.role.revoked"
 	ActionRolePermissionsUpdated Action = "role.permissions.updated"
 )
 
@@ -93,6 +95,8 @@ var validActions = map[Action]struct{}{
 	ActionProblemArchived:        {},
 	ActionProblemRestored:        {},
 	ActionContestArchived:        {},
+	ActionContestRoleGranted:     {},
+	ActionContestRoleRevoked:     {},
 	ActionRolePermissionsUpdated: {},
 }
 

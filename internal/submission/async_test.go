@@ -353,8 +353,8 @@ func TestResultConsumerIsIdempotentAndAcksAfterPersist(t *testing.T) {
 	if repo.events[len(repo.events)-1] != "ack" {
 		t.Fatalf("events = %v", repo.events)
 	}
-	if repo.results[9].AttemptID != attempt.ID || repo.submissions[9].Status != StatusTimeLimit {
-		t.Fatalf("result projection=%+v submission=%+v", repo.results[9], repo.submissions[9])
+	if sub := repo.submissions[9]; sub.EffectiveAttemptID == nil || *sub.EffectiveAttemptID != attempt.ID || sub.Status != StatusTimeLimit {
+		t.Fatalf("attempt=%+v submission=%+v", attempt, sub)
 	}
 
 	if err := consumer.ProcessResultMessage(ctx, queue.Message{ID: "3-0", TaskID: 7, Payload: payload}, q); err != nil {
@@ -375,7 +375,7 @@ func TestRecoverDeadJudgeTaskResetsRetryBudgetAndQueuesSubmission(t *testing.T) 
 		Attempts:     5,
 		LastError:    "runner image missing",
 	}
-	repo.submissions[9] = SubmissionRecord{ID: 9, Status: StatusSystemErr, ErrorMessage: stringPtr("runner image missing")}
+	repo.submissions[9] = SubmissionRecord{ID: 9, Status: StatusSystemErr}
 	nextRunAt := time.Unix(200, 0).UTC()
 
 	task, err := repo.RecoverDeadJudgeTask(ctx, 7, nextRunAt, "manual recovery after runner fix")
@@ -392,8 +392,8 @@ func TestRecoverDeadJudgeTaskResetsRetryBudgetAndQueuesSubmission(t *testing.T) 
 	if submission.Status != StatusQueued {
 		t.Fatalf("submission status = %q, want queued", submission.Status)
 	}
-	if submission.ErrorMessage == nil || *submission.ErrorMessage != "manual recovery after runner fix" {
-		t.Fatalf("submission error = %v", submission.ErrorMessage)
+	if submission.ErrorMessage != nil {
+		t.Fatalf("operational failure reason must remain on the task: %+v", submission)
 	}
 }
 
