@@ -89,6 +89,9 @@ func (e *FakeEngine) serve(ctx context.Context) (Result, error) {
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	if e.err != nil {
 		return Result{}, e.err
 	}
