@@ -3,6 +3,7 @@ package checker
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 )
 
 type Policy string
@@ -58,13 +59,20 @@ func trimTrailingSpaceLines(value string) string {
 }
 
 func firstDiff(expected, actual string) string {
-	if len(expected) > 80 {
-		expected = expected[:80]
+	return "expected " + quoteSummary(preview(expected)) + ", got " + quoteSummary(preview(actual))
+}
+
+func preview(value string) string {
+	const limit = 80
+	if len(value) <= limit {
+		return value
 	}
-	if len(actual) > 80 {
-		actual = actual[:80]
+	end := limit
+	// Keep the byte limit without splitting the final UTF-8 rune.
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
 	}
-	return "expected " + quoteSummary(expected) + ", got " + quoteSummary(actual)
+	return value[:end]
 }
 
 func quoteSummary(value string) string {
