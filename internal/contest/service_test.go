@@ -749,76 +749,92 @@ func TestValidateSubmissionRequiresPublishedRegistrationAndWindow(t *testing.T) 
 }
 
 func TestContestProblems(t *testing.T) {
-	t.Run("padded aliases collide after trim", func(t *testing.T) {
-		inputs := []ContestProblemInput{
-			{ProblemID: 101, Alias: "  A  "},
-			{ProblemID: 102, Alias: "A"},
-		}
-		_, err := contestProblems(1, inputs)
-		if codeOf(err) != "contest.problem_alias_conflict" {
-			t.Fatalf("padded alias conflict error = %v, want contest.problem_alias_conflict", err)
-		}
-	})
+	tests := []struct {
+		name         string
+		contestID    int64
+		inputs       []ContestProblemInput
+		wantProblems []ContestProblem
+		wantCode     string
+	}{
+		{
+			name: "padded aliases collide after trim",
+			inputs: []ContestProblemInput{
+				{ProblemID: 101, Alias: "  A  "},
+				{ProblemID: 102, Alias: "A"},
+			},
+			wantCode: "contest.problem_alias_conflict",
+		},
+		{
+			name: "repeated IDs with different aliases",
+			inputs: []ContestProblemInput{
+				{ProblemID: 101, Alias: "A"},
+				{ProblemID: 101, Alias: "B"},
+			},
+			wantCode: "contest.problem_conflict",
+		},
+		{
+			name: "whitespace-only alias",
+			inputs: []ContestProblemInput{
+				{ProblemID: 101, Alias: "   "},
+			},
+			wantCode: "request.invalid",
+		},
+		{
+			name: "nonpositive problem ID zero",
+			inputs: []ContestProblemInput{
+				{ProblemID: 0, Alias: "A"},
+			},
+			wantCode: "request.invalid",
+		},
+		{
+			name: "nonpositive problem ID negative",
+			inputs: []ContestProblemInput{
+				{ProblemID: -1, Alias: "A"},
+			},
+			wantCode: "request.invalid",
+		},
+		{
+			name:      "valid list with unsorted IDs preserves input order and trims aliases",
+			contestID: 42,
+			inputs: []ContestProblemInput{
+				{ProblemID: 300, Alias: "  P1  "},
+				{ProblemID: 100, Alias: "P2"},
+				{ProblemID: 200, Alias: "\tP3 "},
+			},
+			wantProblems: []ContestProblem{
+				{ContestID: 42, ProblemID: 300, Alias: "P1", SortOrder: 1},
+				{ContestID: 42, ProblemID: 100, Alias: "P2", SortOrder: 2},
+				{ContestID: 42, ProblemID: 200, Alias: "P3", SortOrder: 3},
+			},
+		},
+	}
 
-	t.Run("repeated problem id with different aliases", func(t *testing.T) {
-		inputs := []ContestProblemInput{
-			{ProblemID: 101, Alias: "A"},
-			{ProblemID: 101, Alias: "B"},
-		}
-		_, err := contestProblems(1, inputs)
-		if codeOf(err) != "contest.problem_conflict" {
-			t.Fatalf("duplicate problem id error = %v, want contest.problem_conflict", err)
-		}
-	})
-
-	t.Run("whitespace-only alias is invalid", func(t *testing.T) {
-		inputs := []ContestProblemInput{
-			{ProblemID: 101, Alias: "   "},
-		}
-		_, err := contestProblems(1, inputs)
-		if codeOf(err) != "request.invalid" {
-			t.Fatalf("whitespace-only alias error = %v, want request.invalid", err)
-		}
-	})
-
-	t.Run("nonpositive problem id is invalid", func(t *testing.T) {
-		for _, id := range []int64{0, -1, -42} {
-			inputs := []ContestProblemInput{
-				{ProblemID: id, Alias: "A"},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contestID := tt.contestID
+			if contestID == 0 {
+				contestID = 1
 			}
-			_, err := contestProblems(1, inputs)
-			if codeOf(err) != "request.invalid" {
-				t.Fatalf("problem id %d error = %v, want request.invalid", id, err)
+			got, err := contestProblems(contestID, tt.inputs)
+			if tt.wantCode != "" {
+				if codeOf(err) != tt.wantCode {
+					t.Fatalf("codeOf(err) = %q, want %q (err: %v)", codeOf(err), tt.wantCode, err)
+				}
+				return
 			}
-		}
-	})
-
-	t.Run("valid list preserves input order and trims aliases", func(t *testing.T) {
-		inputs := []ContestProblemInput{
-			{ProblemID: 300, Alias: "  P1  "},
-			{ProblemID: 100, Alias: "P2"},
-			{ProblemID: 200, Alias: "\tP3 "},
-		}
-		got, err := contestProblems(42, inputs)
-		if err != nil {
-			t.Fatalf("contestProblems returned unexpected error: %v", err)
-		}
-		if len(got) != 3 {
-			t.Fatalf("len = %d, want 3", len(got))
-		}
-
-		want := []ContestProblem{
-			{ContestID: 42, ProblemID: 300, Alias: "P1", SortOrder: 1},
-			{ContestID: 42, ProblemID: 100, Alias: "P2", SortOrder: 2},
-			{ContestID: 42, ProblemID: 200, Alias: "P3", SortOrder: 3},
-		}
-
-		for i, p := range got {
-			if p != want[i] {
-				t.Errorf("got[%d] = %+v, want %+v", i, p, want[i])
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
-		}
-	})
+			if len(got) != len(tt.wantProblems) {
+				t.Fatalf("len(got) = %d, want %d", len(got), len(tt.wantProblems))
+			}
+			for i, p := range got {
+				if p != tt.wantProblems[i] {
+					t.Errorf("got[%d] = %+v, want %+v", i, p, tt.wantProblems[i])
+				}
+			}
+		})
+	}
 }
 
 func codeOf(err error) string {
