@@ -85,6 +85,13 @@ func (a *ContestAuthoring) UpdateContest(ctx context.Context, actor auth.Actor, 
 	if err := requireContestWriter(actor, current); err != nil {
 		return ContestRecord{}, err
 	}
+	// Creating a contest trims its title. Apply the same normalization here so
+	// an explicitly provided title is stored the same way on update, while a
+	// nil title keeps the existing one and other fields are left untouched.
+	if input.Title != nil {
+		title := strings.TrimSpace(*input.Title)
+		input.Title = &title
+	}
 	if err := validateContestUpdate(current, input); err != nil {
 		return ContestRecord{}, err
 	}

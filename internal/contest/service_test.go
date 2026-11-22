@@ -25,6 +25,61 @@ func newContestService(repo *memoryRepository, now ...func() time.Time) *Service
 	)
 }
 
+func TestUpdateContestTitleNormalization(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	repo := newMemoryRepository()
+	service := newContestService(repo)
+	owner := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}
+	ctx := context.Background()
+
+	created, err := service.CreateContest(ctx, owner, ContestInput{
+		Title:      "  Spring  Round  ",
+		Visibility: VisibilityPublic,
+		Status:     StatusDraft,
+		StartAt:    start,
+		EndAt:      start.Add(time.Hour),
+		FreezeAt:   start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateContest returned error: %v", err)
+	}
+	if created.Title != "Spring  Round" {
+		t.Fatalf("created title = %q, want %q", created.Title, "Spring  Round")
+	}
+
+	updated, err := service.UpdateContest(ctx, owner, created.ID, ContestUpdateInput{Title: stringPtr("  Summer  League  ")})
+	if err != nil {
+		t.Fatalf("UpdateContest returned error: %v", err)
+	}
+	if updated.Title != "Summer  League" {
+		t.Fatalf("updated title = %q, want %q", updated.Title, "Summer  League")
+	}
+	if stored := repo.contests[created.ID].Title; stored != "Summer  League" {
+		t.Fatalf("stored title = %q, want %q", stored, "Summer  League")
+	}
+
+	// An omitted title must leave the existing one alone, while other fields still update.
+	same, err := service.UpdateContest(ctx, owner, created.ID, ContestUpdateInput{Description: stringPtr("new description")})
+	if err != nil {
+		t.Fatalf("UpdateContest without a title returned error: %v", err)
+	}
+	if same.Title != "Summer  League" {
+		t.Fatalf("title after an update with no title = %q, want %q", same.Title, "Summer  League")
+	}
+	if same.Description == nil || *same.Description != "new description" {
+		t.Fatalf("description = %v, want %q", same.Description, "new description")
+	}
+
+	// A whitespace-only title is still invalid and must not overwrite the stored title.
+	_, err = service.UpdateContest(ctx, owner, created.ID, ContestUpdateInput{Title: stringPtr("   ")})
+	if codeOf(err) != "request.invalid" {
+		t.Fatalf("whitespace-only title error = %v, want request.invalid", err)
+	}
+	if stored := repo.contests[created.ID].Title; stored != "Summer  League" {
+		t.Fatalf("stored title after rejected update = %q, want %q", stored, "Summer  League")
+	}
+}
+
 func TestScoreboardUsesACMPenaltyAndTieRank(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	repo := newMemoryRepository()
