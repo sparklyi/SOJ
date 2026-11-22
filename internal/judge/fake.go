@@ -73,6 +73,10 @@ func (e *FakeEngine) Run(ctx context.Context, request RunRequest) (Result, error
 // serve applies the configured delay and returns the next scripted result.
 // Shared so Judge and Run cannot drift on how results are scripted.
 func (e *FakeEngine) serve(ctx context.Context) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+
 	e.mu.Lock()
 	delay := e.delay
 	e.mu.Unlock()

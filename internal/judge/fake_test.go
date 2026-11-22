@@ -2,7 +2,9 @@ package judge
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 )
 
 func TestFakeEngineRecordsRequestsAndReturnsQueuedResults(t *testing.T) {
@@ -40,6 +42,45 @@ func TestFakeEngineServesRunsFromTheSameScript(t *testing.T) {
 	runs := engine.RunRequests()
 	if len(runs) != 1 || runs[0].Stdin != "1 2\n" {
 		t.Fatalf("run requests = %+v, want one with the stdin", runs)
+	}
+}
+
+func TestFakeEngineCanceledContextDoesNotConsumeResult(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, expire := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer expire()
+
+	contexts := map[string]context.Context{"canceled": canceled, "expired": expired}
+	for name, dead := range contexts {
+		t.Run("Judge/"+name, func(t *testing.T) {
+			engine := NewFakeEngine(Result{Verdict: VerdictWrongAnswer, Stdout: "no"})
+
+			if _, err := engine.Judge(dead, Request{LanguageSlug: "go", Source: []byte("package main")}); !errors.Is(err, dead.Err()) {
+				t.Fatalf("first call error = %v, want %v", err, dead.Err())
+			}
+			result, err := engine.Judge(context.Background(), Request{LanguageSlug: "go", Source: []byte("package main")})
+			if err != nil {
+				t.Fatalf("second call returned error: %v", err)
+			}
+			if result.Verdict != VerdictWrongAnswer {
+				t.Fatalf("second call verdict = %q, want %q", result.Verdict, VerdictWrongAnswer)
+			}
+		})
+		t.Run("Run/"+name, func(t *testing.T) {
+			engine := NewFakeEngine(Result{Verdict: VerdictWrongAnswer, Stdout: "no"})
+
+			if _, err := engine.Run(dead, RunRequest{LanguageSlug: "go", Source: []byte("package main")}); !errors.Is(err, dead.Err()) {
+				t.Fatalf("first call error = %v, want %v", err, dead.Err())
+			}
+			result, err := engine.Run(context.Background(), RunRequest{LanguageSlug: "go", Source: []byte("package main")})
+			if err != nil {
+				t.Fatalf("second call returned error: %v", err)
+			}
+			if result.Verdict != VerdictWrongAnswer {
+				t.Fatalf("second call verdict = %q, want %q", result.Verdict, VerdictWrongAnswer)
+			}
+		})
 	}
 }
 
