@@ -629,6 +629,57 @@ func TestContestCRUDRegistrationAndPermissions(t *testing.T) {
 	}
 }
 
+func TestUpdateContestTitleNormalization(t *testing.T) {
+	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	repo := newMemoryRepository()
+	service := newContestService(repo, func() time.Time { return start.Add(-time.Hour) })
+	owner := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}
+
+	created, err := service.CreateContest(context.Background(), owner, ContestInput{
+		Title:       "  Spring  Round  ",
+		Description: stringPtr("  keep me  "),
+		Visibility:  VisibilityPublic,
+		Status:      StatusDraft,
+		StartAt:     start,
+		EndAt:       start.Add(time.Hour),
+		FreezeAt:    start.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateContest returned error: %v", err)
+	}
+	if created.Title != "Spring  Round" {
+		t.Fatalf("created title = %q, want %q", created.Title, "Spring  Round")
+	}
+
+	padded := "  Spring  Round  "
+	updated, err := service.UpdateContest(context.Background(), owner, created.ID, ContestUpdateInput{Title: &padded})
+	if err != nil {
+		t.Fatalf("UpdateContest with padded title returned error: %v", err)
+	}
+	if updated.Title != "Spring  Round" {
+		t.Fatalf("updated title = %q, want %q", updated.Title, "Spring  Round")
+	}
+	if padded != "  Spring  Round  " {
+		t.Fatalf("caller title was mutated to %q", padded)
+	}
+	if updated.Description == nil || *updated.Description != "  keep me  " {
+		t.Fatalf("description = %v, want it unchanged", updated.Description)
+	}
+
+	updated, err = service.UpdateContest(context.Background(), owner, created.ID, ContestUpdateInput{Description: stringPtr("new")})
+	if err != nil {
+		t.Fatalf("UpdateContest without title returned error: %v", err)
+	}
+	if updated.Title != "Spring  Round" {
+		t.Fatalf("title after omitted update = %q, want unchanged", updated.Title)
+	}
+
+	_, err = service.UpdateContest(context.Background(), owner, created.ID, ContestUpdateInput{Title: stringPtr("   ")})
+	if codeOf(err) != "request.invalid" {
+		t.Fatalf("whitespace-only title error = %v, want request.invalid", err)
+	}
+}
+
 func TestPrivateContestRequiresInviteCode(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	repo := newMemoryRepository()

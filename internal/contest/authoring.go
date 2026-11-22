@@ -88,6 +88,10 @@ func (a *ContestAuthoring) UpdateContest(ctx context.Context, actor auth.Actor, 
 	if err := validateContestUpdate(current, input); err != nil {
 		return ContestRecord{}, err
 	}
+	if input.Title != nil {
+		title := strings.TrimSpace(*input.Title)
+		input.Title = &title
+	}
 	var updated ContestRecord
 	err = a.store.WithTx(ctx, func(ctx context.Context, tx contestTransaction) error {
 		var err error
