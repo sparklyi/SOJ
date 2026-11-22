@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,6 +47,98 @@ func TestRedisStreamReadinessFindsConsumerGroup(t *testing.T) {
 
 func TestRedisStreamQueueImplementsStatsProvider(t *testing.T) {
 	var _ QueueStatsProvider = (*RedisStreamQueue)(nil)
+}
+
+// TestRedisStreamQueueEnsure verifies idempotent consumer-group creation
+// without a socket: every case issues exactly one XGROUP CREATE ... MKSTREAM
+// command, a fresh group and a BUSYGROUP reply both succeed, and any other
+// error reaches the caller unchanged.
+func TestRedisStreamQueueEnsure(t *testing.T) {
+	busyGroupErr := errors.New("BUSYGROUP Consumer Group name already exists")
+	sentinelErr := errors.New("LOADING Redis is loading the dataset in memory")
+
+	cases := []struct {
+		name    string
+		startID string // empty exercises the default "$"
+		reply   error  // scripted command error; nil means the command succeeds
+		wantErr error  // nil means Ensure must succeed
+	}{
+		{name: "default $ start ID, group created", reply: nil},
+		{name: "default $ start ID, BUSYGROUP already initialized", reply: busyGroupErr},
+		{name: "default $ start ID, unrelated error preserved", reply: sentinelErr, wantErr: sentinelErr},
+		{name: "explicit 0-0 start ID, group created", startID: "0-0", reply: nil},
+		{name: "explicit 0-0 start ID, BUSYGROUP already initialized", startID: "0-0", reply: busyGroupErr},
+		{name: "explicit 0-0 start ID, unrelated error preserved", startID: "0-0", reply: sentinelErr, wantErr: sentinelErr},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, hook := newScriptedRedisClient(t, tc.reply)
+			q := NewRedisStreamQueue(client, RedisStreamConfig{
+				Stream:  "tasks",
+				Group:   "workers",
+				StartID: tc.startID,
+			})
+
+			wantStart := tc.startID
+			if wantStart == "" {
+				wantStart = "$"
+				if q.cfg.StartID != "$" {
+					t.Fatalf("default StartID = %q, want %q", q.cfg.StartID, "$")
+				}
+			}
+
+			err := q.Ensure(context.Background())
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Ensure() error = %v, want %v", err, tc.wantErr)
+			}
+			hook.requireSingleXGroupCreate(t, "tasks", "workers", wantStart)
+		})
+	}
+}
+
+// scriptedRedisHook records every command and fails it with the scripted
+// error (nil succeeds), so queue code can be driven without a Redis socket.
+type scriptedRedisHook struct {
+	mu       sync.Mutex
+	commands [][]any
+	reply    error
+}
+
+func newScriptedRedisClient(t *testing.T, reply error) (*redis.Client, *scriptedRedisHook) {
+	t.Helper()
+	hook := &scriptedRedisHook{reply: reply}
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+	return client, hook
+}
+
+func (h *scriptedRedisHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *scriptedRedisHook) ProcessHook(redis.ProcessHook) redis.ProcessHook {
+	return func(_ context.Context, cmd redis.Cmder) error {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.commands = append(h.commands, append([]any(nil), cmd.Args()...))
+		return h.reply
+	}
+}
+
+func (h *scriptedRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func (h *scriptedRedisHook) requireSingleXGroupCreate(t *testing.T, stream, group, startID string) {
+	t.Helper()
+	want := []any{"xgroup", "create", stream, group, startID, "mkstream"}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.commands) != 1 {
+		t.Fatalf("recorded commands = %#v, want exactly one %#v", h.commands, want)
+	}
+	if !reflect.DeepEqual(h.commands[0], want) {
+		t.Fatalf("command = %#v, want %#v", h.commands[0], want)
+	}
 }
 
 func TestRedisStreamQueueDefaultsRetentionLimits(t *testing.T) {
