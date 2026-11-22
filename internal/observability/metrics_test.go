@@ -83,7 +83,7 @@ soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="262144"} 2
 soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="1048576"} 2
 soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="4194304"} 2
 soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="+Inf"} 3
-soj_worker_judge_request_payload_size_bytes_sum{service="test"} 4500609
+soj_worker_judge_request_payload_size_bytes_sum{service="test"} 5004609
 soj_worker_judge_request_payload_size_bytes_count{service="test"} 3
 `
 	if err := testutil.GatherAndCompare(metrics.registry, strings.NewReader(expected), "soj_worker_judge_request_payload_size_bytes"); err != nil {
