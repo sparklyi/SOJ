@@ -51,11 +51,25 @@ func (Builtin) Check(ctx context.Context, request Request) (Result, error) {
 }
 
 func trimTrailingSpaceLines(value string) string {
-	lines := strings.Split(value, "\n")
-	for i := range lines {
-		lines[i] = strings.TrimRight(lines[i], " \t\r")
+	// Fast path: scanning for a dirty line does not allocate, so already
+	// normalized output is returned as-is instead of being split and rejoined.
+	rest := value
+	for len(rest) > 0 {
+		line := rest
+		if i := strings.IndexByte(rest, '\n'); i >= 0 {
+			line, rest = rest[:i], rest[i+1:]
+		} else {
+			rest = ""
+		}
+		if strings.TrimRight(line, " \t\r") != line {
+			lines := strings.Split(value, "\n")
+			for i := range lines {
+				lines[i] = strings.TrimRight(lines[i], " \t\r")
+			}
+			return strings.Join(lines, "\n")
+		}
 	}
-	return strings.Join(lines, "\n")
+	return value
 }
 
 func firstDiff(expected, actual string) string {
