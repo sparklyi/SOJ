@@ -975,6 +975,26 @@ func TestCreateProblemRetriesSlugConflict(t *testing.T) {
 	}
 }
 
+// The conflict-retry path must also work for a title with no ASCII slug
+// base: retries keep the "problem-" fallback prefix and still end in a valid
+// slug once a free one is drawn.
+func TestCreateProblemRetriesSlugConflictWithNonAsciiTitle(t *testing.T) {
+	repo := newFakeRepository()
+	repo.slugConflicts = 2
+	service := newProblemService(repo, &fakeStorage{})
+
+	created, err := service.CreateProblem(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, CreateProblemInput{Title: "两数之和"})
+	if err != nil {
+		t.Fatalf("CreateProblem returned error: %v", err)
+	}
+	if repo.slugConflicts != 0 || len(repo.problems) != 1 {
+		t.Fatalf("expected a successful retry, conflicts=%d problems=%d", repo.slugConflicts, len(repo.problems))
+	}
+	if !validSlug(created.Slug) || !strings.HasPrefix(created.Slug, "problem-") {
+		t.Fatalf("generated slug = %q, want problem- fallback prefix plus suffix", created.Slug)
+	}
+}
+
 func TestCreateProblemGivesUpAfterSlugConflicts(t *testing.T) {
 	repo := newFakeRepository()
 	repo.slugConflicts = problemSlugAttempts + 1
