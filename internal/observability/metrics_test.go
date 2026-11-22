@@ -91,6 +91,50 @@ soj_worker_judge_request_payload_size_bytes_count{service="test"} 3
 	}
 }
 
+// Each NewMetrics gets a fresh registry, so observations from one service
+// never leak into another's histogram.
+func TestJudgeRequestPayloadHistogramIsPerRegistry(t *testing.T) {
+	a := NewMetrics("svc-a")
+	b := NewMetrics("svc-b")
+	a.RecordJudgeRequestPayloadSize(100)
+
+	bOnly := `# HELP soj_worker_judge_request_payload_size_bytes Judge request payload size in bytes.
+# TYPE soj_worker_judge_request_payload_size_bytes histogram
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="512"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="1024"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="4096"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="16384"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="65536"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="262144"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="1.048576e+06"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="4.194304e+06"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-b",le="+Inf"} 0
+soj_worker_judge_request_payload_size_bytes_sum{service="svc-b"} 0
+soj_worker_judge_request_payload_size_bytes_count{service="svc-b"} 0
+`
+	if err := testutil.GatherAndCompare(b.registry, strings.NewReader(bOnly), "soj_worker_judge_request_payload_size_bytes"); err != nil {
+		t.Fatalf("svc-b histogram should be empty: %v", err)
+	}
+
+	aExpected := `# HELP soj_worker_judge_request_payload_size_bytes Judge request payload size in bytes.
+# TYPE soj_worker_judge_request_payload_size_bytes histogram
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="512"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="1024"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="4096"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="16384"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="65536"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="262144"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="1.048576e+06"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="4.194304e+06"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="svc-a",le="+Inf"} 1
+soj_worker_judge_request_payload_size_bytes_sum{service="svc-a"} 100
+soj_worker_judge_request_payload_size_bytes_count{service="svc-a"} 1
+`
+	if err := testutil.GatherAndCompare(a.registry, strings.NewReader(aExpected), "soj_worker_judge_request_payload_size_bytes"); err != nil {
+		t.Fatalf("svc-a histogram mismatch: %v", err)
+	}
+}
+
 func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 	metrics := NewMetrics("test")
 	metrics.ObserveJudgeAgentSlots("global", "", 1, 2)
