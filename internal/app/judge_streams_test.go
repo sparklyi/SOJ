@@ -277,7 +277,11 @@ func TestJudgeAgentRequestQueuesTargetConfiguredStreams(t *testing.T) {
 			var commands [][2]string
 			client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 			client.AddHook(recordingHook{commands: &commands})
-			defer client.Close()
+			t.Cleanup(func() {
+				if err := client.Close(); err != nil {
+					t.Errorf("closing redis client: %v", err)
+				}
+			})
 
 			queues := judgeAgentRequestQueues(client, cfg, tt.streams)
 			if len(commands) != 0 {
