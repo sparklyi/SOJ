@@ -40,6 +40,12 @@ func TestBuiltinCheckerPreview(t *testing.T) {
 		preview string
 	}{
 		{"short", "hello", "hello"},
+		{"malformed short", "a\xffb", "a�b"},
+		{"incomplete rune", "\xe2\x82", "��"},
+		{"stray continuation bytes", "\x80\x81", "��"},
+		{"replacement at limit", strings.Repeat("a", 77) + "\xff!", strings.Repeat("a", 77) + "�"},
+		{"replacement exceeds limit", strings.Repeat("a", 78) + "\xff!", strings.Repeat("a", 78)},
+		{"long malformed output", strings.Repeat("\xff", 1000), strings.Repeat("�", 26)},
 		{"ASCII limit", strings.Repeat("a", 81), strings.Repeat("a", 80)},
 		{"two-byte crossing", strings.Repeat("a", 79) + "é", strings.Repeat("a", 79)},
 		{"CJK crossing", strings.Repeat("a", 79) + "界", strings.Repeat("a", 79)},
@@ -87,6 +93,37 @@ func TestBuiltinCheckerComparesBeyondPreview(t *testing.T) {
 		}
 		if result.Accepted != (actual == prefix) {
 			t.Fatalf("unexpected verdict: %+v", result)
+		}
+	}
+}
+
+func TestBuiltinCheckerMalformedBytesKeepOriginalVerdict(t *testing.T) {
+	tests := []struct {
+		expected, actual string
+		accepted         bool
+	}{
+		{"\xff", "\xff", true},
+		{"\xff", "\xfe", false},
+		{"\xff", "�", false},
+	}
+	for _, tt := range tests {
+		result, err := (Builtin{}).Check(context.Background(), Request{Expected: tt.expected, Actual: tt.actual, Policy: PolicyExact})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Accepted != tt.accepted {
+			t.Fatalf("Check(%q, %q) accepted = %v, want %v", tt.expected, tt.actual, result.Accepted, tt.accepted)
+		}
+	}
+}
+
+func TestPreviewMalformedBytesBounded(t *testing.T) {
+	for padding := 0; padding <= 81; padding++ {
+		for _, suffix := range []string{"\xff", "\xe2\x82", "\x80\x81", strings.Repeat("\xff", 1000)} {
+			got := preview(strings.Repeat("a", padding) + suffix)
+			if !utf8.ValidString(got) || len(got) > 80 {
+				t.Fatalf("invalid or overlong preview: %q (%d bytes)", got, len(got))
+			}
 		}
 	}
 }

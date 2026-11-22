@@ -64,15 +64,17 @@ func firstDiff(expected, actual string) string {
 
 func preview(value string) string {
 	const limit = 80
-	if len(value) <= limit {
-		return value
+	var out strings.Builder
+	out.Grow(min(len(value), limit))
+	// Ranging replaces malformed bytes with RuneError. Count encoded bytes so
+	// those replacements also fit within the preview limit.
+	for _, r := range value {
+		if out.Len()+utf8.RuneLen(r) > limit {
+			break
+		}
+		out.WriteRune(r)
 	}
-	end := limit
-	// Keep the byte limit without splitting the final UTF-8 rune.
-	for end > 0 && !utf8.RuneStart(value[end]) {
-		end--
-	}
-	return value[:end]
+	return out.String()
 }
 
 func quoteSummary(value string) string {
