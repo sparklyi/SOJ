@@ -229,7 +229,16 @@ func redisQueueStatsFromRedis(info *redis.XInfoStream, infoErr error, pending *r
 }
 
 func redisQueueStatsMissing(err error) bool {
-	return errors.Is(err, redis.Nil) || strings.Contains(strings.ToUpper(err.Error()), "NOGROUP")
+	if errors.Is(err, redis.Nil) {
+		return true
+	}
+	message := strings.ToUpper(err.Error())
+	// XPENDING answers NOGROUP when the consumer group is gone. XINFO STREAM
+	// answers "ERR no such key" when the stream itself was never created or has
+	// been deleted; both mean the queue has no history to report yet. The key
+	// check stays anchored to the start of a Redis reply so a wrapped error that
+	// merely mentions a missing key is still returned to the caller.
+	return strings.Contains(message, "NOGROUP") || strings.HasPrefix(message, "ERR NO SUCH KEY")
 }
 
 func redisStreamIDAge(id string, now time.Time) time.Duration {
