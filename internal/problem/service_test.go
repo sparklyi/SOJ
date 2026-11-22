@@ -80,6 +80,39 @@ func TestUpdateProblemRejectsStatusMutation(t *testing.T) {
 	assertAppCode(t, err, "problem.status_managed_by_review")
 }
 
+func TestUpdateProblemTitle(t *testing.T) {
+	author := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}
+	for _, blank := range []string{"", "   "} {
+		repo := newFakeRepository()
+		repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Original", Status: StatusDraft, Visibility: VisibilityPrivate}
+		service := newProblemService(repo, &fakeStorage{})
+		title := blank
+
+		_, err := service.UpdateProblem(t.Context(), author, 1, UpdateProblemInput{Title: &title})
+		assertAppCode(t, err, "problem.title_required")
+		if got := repo.problems[1].Title; got != "Original" {
+			t.Fatalf("title after rejected blank update = %q, want %q", got, "Original")
+		}
+	}
+
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Original", Status: StatusDraft, Visibility: VisibilityPrivate}
+	service := newProblemService(repo, &fakeStorage{})
+	if _, err := service.UpdateProblem(t.Context(), author, 1, UpdateProblemInput{}); err != nil {
+		t.Fatalf("omitted title returned error: %v", err)
+	}
+	if got := repo.problems[1].Title; got != "Original" {
+		t.Fatalf("title after omitted update = %q, want %q", got, "Original")
+	}
+	renamed := "Renamed"
+	if _, err := service.UpdateProblem(t.Context(), author, 1, UpdateProblemInput{Title: &renamed}); err != nil {
+		t.Fatalf("valid rename returned error: %v", err)
+	}
+	if got := repo.problems[1].Title; got != "Renamed" {
+		t.Fatalf("title after rename = %q, want %q", got, "Renamed")
+	}
+}
+
 func TestRestoreProblemRequiresManageAll(t *testing.T) {
 	repo := newFakeRepository()
 	seedPublishableProblem(repo)

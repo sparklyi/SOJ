@@ -542,6 +542,9 @@ func validateCreateProblem(input CreateProblemInput) error {
 }
 
 func validateUpdateProblem(input UpdateProblemInput) error {
+	if input.Title != nil && strings.TrimSpace(*input.Title) == "" {
+		return apperror.BadRequest("problem.title_required", "title is required")
+	}
 	if input.Difficulty != nil && !validDifficulty(*input.Difficulty) {
 		return apperror.BadRequest("problem.difficulty_invalid", "difficulty is invalid")
 	}
