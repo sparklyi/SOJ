@@ -59,12 +59,14 @@ func NewS3Storage(opts S3Options) (*S3Storage, error) {
 
 func normalizeEndpoint(endpoint string, secure bool) (string, bool, error) {
 	endpoint = strings.TrimSpace(endpoint)
+	// url.Parse treats "minio:9000" as scheme "minio", not as a host:port.
+	// Bare host-and-port values (DNS, IPv4, bracketed IPv6) keep the caller's Secure flag.
+	if !strings.Contains(endpoint, "://") {
+		return endpoint, secure, nil
+	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return "", false, err
-	}
-	if parsed.Scheme == "" {
-		return endpoint, secure, nil
 	}
 	switch parsed.Scheme {
 	case "http":
