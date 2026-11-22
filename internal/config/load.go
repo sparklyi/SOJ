@@ -150,7 +150,15 @@ func loadFile(cfg *Config, path string) error {
 	if err := decoder.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	return nil
+	var extra yaml.Node
+	err = decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%s: unexpected second document: %w", path, err)
+	}
+	return fmt.Errorf("%s: unexpected second document", path)
 }
 
 func (c Config) validate(role Role) error {
