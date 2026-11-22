@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -152,4 +153,74 @@ func requireXAddRetention(t *testing.T, args []any, stream string, maxLen int64)
 	if len(args) < len(want) || !reflect.DeepEqual(args[:len(want)], want) {
 		t.Fatalf("XADD args = %#v, want prefix %#v", args, want)
 	}
+}
+
+func TestRedisStreamStatsTreatMissingKeyAndNoGroupAsZero(t *testing.T) {
+	missingKey := errors.New("ERR no such key")
+	noGroup := errors.New("NOGROUP No such key 'tasks' or consumer group 'judge-workers'")
+	for _, tc := range []struct {
+		name       string
+		info       *redis.XInfoStream
+		infoErr    error
+		pendingErr error
+		wantDepth  int64
+	}{
+		{name: "stream and group missing", infoErr: missingKey, pendingErr: missingKey},
+		{name: "stream missing, stream recreated without group", infoErr: missingKey, pendingErr: noGroup},
+		{name: "stream present, group missing", info: &redis.XInfoStream{Length: 4}, pendingErr: noGroup, wantDepth: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats, err := redisQueueStatsFromRedis(tc.info, tc.infoErr, nil, tc.pendingErr, time.UnixMilli(1_700_000_010_000))
+			if err != nil {
+				t.Fatalf("redisQueueStatsFromRedis returned error: %v", err)
+			}
+			if stats.Depth != tc.wantDepth || stats.Pending != 0 {
+				t.Fatalf("stats = %+v, want depth %d and no pending", stats, tc.wantDepth)
+			}
+		})
+	}
+}
+
+func TestRedisStreamStatsReportsUnrelatedRedisErrors(t *testing.T) {
+	loadingErr := errors.New("LOADING Redis is loading the dataset in memory")
+	if _, err := redisQueueStatsFromRedis(nil, loadingErr, nil, nil, time.Now()); !errors.Is(err, loadingErr) {
+		t.Fatalf("info error = %v, want %v", err, loadingErr)
+	}
+	typeErr := errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	if _, err := redisQueueStatsFromRedis(nil, nil, nil, typeErr, time.Now()); !errors.Is(err, typeErr) {
+		t.Fatalf("pending error = %v, want %v", err, typeErr)
+	}
+	// Only a Redis missing-key reply counts. An error from elsewhere that happens
+	// to mention a missing key stays visible.
+	wrappedErr := errors.New("vault: no such key in store")
+	if _, err := redisQueueStatsFromRedis(nil, wrappedErr, nil, nil, time.Now()); !errors.Is(err, wrappedErr) {
+		t.Fatalf("info error = %v, want %v", err, wrappedErr)
+	}
+}
+
+func TestRedisStreamQueueStatsReadMissingStreamAsEmpty(t *testing.T) {
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	client.AddHook(missingKeyRedisHook{})
+	t.Cleanup(func() { _ = client.Close() })
+	q := NewRedisStreamQueue(client, RedisStreamConfig{Stream: "tasks", Group: "judge-workers"})
+
+	stats, err := q.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	if stats != (QueueStats{}) {
+		t.Fatalf("Stats() = %+v, want zero values", stats)
+	}
+}
+
+type missingKeyRedisHook struct{}
+
+func (missingKeyRedisHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (missingKeyRedisHook) ProcessHook(redis.ProcessHook) redis.ProcessHook {
+	return func(context.Context, redis.Cmder) error { return errors.New("ERR no such key") }
+}
+
+func (missingKeyRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
 }
