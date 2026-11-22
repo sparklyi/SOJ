@@ -59,6 +59,8 @@ func TestRedisStreamQueueEnsure(t *testing.T) {
 
 	cases := []struct {
 		name    string
+		stream  string // empty uses "tasks"
+		group   string // empty uses "workers"
 		startID string // empty exercises the default "$"
 		reply   error  // scripted command error; nil means the command succeeds
 		wantErr error  // nil means Ensure must succeed
@@ -69,13 +71,21 @@ func TestRedisStreamQueueEnsure(t *testing.T) {
 		{name: "explicit 0-0 start ID, group created", startID: "0-0", reply: nil},
 		{name: "explicit 0-0 start ID, BUSYGROUP already initialized", startID: "0-0", reply: busyGroupErr},
 		{name: "explicit 0-0 start ID, unrelated error preserved", startID: "0-0", reply: sentinelErr, wantErr: sentinelErr},
+		{name: "custom stream and group names", startID: "0-0", stream: "soj:results", group: "judge-workers", reply: nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			client, hook := newScriptedRedisClient(t, tc.reply)
+			stream, group := tc.stream, tc.group
+			if stream == "" {
+				stream = "tasks"
+			}
+			if group == "" {
+				group = "workers"
+			}
 			q := NewRedisStreamQueue(client, RedisStreamConfig{
-				Stream:  "tasks",
-				Group:   "workers",
+				Stream:  stream,
+				Group:   group,
 				StartID: tc.startID,
 			})
 
@@ -91,22 +101,45 @@ func TestRedisStreamQueueEnsure(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Ensure() error = %v, want %v", err, tc.wantErr)
 			}
-			hook.requireSingleXGroupCreate(t, "tasks", "workers", wantStart)
+			hook.requireSingleXGroupCreate(t, stream, group, wantStart)
 		})
 	}
+
+	t.Run("repeated Ensure reissues XGROUP CREATE and stays successful", func(t *testing.T) {
+		// First call creates the group, the second hits BUSYGROUP because the
+		// group already exists; both calls must succeed and both commands must
+		// be the same XGROUP CREATE ... MKSTREAM.
+		client, hook := newScriptedRedisClientReplies(t, nil, busyGroupErr)
+		q := NewRedisStreamQueue(client, RedisStreamConfig{Stream: "tasks", Group: "workers"})
+
+		if err := q.Ensure(context.Background()); err != nil {
+			t.Fatalf("first Ensure() error = %v, want nil", err)
+		}
+		if err := q.Ensure(context.Background()); err != nil {
+			t.Fatalf("second Ensure() error = %v, want nil for BUSYGROUP", err)
+		}
+		hook.requireXGroupCreateSequence(t, "tasks", "workers", "$", 2)
+	})
 }
 
 // scriptedRedisHook records every command and fails it with the scripted
-// error (nil succeeds), so queue code can be driven without a Redis socket.
+// reply (nil succeeds), so queue code can be driven without a Redis socket.
+// When several replies are given they are consumed one per command and the
+// last one repeats.
 type scriptedRedisHook struct {
 	mu       sync.Mutex
 	commands [][]any
-	reply    error
+	replies  []error
 }
 
 func newScriptedRedisClient(t *testing.T, reply error) (*redis.Client, *scriptedRedisHook) {
 	t.Helper()
-	hook := &scriptedRedisHook{reply: reply}
+	return newScriptedRedisClientReplies(t, reply)
+}
+
+func newScriptedRedisClientReplies(t *testing.T, replies ...error) (*redis.Client, *scriptedRedisHook) {
+	t.Helper()
+	hook := &scriptedRedisHook{replies: replies}
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 	client.AddHook(hook)
 	t.Cleanup(func() { _ = client.Close() })
@@ -120,7 +153,14 @@ func (h *scriptedRedisHook) ProcessHook(redis.ProcessHook) redis.ProcessHook {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		h.commands = append(h.commands, append([]any(nil), cmd.Args()...))
-		return h.reply
+		if len(h.replies) == 0 {
+			return nil
+		}
+		reply := h.replies[0]
+		if len(h.replies) > 1 {
+			h.replies = h.replies[1:]
+		}
+		return reply
 	}
 }
 
@@ -128,16 +168,27 @@ func (h *scriptedRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) 
 	return next
 }
 
+func xGroupCreateArgs(stream, group, startID string) []any {
+	return []any{"xgroup", "create", stream, group, startID, "mkstream"}
+}
+
 func (h *scriptedRedisHook) requireSingleXGroupCreate(t *testing.T, stream, group, startID string) {
 	t.Helper()
-	want := []any{"xgroup", "create", stream, group, startID, "mkstream"}
+	h.requireXGroupCreateSequence(t, stream, group, startID, 1)
+}
+
+func (h *scriptedRedisHook) requireXGroupCreateSequence(t *testing.T, stream, group, startID string, wantCount int) {
+	t.Helper()
+	want := xGroupCreateArgs(stream, group, startID)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.commands) != 1 {
-		t.Fatalf("recorded commands = %#v, want exactly one %#v", h.commands, want)
+	if len(h.commands) != wantCount {
+		t.Fatalf("recorded commands = %#v, want %d copies of %#v", h.commands, wantCount, want)
 	}
-	if !reflect.DeepEqual(h.commands[0], want) {
-		t.Fatalf("command = %#v, want %#v", h.commands[0], want)
+	for i, got := range h.commands {
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("command %d = %#v, want %#v", i, got, want)
+		}
 	}
 }
 
