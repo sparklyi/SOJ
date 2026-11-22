@@ -260,3 +260,52 @@ func TestLoadExpandsPlaceholdersInsideQuotedValues(t *testing.T) {
 		t.Fatalf("Storage.Bucket = %q", cfg.Storage.Bucket)
 	}
 }
+
+func TestLoadRejectsSecondYAMLDocument(t *testing.T) {
+	path := writeConfig(t, "http:\n  addr: \":8080\"\n---\nenv: docker\n")
+	_, err := Load(Options{Role: RoleJudgeAgent, File: path})
+	if err == nil {
+		t.Fatal("Load() error = nil, want unexpected second document")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("Load() error = %v, want the config filename %q", err, path)
+	}
+	if !strings.Contains(err.Error(), "unexpected second document") {
+		t.Fatalf("Load() error = %v, want unexpected second document", err)
+	}
+}
+
+func TestLoadRejectsMalformedSecondYAMLDocument(t *testing.T) {
+	path := writeConfig(t, "http:\n  addr: \":8080\"\n---\n: not valid\n")
+	_, err := Load(Options{Role: RoleJudgeAgent, File: path})
+	if err == nil {
+		t.Fatal("Load() error = nil, want unexpected second document")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("Load() error = %v, want the config filename %q", err, path)
+	}
+	if !strings.Contains(err.Error(), "unexpected second document") {
+		t.Fatalf("Load() error = %v, want unexpected second document", err)
+	}
+}
+
+func TestLoadAcceptsSingleDocumentWithTrailingComments(t *testing.T) {
+	cfg := loadAgent(t, `
+http:
+  addr: ":19090"
+# trailing comment after the only document
+`)
+	if cfg.HTTP.Addr != ":19090" {
+		t.Fatalf("HTTP.Addr = %q, want :19090", cfg.HTTP.Addr)
+	}
+}
+
+func TestLoadAcceptsEmptyFile(t *testing.T) {
+	cfg, err := Load(Options{Role: RoleJudgeAgent, File: writeConfig(t, "")})
+	if err != nil {
+		t.Fatalf("Load() empty file error = %v", err)
+	}
+	if cfg.Env != "dev" {
+		t.Fatalf("Env = %q, want defaults from an empty file", cfg.Env)
+	}
+}
