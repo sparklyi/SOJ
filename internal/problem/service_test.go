@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -883,6 +884,77 @@ func TestCreateStatementValidatesSamplesAndMirrorsTitle(t *testing.T) {
 	}
 	if created.Title != "Two Sum" {
 		t.Fatalf("statement title = %q, want problem title", created.Title)
+	}
+}
+
+// Direct cases for generateProblemSlug: an ASCII title slugifies into the
+// prefix, a padded ASCII title is trimmed first, and a title with no ASCII
+// slug base (e.g. CJK) falls back to "problem". The suffix is always six
+// lowercase hex characters; we deliberately do not assert exact random output
+// or uniqueness across draws.
+// slugifyTag is the ASCII-only base generateProblemSlug builds on: it
+// lowercases, trims, keeps [a-z0-9], collapses other runs to single dashes
+// and drops leading/trailing dashes. Non-ASCII input contributes nothing.
+func TestSlugifyTag(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "plain ascii", input: "Two Sum", want: "two-sum"},
+		{name: "padded", input: "  Two Sum  ", want: "two-sum"},
+		{name: "uppercase lowercased", input: "ABC123", want: "abc123"},
+		{name: "underscore becomes dash", input: "two_sum", want: "two-sum"},
+		{name: "punctuation collapses", input: "Hello,  World!", want: "hello-world"},
+		{name: "leading and trailing punctuation dropped", input: "--Two Sum--", want: "two-sum"},
+		{name: "cjk only yields empty", input: "两数之和", want: ""},
+		{name: "emoji only yields empty", input: "🎉🎊", want: ""},
+		{name: "mixed keeps ascii runs", input: "3Sum 两数之和 v2", want: "3sum-v2"},
+		{name: "tabs and newlines are separators", input: "\tTwo\nSum\n", want: "two-sum"},
+		{name: "digits kept", input: "123", want: "123"},
+		{name: "blank", input: "   ", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := slugifyTag(tc.input); got != tc.want {
+				t.Fatalf("slugifyTag(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGenerateProblemSlug(t *testing.T) {
+	suffixRE := regexp.MustCompile(`^[0-9a-f]{6}$`)
+	cases := []struct {
+		name       string
+		title      string
+		wantPrefix string
+	}{
+		{name: "ascii title slugifies", title: "Two Sum", wantPrefix: "two-sum-"},
+		{name: "padded ascii title is trimmed", title: " Two Sum ", wantPrefix: "two-sum-"},
+		{name: "punctuation collapses to dashes", title: "Hello, World!", wantPrefix: "hello-world-"},
+		{name: "non-ascii title falls back to problem", title: "两数之和", wantPrefix: "problem-"},
+		{name: "mixed ascii and non-ascii keeps the ascii base", title: "3Sum 两数之和", wantPrefix: "3sum-"},
+		{name: "no alnum at all falls back", title: "!!!", wantPrefix: "problem-"},
+		{name: "blank title falls back", title: "   ", wantPrefix: "problem-"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			slug, err := generateProblemSlug(tc.title)
+			if err != nil {
+				t.Fatalf("generateProblemSlug(%q) returned error: %v", tc.title, err)
+			}
+			if !validSlug(slug) {
+				t.Fatalf("generateProblemSlug(%q) = %q, not a valid slug", tc.title, slug)
+			}
+			if !strings.HasPrefix(slug, tc.wantPrefix) {
+				t.Fatalf("generateProblemSlug(%q) = %q, want prefix %q", tc.title, slug, tc.wantPrefix)
+			}
+			suffix := strings.TrimPrefix(slug, tc.wantPrefix)
+			if !suffixRE.MatchString(suffix) {
+				t.Fatalf("generateProblemSlug(%q) suffix = %q, want six lowercase hex chars", tc.title, suffix)
+			}
+		})
 	}
 }
 
