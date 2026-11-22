@@ -63,6 +63,34 @@ soj_worker_judge_request_payload_size_bytes_count{service="test"} 1
 	}
 }
 
+// Bucket boundaries are inclusive (le="..."), so 513 lands one bucket above
+// 512, 4096 exactly in le="4096", and a value beyond the top finite bucket
+// only in le="+Inf".
+func TestJudgeRequestPayloadHistogramBucketBoundaries(t *testing.T) {
+	metrics := NewMetrics("test")
+	metrics.RecordJudgeRequestPayloadSize(513)
+	metrics.RecordJudgeRequestPayloadSize(4096)
+	metrics.RecordJudgeRequestPayloadSize(5_000_000)
+
+	expected := `# HELP soj_worker_judge_request_payload_size_bytes Judge request payload size in bytes.
+# TYPE soj_worker_judge_request_payload_size_bytes histogram
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="512"} 0
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="1024"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="4096"} 2
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="16384"} 2
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="65536"} 2
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="262144"} 2
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="1048576"} 2
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="4194304"} 2
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="+Inf"} 3
+soj_worker_judge_request_payload_size_bytes_sum{service="test"} 4500609
+soj_worker_judge_request_payload_size_bytes_count{service="test"} 3
+`
+	if err := testutil.GatherAndCompare(metrics.registry, strings.NewReader(expected), "soj_worker_judge_request_payload_size_bytes"); err != nil {
+		t.Fatalf("histogram mismatch: %v", err)
+	}
+}
+
 func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 	metrics := NewMetrics("test")
 	metrics.ObserveJudgeAgentSlots("global", "", 1, 2)
