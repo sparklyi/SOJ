@@ -176,6 +176,41 @@ func TestNewRejectsDuplicateAndAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestCatalogOwnsCommandSlices(t *testing.T) {
+	for _, source := range []string{"New input", "Lookup result", "Profiles result"} {
+		t.Run(source, func(t *testing.T) {
+			profile := Profile{
+				Slug:       "go",
+				Name:       "Go",
+				SourceFile: "main.go",
+				Compile:    []string{"go", "build", "{{source}}"},
+				Run:        []string{"./main"},
+				Image:      "img:1",
+			}
+			catalog, err := New(profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			switch source {
+			case "Lookup result":
+				profile, _ = catalog.Lookup("go")
+			case "Profiles result":
+				profile = catalog.Profiles()[0]
+			}
+			profile.Compile[0] = "changed-compile"
+			profile.Run[0] = "changed-run"
+
+			lookup, _ := catalog.Lookup("go")
+			for _, got := range []Profile{lookup, catalog.Profiles()[0]} {
+				if got.Compile[0] != "go" || got.Run[0] != "./main" {
+					t.Fatalf("mutating %s changed catalog commands: compile %q, run %q", source, got.Compile, got.Run)
+				}
+			}
+		})
+	}
+}
+
 func TestRuntimeLabel(t *testing.T) {
 	catalog, err := New(Profile{
 		Slug:       "go",

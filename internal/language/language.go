@@ -119,6 +119,12 @@ func (p Profile) validate() error {
 	return errors.Join(errs...)
 }
 
+func (p Profile) clone() Profile {
+	p.Compile = slices.Clone(p.Compile)
+	p.Run = slices.Clone(p.Run)
+	return p
+}
+
 func (p Profile) withDefaults() Profile {
 	if p.TimeLimitMS == 0 {
 		p.TimeLimitMS = DefaultTimeLimitMS
@@ -147,6 +153,7 @@ func New(profiles ...Profile) (*Catalog, error) {
 		if _, duplicate := catalog.bySlug[profile.Slug]; duplicate {
 			return nil, fmt.Errorf("language %q is defined twice", profile.Slug)
 		}
+		profile = profile.clone()
 		catalog.bySlug[profile.Slug] = profile
 		catalog.profiles = append(catalog.profiles, profile)
 	}
@@ -203,10 +210,14 @@ func loadProfile(path string) (Profile, error) {
 // Lookup returns the profile for a slug.
 func (c *Catalog) Lookup(slug string) (Profile, bool) {
 	profile, ok := c.bySlug[slug]
-	return profile, ok
+	return profile.clone(), ok
 }
 
 // Profiles returns every profile in slug order.
 func (c *Catalog) Profiles() []Profile {
-	return slices.Clone(c.profiles)
+	profiles := slices.Clone(c.profiles)
+	for i := range profiles {
+		profiles[i] = profiles[i].clone()
+	}
+	return profiles
 }
