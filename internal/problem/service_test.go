@@ -913,6 +913,11 @@ func TestSlugifyTag(t *testing.T) {
 		{name: "tabs and newlines are separators", input: "\tTwo\nSum\n", want: "two-sum"},
 		{name: "digits kept", input: "123", want: "123"},
 		{name: "blank", input: "   ", want: ""},
+		{name: "single letter", input: "A", want: "a"},
+		{name: "double hyphens collapse", input: "two--sum", want: "two-sum"},
+		{name: "cyrillic contributes nothing", input: "Привет", want: ""},
+		{name: "arabic contributes nothing", input: "مرحبا", want: ""},
+		{name: "plus signs become one dash", input: "C++", want: "c"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -937,6 +942,13 @@ func TestGenerateProblemSlug(t *testing.T) {
 		{name: "mixed ascii and non-ascii keeps the ascii base", title: "3Sum 两数之和", wantPrefix: "3sum-"},
 		{name: "no alnum at all falls back", title: "!!!", wantPrefix: "problem-"},
 		{name: "blank title falls back", title: "   ", wantPrefix: "problem-"},
+		{name: "padded non-ascii still falls back", title: "  两数之和  ", wantPrefix: "problem-"},
+		{name: "cyrillic falls back", title: "Привет", wantPrefix: "problem-"},
+		{name: "arabic falls back", title: "مرحبا", wantPrefix: "problem-"},
+		{name: "single letter", title: "A", wantPrefix: "a-"},
+		{name: "digits only", title: "42", wantPrefix: "42-"},
+		{name: "hyphenated ascii", title: "two--sum", wantPrefix: "two-sum-"},
+		{name: "plus signs collapse", title: "C++", wantPrefix: "c-"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
