@@ -95,6 +95,8 @@ type JudgeConfig struct {
 
 	// Parallelism and LanguageSlots bound the sandbox slots of one judge
 	// agent. MaxBatch bounds how many requests one loop iteration takes.
+	// LanguageSlots is a comma-separated language=count list; entries that
+	// normalize to the same language must agree on the count.
 	Parallelism   int    `yaml:"parallelism"`
 	LanguageSlots string `yaml:"language_slots"`
 	MaxBatch      int    `yaml:"max_batch"`

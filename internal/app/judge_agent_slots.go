@@ -120,6 +120,11 @@ func parseJudgeAgentLanguageSlots(value string) (map[string]int, error) {
 		if err != nil || count <= 0 {
 			return nil, fmt.Errorf("invalid language slot %q: count must be positive", item)
 		}
+		// Entries that normalize to the same language must agree: silently
+		// keeping the last count makes the cap depend on entry order.
+		if existing, ok := out[language]; ok && existing != count {
+			return nil, fmt.Errorf("conflicting slot counts for language %q: %d and %d", language, existing, count)
+		}
 		out[language] = count
 	}
 	return out, nil

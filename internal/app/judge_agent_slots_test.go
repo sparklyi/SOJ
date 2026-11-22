@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +25,126 @@ func TestParseJudgeAgentLanguageSlots(t *testing.T) {
 	_, err = parseJudgeAgentLanguageSlots("go=0")
 	if err == nil {
 		t.Fatal("expected invalid slot count error")
+	}
+}
+
+func TestParseJudgeAgentLanguageSlotsNormalizesAndPreserves(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  map[string]int
+	}{
+		{
+			name:  "distinct languages are preserved",
+			input: "go=2,cpp=3,python=1",
+			want:  map[string]int{"go": 2, "cpp": 3, "python": 1},
+		},
+		{
+			name:  "whitespace and case are normalized",
+			input: "  Go = 2 ,  CPP17=4 ",
+			want:  map[string]int{"go": 2, "cpp17": 4},
+		},
+		{
+			name:  "blank entries are skipped",
+			input: "go=2,, ,python=1,",
+			want:  map[string]int{"go": 2, "python": 1},
+		},
+		{
+			name:  "matching repeated counts collapse to one entry",
+			input: "go=2, GO = 2 ,Go=2",
+			want:  map[string]int{"go": 2},
+		},
+		{
+			name:  "empty value yields an empty map",
+			input: " , ,",
+			want:  map[string]int{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseJudgeAgentLanguageSlots(tc.input)
+			if err != nil {
+				t.Fatalf("parseJudgeAgentLanguageSlots(%q) returned error: %v", tc.input, err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("parseJudgeAgentLanguageSlots(%q) = %+v, want %+v", tc.input, got, tc.want)
+			}
+			for language, count := range tc.want {
+				if got[language] != count {
+					t.Fatalf("parseJudgeAgentLanguageSlots(%q) = %+v, want %s=%d", tc.input, got, language, count)
+				}
+			}
+		})
+	}
+}
+
+func TestParseJudgeAgentLanguageSlotsRejectsConflictingCounts(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "case-insensitive duplicate with different count",
+			input: "go=2, GO =3",
+			want:  "go",
+		},
+		{
+			name:  "same conflict with reversed entry order",
+			input: "GO =3, go=2",
+			want:  "go",
+		},
+		{
+			name:  "exact duplicate with different count",
+			input: "go=2,go=5",
+			want:  "go",
+		},
+		{
+			name:  "conflict hidden behind whitespace padding",
+			input: "cpp17=4, Cpp17 = 1",
+			want:  "cpp17",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseJudgeAgentLanguageSlots(tc.input)
+			if err == nil {
+				t.Fatalf("parseJudgeAgentLanguageSlots(%q) = %+v, want conflict error", tc.input, got)
+			}
+			if !strings.Contains(err.Error(), "conflicting") {
+				t.Fatalf("parseJudgeAgentLanguageSlots(%q) error = %q, want it to report a conflict", tc.input, err.Error())
+			}
+			if !strings.Contains(err.Error(), strconv.Quote(tc.want)) {
+				t.Fatalf("parseJudgeAgentLanguageSlots(%q) error = %q, want it to name language %q", tc.input, err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+func TestParseJudgeAgentLanguageSlotsRejectsMalformedEntries(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "missing count", input: "go", want: "want language=count"},
+		{name: "missing language", input: "=2", want: "language is required"},
+		{name: "zero count", input: "go=0", want: "count must be positive"},
+		{name: "negative count", input: "go=-1", want: "count must be positive"},
+		{name: "non-numeric count", input: "go=two", want: "count must be positive"},
+		{name: "blank language with count", input: "   =3", want: "language is required"},
+		{name: "malformed entry after valid one", input: "go=2,cpp", want: "want language=count"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseJudgeAgentLanguageSlots(tc.input)
+			if err == nil {
+				t.Fatalf("parseJudgeAgentLanguageSlots(%q) = %+v, want error containing %q", tc.input, got, tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("parseJudgeAgentLanguageSlots(%q) error = %q, want it to contain %q", tc.input, err.Error(), tc.want)
+			}
+		})
 	}
 }
 
