@@ -5,7 +5,63 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+// TestJudgeRequestPayloadHistogram gathers the judge request payload
+// histogram in-process from a fresh registry: RecordJudgeRequestPayloadSize
+// clamps negatives to zero, and the observations land in the expected
+// buckets (0 and 512 both count in le="512", 1024 in le="1024").
+func TestJudgeRequestPayloadHistogram(t *testing.T) {
+	metrics := NewMetrics("test")
+	metrics.RecordJudgeRequestPayloadSize(-1) // clamped to 0
+	metrics.RecordJudgeRequestPayloadSize(512)
+	metrics.RecordJudgeRequestPayloadSize(1024)
+
+	expected := `# HELP soj_worker_judge_request_payload_size_bytes Judge request payload size in bytes.
+# TYPE soj_worker_judge_request_payload_size_bytes histogram
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="512"} 2
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="1024"} 3
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="4096"} 3
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="16384"} 3
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="65536"} 3
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="262144"} 3
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="1048576"} 3
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="4194304"} 3
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="+Inf"} 3
+soj_worker_judge_request_payload_size_bytes_sum{service="test"} 1536
+soj_worker_judge_request_payload_size_bytes_count{service="test"} 3
+`
+	if err := testutil.GatherAndCompare(metrics.registry, strings.NewReader(expected), "soj_worker_judge_request_payload_size_bytes"); err != nil {
+		t.Fatalf("histogram mismatch: %v", err)
+	}
+}
+
+// A negative payload size must be observed as 0, not dropped or recorded as
+// a negative value, so the sum stays meaningful.
+func TestJudgeRequestPayloadHistogramClampsNegativeToZero(t *testing.T) {
+	metrics := NewMetrics("test")
+	metrics.RecordJudgeRequestPayloadSize(-100)
+
+	expected := `# HELP soj_worker_judge_request_payload_size_bytes Judge request payload size in bytes.
+# TYPE soj_worker_judge_request_payload_size_bytes histogram
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="512"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="1024"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="4096"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="16384"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="65536"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="262144"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="1048576"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="4194304"} 1
+soj_worker_judge_request_payload_size_bytes_bucket{service="test",le="+Inf"} 1
+soj_worker_judge_request_payload_size_bytes_sum{service="test"} 0
+soj_worker_judge_request_payload_size_bytes_count{service="test"} 1
+`
+	if err := testutil.GatherAndCompare(metrics.registry, strings.NewReader(expected), "soj_worker_judge_request_payload_size_bytes"); err != nil {
+		t.Fatalf("histogram mismatch: %v", err)
+	}
+}
 
 func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 	metrics := NewMetrics("test")
