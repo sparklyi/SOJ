@@ -3,6 +3,7 @@ package checker
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 )
 
 type Policy string
@@ -58,13 +59,22 @@ func trimTrailingSpaceLines(value string) string {
 }
 
 func firstDiff(expected, actual string) string {
-	if len(expected) > 80 {
-		expected = expected[:80]
+	return "expected " + quoteSummary(preview(expected)) + ", got " + quoteSummary(preview(actual))
+}
+
+func preview(value string) string {
+	const limit = 80
+	var out strings.Builder
+	out.Grow(min(len(value), limit))
+	// Ranging replaces malformed bytes with RuneError. Count encoded bytes so
+	// those replacements also fit within the preview limit.
+	for _, r := range value {
+		if out.Len()+utf8.RuneLen(r) > limit {
+			break
+		}
+		out.WriteRune(r)
 	}
-	if len(actual) > 80 {
-		actual = actual[:80]
-	}
-	return "expected " + quoteSummary(expected) + ", got " + quoteSummary(actual)
+	return out.String()
 }
 
 func quoteSummary(value string) string {
