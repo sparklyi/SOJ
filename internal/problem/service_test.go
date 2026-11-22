@@ -920,6 +920,36 @@ func TestCreateStatementValidatesSamplesAndMirrorsTitle(t *testing.T) {
 	}
 }
 
+func TestCreateStatementSampleFieldByteLimits(t *testing.T) {
+	repo := newFakeRepository()
+	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Title: "Two Sum", Status: StatusDraft, Visibility: VisibilityPrivate}
+	service := newProblemService(repo, &fakeStorage{})
+	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}
+
+	exact := strings.Repeat("a", maxSampleFieldBytes)
+	created, err := service.CreateStatement(t.Context(), actor, 1, CreateStatementInput{
+		Description: "desc",
+		Samples:     []SampleInput{{Input: exact, Output: "1", Explanation: exact}},
+	})
+	if err != nil {
+		t.Fatalf("CreateStatement at exact byte limit returned error: %v", err)
+	}
+	if created.Title != "Two Sum" {
+		t.Fatalf("statement title = %q, want problem title after exact-limit accept", created.Title)
+	}
+
+	// "你" is 3 UTF-8 bytes, so this explanation is one byte over the 64 KiB limit.
+	over := strings.Repeat("a", maxSampleFieldBytes-2) + "你"
+	if len(over) != maxSampleFieldBytes+1 {
+		t.Fatalf("precondition: oversized explanation is %d bytes, want %d", len(over), maxSampleFieldBytes+1)
+	}
+	_, err = service.CreateStatement(t.Context(), actor, 1, CreateStatementInput{
+		Description: "desc",
+		Samples:     []SampleInput{{Input: "1", Output: "1", Explanation: over}},
+	})
+	assertAppCode(t, err, "statement.sample_too_large")
+}
+
 // Direct cases for generateProblemSlug: an ASCII title slugifies into the
 // prefix, a padded ASCII title is trimmed first, and a title with no ASCII
 // slug base (e.g. CJK) falls back to "problem". The suffix is always six
