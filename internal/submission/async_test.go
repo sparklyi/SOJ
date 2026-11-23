@@ -3,6 +3,7 @@ package submission
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -181,6 +182,115 @@ func TestFakeAsyncAgentPublishesResultBeforeRequestAck(t *testing.T) {
 	if result.RequestEventID != request.EventID || result.AttemptID != request.AttemptID || result.Status != judge.VerdictMemoryLimit {
 		t.Fatalf("result = %+v", result)
 	}
+}
+
+func TestFakeAsyncAgentResultClockAndPublishFailure(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySourceStore()
+	store.objects["source/key"] = []byte("package main")
+	request := judgeevents.RequestEvent{
+		EventID:        "evt-request-clock",
+		AttemptID:      "attempt-clock",
+		TraceID:        "trace-clock",
+		SubmissionID:   9,
+		LanguageSlug:   "go",
+		SourceArtifact: judgeevents.ArtifactRef{ID: 4, StorageKey: "source/key", ContentHash: "sha256:source"},
+		TestcaseSet:    testRequestTestcaseSet(),
+		TimeoutMS:      1000,
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	clockNow := time.Unix(200, 0).UTC()
+	explicitJudgedAt := time.Unix(150, 0).UTC()
+
+	t.Run("missing judgment time uses injected clock", func(t *testing.T) {
+		resultQueue := &recordingResultPublisher{}
+		events := []string{}
+		requestQueue := &memoryQueue{events: &events}
+		resultQueue.events = &events
+
+		agent := NewFakeAsyncAgent(FakeAsyncAgentOptions{
+			Judge:           &contextCapturingEngine{result: judge.Result{Verdict: judge.VerdictMemoryLimitExceeded}},
+			SourceStore:     store,
+			ResultPublisher: resultQueue,
+			Now:             func() time.Time { return clockNow },
+		})
+
+		if err := agent.ProcessRequestMessage(ctx, queue.Message{ID: "1-0", TaskID: 7, Payload: payload}, requestQueue); err != nil {
+			t.Fatalf("ProcessRequestMessage returned error: %v", err)
+		}
+		if len(events) != 2 || events[0] != "publish_result" || events[1] != "ack" {
+			t.Fatalf("events = %v, want [publish_result ack]", events)
+		}
+		var result judgeevents.ResultEvent
+		if err := json.Unmarshal(resultQueue.eventsPayloads[0], &result); err != nil {
+			t.Fatalf("decode result event: %v", err)
+		}
+		if !result.JudgedAt.Equal(clockNow) || !result.Result.JudgedAt.Equal(clockNow) {
+			t.Fatalf("judged_at = %v / %v, want injected clock %v", result.JudgedAt, result.Result.JudgedAt, clockNow)
+		}
+		if result.Status != judge.VerdictMemoryLimit || result.Result.Verdict != judge.VerdictMemoryLimit {
+			t.Fatalf("result verdict = %q / %q, want normalized %q", result.Status, result.Result.Verdict, judge.VerdictMemoryLimit)
+		}
+	})
+
+	t.Run("existing judgment time is preserved", func(t *testing.T) {
+		resultQueue := &recordingResultPublisher{}
+		events := []string{}
+		requestQueue := &memoryQueue{events: &events}
+		resultQueue.events = &events
+
+		agent := NewFakeAsyncAgent(FakeAsyncAgentOptions{
+			Judge:           &contextCapturingEngine{result: judge.Result{Verdict: judge.VerdictAccepted, JudgedAt: explicitJudgedAt}},
+			SourceStore:     store,
+			ResultPublisher: resultQueue,
+			Now:             func() time.Time { return clockNow },
+		})
+
+		if err := agent.ProcessRequestMessage(ctx, queue.Message{ID: "1-0", TaskID: 7, Payload: payload}, requestQueue); err != nil {
+			t.Fatalf("ProcessRequestMessage returned error: %v", err)
+		}
+		if len(events) != 2 || events[0] != "publish_result" || events[1] != "ack" {
+			t.Fatalf("events = %v, want [publish_result ack]", events)
+		}
+		var result judgeevents.ResultEvent
+		if err := json.Unmarshal(resultQueue.eventsPayloads[0], &result); err != nil {
+			t.Fatalf("decode result event: %v", err)
+		}
+		if !result.JudgedAt.Equal(explicitJudgedAt) || !result.Result.JudgedAt.Equal(explicitJudgedAt) {
+			t.Fatalf("judged_at = %v / %v, want preserved %v", result.JudgedAt, result.Result.JudgedAt, explicitJudgedAt)
+		}
+	})
+
+	t.Run("publisher error is returned without acknowledging request", func(t *testing.T) {
+		publishErr := errors.New("result stream unavailable")
+		resultQueue := &recordingResultPublisher{err: publishErr}
+		events := []string{}
+		requestQueue := &memoryQueue{events: &events}
+		resultQueue.events = &events
+
+		agent := NewFakeAsyncAgent(FakeAsyncAgentOptions{
+			Judge:           &contextCapturingEngine{result: judge.Result{Verdict: judge.VerdictAccepted}},
+			SourceStore:     store,
+			ResultPublisher: resultQueue,
+			Now:             func() time.Time { return clockNow },
+		})
+
+		err := agent.ProcessRequestMessage(ctx, queue.Message{ID: "1-0", TaskID: 7, Payload: payload}, requestQueue)
+		if !errors.Is(err, publishErr) {
+			t.Fatalf("ProcessRequestMessage error = %v, want %v", err, publishErr)
+		}
+		if len(requestQueue.acked) != 0 {
+			t.Fatalf("acked = %v, want no acknowledgment on publish error", requestQueue.acked)
+		}
+		if len(events) != 0 {
+			t.Fatalf("events = %v, want empty on publish error", events)
+		}
+	})
 }
 
 func TestFakeAsyncAgentPropagatesRequestTraceContextToJudgeAndResult(t *testing.T) {
@@ -400,6 +510,7 @@ func TestRecoverDeadJudgeTaskResetsRetryBudgetAndQueuesSubmission(t *testing.T) 
 type recordingResultPublisher struct {
 	eventsPayloads [][]byte
 	events         *[]string
+	err            error
 }
 
 type contextCapturingEngine struct {
@@ -413,6 +524,9 @@ func (e *contextCapturingEngine) Judge(ctx context.Context, request judge.Reques
 }
 
 func (p *recordingResultPublisher) PublishResult(ctx context.Context, event judgeevents.ResultEvent) (string, error) {
+	if p.err != nil {
+		return "", p.err
+	}
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return "", err
