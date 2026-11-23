@@ -103,3 +103,96 @@ func TestUnavailableEngineRunNamesTheEndpoint(t *testing.T) {
 		t.Fatalf("error = %q", got)
 	}
 }
+
+func TestFakeEngineIsolatesRequestHistoryFromCallerAndSnapshotMutations(t *testing.T) {
+	engine := NewFakeEngine(
+		Result{Verdict: VerdictAccepted},
+		Result{Verdict: VerdictWrongAnswer},
+	)
+
+	if got := engine.Requests(); got != nil {
+		t.Fatalf("initial Requests() = %#v, want nil", got)
+	}
+
+	source := []byte("package main")
+	testcases := []Testcase{{InputKey: "in/1", ExpectedOutputKey: "out/1", TimeLimit: time.Second, MemoryKB: 1024}}
+
+	res1, err := engine.Judge(context.Background(), Request{
+		LanguageSlug: "go",
+		Source:       source,
+		Testcases:    testcases,
+	})
+	if err != nil || res1.Verdict != VerdictAccepted {
+		t.Fatalf("first Judge() = (%+v, %v), want Accepted", res1, err)
+	}
+
+	// Mutate caller-owned slices after Judge returns.
+	source[0] = 'X'
+	testcases[0].InputKey = "mutated-input"
+
+	// Record a second request with nil slices to verify nil preservation and call order.
+	res2, err := engine.Judge(context.Background(), Request{LanguageSlug: "python3"})
+	if err != nil || res2.Verdict != VerdictWrongAnswer {
+		t.Fatalf("second Judge() = (%+v, %v), want WrongAnswer", res2, err)
+	}
+
+	firstSnapshot := engine.Requests()
+	if len(firstSnapshot) != 2 {
+		t.Fatalf("len(Requests()) = %d, want 2", len(firstSnapshot))
+	}
+	if string(firstSnapshot[0].Source) != "package main" {
+		t.Fatalf("recorded Source = %q, want original caller bytes", firstSnapshot[0].Source)
+	}
+	if len(firstSnapshot[0].Testcases) != 1 || firstSnapshot[0].Testcases[0].InputKey != "in/1" {
+		t.Fatalf("recorded Testcases = %+v, want original testcase", firstSnapshot[0].Testcases)
+	}
+	if firstSnapshot[1].LanguageSlug != "python3" || firstSnapshot[1].Source != nil || firstSnapshot[1].Testcases != nil {
+		t.Fatalf("second request = %+v, want python3 with nil slices preserved", firstSnapshot[1])
+	}
+
+	// Mutate slices returned by Requests() and confirm recorded history is unaffected.
+	firstSnapshot[0].Source[0] = 'Y'
+	firstSnapshot[0].Testcases[0].InputKey = "snapshot-mutated"
+
+	secondSnapshot := engine.Requests()
+	if string(secondSnapshot[0].Source) != "package main" {
+		t.Fatalf("second snapshot Source = %q, want package main", secondSnapshot[0].Source)
+	}
+	if secondSnapshot[0].Testcases[0].InputKey != "in/1" {
+		t.Fatalf("second snapshot Testcases = %+v, want original testcase", secondSnapshot[0].Testcases)
+	}
+}
+
+func TestFakeEngineIsolatesRunRequestHistoryFromCallerAndSnapshotMutations(t *testing.T) {
+	engine := NewFakeEngine(Result{Verdict: VerdictAccepted, Stdout: "ok"})
+
+	if got := engine.RunRequests(); got != nil {
+		t.Fatalf("initial RunRequests() = %#v, want nil", got)
+	}
+
+	source := []byte("print(1)")
+	res, err := engine.Run(context.Background(), RunRequest{
+		LanguageSlug: "python3",
+		Source:       source,
+		Stdin:        "input",
+	})
+	if err != nil || res.Stdout != "ok" {
+		t.Fatalf("Run() = (%+v, %v), want ok", res, err)
+	}
+
+	// Mutate caller-owned source bytes.
+	source[0] = 'X'
+
+	firstSnapshot := engine.RunRequests()
+	if len(firstSnapshot) != 1 || string(firstSnapshot[0].Source) != "print(1)" {
+		t.Fatalf("recorded RunRequests() = %+v, want original source bytes", firstSnapshot)
+	}
+
+	// Mutate returned snapshot bytes.
+	firstSnapshot[0].Source[0] = 'Y'
+
+	secondSnapshot := engine.RunRequests()
+	if string(secondSnapshot[0].Source) != "print(1)" {
+		t.Fatalf("second snapshot RunRequests() = %+v, want original source bytes", secondSnapshot)
+	}
+}
