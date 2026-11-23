@@ -3,6 +3,7 @@ package submission
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -27,6 +28,7 @@ type memoryRepo struct {
 	processedEvents           map[string]bool
 	submissionUpdates         int
 	submissionSummaryLoads    int
+	submissionSummaryLookups  [][]int64
 	latestJudgeAttemptReads   int
 	judgeCaseResultReads      int
 	listSubmissionCalls       int
@@ -174,6 +176,7 @@ func (r *memoryRepo) ListSubmissionsByUserBefore(ctx context.Context, userID int
 }
 func (r *memoryRepo) ListSubmissionSummaries(_ context.Context, attemptIDs []int64) (map[int64]SubmissionListSummary, error) {
 	r.submissionSummaryLoads++
+	r.submissionSummaryLookups = append(r.submissionSummaryLookups, slices.Clone(attemptIDs))
 	summaries := make(map[int64]SubmissionListSummary, len(attemptIDs))
 	for _, attemptID := range attemptIDs {
 		attempt, ok := r.attempts[attemptID]

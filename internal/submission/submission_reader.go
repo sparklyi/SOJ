@@ -150,20 +150,7 @@ func (s *SubmissionReader) ListSubmissionsByCursor(ctx context.Context, actor au
 	if err != nil {
 		return SubmissionCursorPage{}, err
 	}
-	hasMore := len(records) > int(limit)
-	if hasMore {
-		records = records[:limit]
-	}
-	views, err := s.submissionListViews(ctx, actor, records)
-	if err != nil {
-		return SubmissionCursorPage{}, err
-	}
-	page := SubmissionCursorPage{Items: views}
-	if hasMore {
-		last := records[len(records)-1]
-		page.NextCursor = &SubmissionCursor{SubmittedAt: last.SubmittedAt, ID: last.ID}
-	}
-	return page, nil
+	return s.submissionCursorPage(ctx, actor, records, limit)
 }
 
 func (s *SubmissionReader) ListOwnSubmissionsByCursor(ctx context.Context, actor auth.Actor, input ListOwnSubmissionsCursorInput) (SubmissionCursorPage, error) {
@@ -187,9 +174,13 @@ func (s *SubmissionReader) ListOwnSubmissionsByCursor(ctx context.Context, actor
 	if err != nil {
 		return SubmissionCursorPage{}, err
 	}
-	hasMore := len(records) > int(input.Limit)
+	return s.submissionCursorPage(ctx, actor, records, input.Limit)
+}
+
+func (s *SubmissionReader) submissionCursorPage(ctx context.Context, actor auth.Actor, records []SubmissionRecord, limit int32) (SubmissionCursorPage, error) {
+	hasMore := len(records) > int(limit)
 	if hasMore {
-		records = records[:input.Limit]
+		records = records[:limit]
 	}
 	views, err := s.submissionListViews(ctx, actor, records)
 	if err != nil {
