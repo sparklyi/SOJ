@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"testing"
 	"time"
 )
@@ -28,6 +29,12 @@ func TestCursorRoundTripPreservesSeekBoundary(t *testing.T) {
 	}
 }
 
+func TestEncodeCursorRejectsUnsupportedPayload(t *testing.T) {
+	if _, err := EncodeCursor(make(chan int)); err == nil {
+		t.Fatal("EncodeCursor accepted a channel payload")
+	}
+}
+
 func TestDecodeCursorRejectsEmptyAndMalformedTokens(t *testing.T) {
 	for _, raw := range []string{"", "   ", "not-base64"} {
 		raw := raw
@@ -36,5 +43,12 @@ func TestDecodeCursorRejectsEmptyAndMalformedTokens(t *testing.T) {
 				t.Fatalf("DecodeCursor(%q) returned nil error", raw)
 			}
 		})
+	}
+}
+
+func TestDecodeCursorRejectsWrongJSONShape(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString([]byte(`[]`))
+	if err := DecodeCursor(token, &testCursor{}); err == nil {
+		t.Fatal("DecodeCursor accepted a JSON array for a struct destination")
 	}
 }
