@@ -204,7 +204,15 @@ func loadProfile(path string) (Profile, error) {
 	if err := decoder.Decode(&profile); err != nil && !errors.Is(err, io.EOF) {
 		return Profile{}, fmt.Errorf("%s: %w", path, err)
 	}
-	return profile, nil
+	var extra yaml.Node
+	err = decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return profile, nil
+	}
+	if err != nil {
+		return Profile{}, fmt.Errorf("%s: unexpected second document: %w", path, err)
+	}
+	return Profile{}, fmt.Errorf("%s: unexpected second document", path)
 }
 
 // Lookup returns the profile for a slug.

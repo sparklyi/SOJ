@@ -229,3 +229,51 @@ func TestRuntimeLabel(t *testing.T) {
 		t.Fatalf("RuntimeLabel() = %q", label)
 	}
 }
+
+func TestLoadRejectsSecondYAMLDocument(t *testing.T) {
+	dir := t.TempDir()
+	writeLanguage(t, dir, "go", goDefinition+"\n---\nname: Extra\n")
+
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("Load() error = nil, want unexpected second document")
+	}
+	wantPath := filepath.Join(dir, "go", profileFileName)
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Fatalf("Load() error = %v, want profile path %q", err, wantPath)
+	}
+	if !strings.Contains(err.Error(), "unexpected second document") {
+		t.Fatalf("Load() error = %v, want unexpected second document", err)
+	}
+}
+
+func TestLoadRejectsMalformedSecondYAMLDocument(t *testing.T) {
+	dir := t.TempDir()
+	writeLanguage(t, dir, "go", goDefinition+"\n---\n: not valid\n")
+
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("Load() error = nil, want unexpected second document")
+	}
+	wantPath := filepath.Join(dir, "go", profileFileName)
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Fatalf("Load() error = %v, want profile path %q", err, wantPath)
+	}
+	if !strings.Contains(err.Error(), "unexpected second document") {
+		t.Fatalf("Load() error = %v, want unexpected second document", err)
+	}
+}
+
+func TestLoadAcceptsSingleDocumentWithTrailingComments(t *testing.T) {
+	dir := t.TempDir()
+	writeLanguage(t, dir, "go", goDefinition+"\n# trailing comment after the only document\n   \n")
+
+	catalog, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	profile, ok := catalog.Lookup("go")
+	if !ok || profile.Name != "Go" {
+		t.Fatalf("Lookup(go) = (%+v, %v), want Go profile", profile, ok)
+	}
+}
