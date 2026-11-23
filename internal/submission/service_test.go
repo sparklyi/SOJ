@@ -883,6 +883,96 @@ func TestListSubmissionsByCursorReturnsNextCursor(t *testing.T) {
 	}
 }
 
+func TestListSubmissionsByCursorExcludesLookaheadFromEnrichment(t *testing.T) {
+	newest := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	older := newest.Add(-time.Minute)
+	attempt2 := int64(202)
+	attempt1 := int64(201)
+	sub2 := int64(2)
+	sub1 := int64(1)
+
+	repo := newMemoryRepo()
+	repo.submissions[sub2] = SubmissionRecord{ID: sub2, UserID: 10, ProblemID: 1, Status: StatusAccepted, EffectiveAttemptID: &attempt2, SubmittedAt: newest}
+	repo.submissions[sub1] = SubmissionRecord{ID: sub1, UserID: 10, ProblemID: 1, Status: StatusAccepted, EffectiveAttemptID: &attempt1, SubmittedAt: older}
+	repo.attempts[attempt2] = JudgeAttemptRecord{ID: attempt2, SubmissionID: &sub2, Status: StatusAccepted}
+	repo.attempts[attempt1] = JudgeAttemptRecord{ID: attempt1, SubmissionID: &sub1, Status: StatusAccepted}
+	service := newServiceForTest(serviceTestOptions{Repository: repo})
+	actor := auth.Actor{UserID: 10, Role: auth.RoleUser}
+
+	first, err := service.ListSubmissionsByCursor(t.Context(), actor, ListSubmissionsInput{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListSubmissionsByCursor first page: %v", err)
+	}
+	if got := submissionViewIDs(first.Items); !slices.Equal(got, []int64{sub2}) {
+		t.Fatalf("first page IDs = %v, want [%d]", got, sub2)
+	}
+	if first.NextCursor == nil || first.NextCursor.ID != sub2 || !first.NextCursor.SubmittedAt.Equal(newest) {
+		t.Fatalf("next cursor = %+v, want last returned submission %d", first.NextCursor, sub2)
+	}
+	if len(repo.submissionSummaryLookups) != 1 || !slices.Equal(repo.submissionSummaryLookups[0], []int64{attempt2}) {
+		t.Fatalf("summary lookups = %v, want only returned row attempt [%d]", repo.submissionSummaryLookups, attempt2)
+	}
+
+	empty, err := service.ListSubmissionsByCursor(t.Context(), actor, ListSubmissionsInput{
+		Limit:  1,
+		Cursor: &SubmissionCursor{SubmittedAt: older, ID: sub1},
+	})
+	if err != nil {
+		t.Fatalf("ListSubmissionsByCursor empty page: %v", err)
+	}
+	if len(empty.Items) != 0 || empty.NextCursor != nil {
+		t.Fatalf("empty page = %+v, want empty items and nil next cursor", empty)
+	}
+	if len(repo.submissionSummaryLookups) != 1 {
+		t.Fatalf("summary lookup count after empty page = %d, want 1", len(repo.submissionSummaryLookups))
+	}
+}
+
+func TestListOwnSubmissionsByCursorExcludesLookaheadFromEnrichment(t *testing.T) {
+	newest := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	older := newest.Add(-time.Minute)
+	attempt2 := int64(302)
+	attempt1 := int64(301)
+	sub2 := int64(2)
+	sub1 := int64(1)
+
+	repo := newMemoryRepo()
+	repo.submissions[sub2] = SubmissionRecord{ID: sub2, UserID: 5, ProblemID: 11, Status: StatusAccepted, EffectiveAttemptID: &attempt2, SubmittedAt: newest}
+	repo.submissions[sub1] = SubmissionRecord{ID: sub1, UserID: 5, ProblemID: 11, Status: StatusAccepted, EffectiveAttemptID: &attempt1, SubmittedAt: older}
+	repo.attempts[attempt2] = JudgeAttemptRecord{ID: attempt2, SubmissionID: &sub2, Status: StatusAccepted}
+	repo.attempts[attempt1] = JudgeAttemptRecord{ID: attempt1, SubmissionID: &sub1, Status: StatusAccepted}
+	service := newServiceForTest(serviceTestOptions{Repository: repo})
+	actor := auth.Actor{UserID: 5, Role: auth.RoleUser}
+
+	first, err := service.ListOwnSubmissionsByCursor(t.Context(), actor, ListOwnSubmissionsCursorInput{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListOwnSubmissionsByCursor first page: %v", err)
+	}
+	if got := submissionViewIDs(first.Items); !slices.Equal(got, []int64{sub2}) {
+		t.Fatalf("first page IDs = %v, want [%d]", got, sub2)
+	}
+	if first.NextCursor == nil || first.NextCursor.ID != sub2 || !first.NextCursor.SubmittedAt.Equal(newest) {
+		t.Fatalf("next cursor = %+v, want last returned submission %d", first.NextCursor, sub2)
+	}
+	if len(repo.submissionSummaryLookups) != 1 || !slices.Equal(repo.submissionSummaryLookups[0], []int64{attempt2}) {
+		t.Fatalf("summary lookups = %v, want only returned row attempt [%d]", repo.submissionSummaryLookups, attempt2)
+	}
+
+	empty, err := service.ListOwnSubmissionsByCursor(t.Context(), actor, ListOwnSubmissionsCursorInput{
+		Limit:  1,
+		Cursor: &SubmissionCursor{SubmittedAt: older, ID: sub1},
+	})
+	if err != nil {
+		t.Fatalf("ListOwnSubmissionsByCursor empty page: %v", err)
+	}
+	if len(empty.Items) != 0 || empty.NextCursor != nil {
+		t.Fatalf("empty page = %+v, want empty items and nil next cursor", empty)
+	}
+	if len(repo.submissionSummaryLookups) != 1 {
+		t.Fatalf("summary lookup count after empty page = %d, want 1", len(repo.submissionSummaryLookups))
+	}
+}
+
 func TestHandlerListsOwnSubmissionsByCursor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newMemoryRepo()
