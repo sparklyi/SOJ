@@ -121,26 +121,7 @@ func (a *FakeAsyncAgent) ProcessRequestMessage(ctx context.Context, message queu
 	if err != nil {
 		return err
 	}
-	result, err = judgeevents.NormalizeResult(result)
-	if err != nil {
-		return err
-	}
-	judgedAt := result.JudgedAt
-	if judgedAt.IsZero() {
-		judgedAt = a.now()
-		result.JudgedAt = judgedAt
-	}
-	if _, err := a.resultPublisher.PublishResult(ctx, judgeevents.ResultEvent{
-		ProtocolVersion: judgeevents.ResultEventType,
-		EventID:         fmt.Sprintf("%s:result", request.EventID),
-		RequestEventID:  request.EventID,
-		AttemptID:       request.AttemptID,
-		TraceID:         request.TraceID,
-		TraceContext:    request.TraceContext,
-		Status:          result.Verdict,
-		Result:          result,
-		JudgedAt:        judgedAt,
-	}); err != nil {
+	if err := publishAsyncResult(ctx, a.resultPublisher, request, result, a.now); err != nil {
 		return err
 	}
 	return requestQueue.Ack(ctx, message.ID)
