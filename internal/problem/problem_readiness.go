@@ -37,13 +37,13 @@ func ensurePublishable(ctx context.Context, store problemPublishReadStore, probl
 	return nil
 }
 
-func demotePublishedProblem(ctx context.Context, store problemStatusUpdater, problem ProblemRecord) error {
+// demotePublishedProblem reports whether the revision removed a public problem from the published set.
+func demotePublishedProblem(ctx context.Context, store problemStatusUpdater, problem ProblemRecord) (bool, error) {
 	if problem.Status != StatusPublished {
-		return nil
+		return false, nil
 	}
-	status := StatusDraft
-	_, err := store.SetProblemStatus(ctx, problem.ID, status)
-	return err
+	_, err := store.SetProblemStatus(ctx, problem.ID, StatusDraft)
+	return err == nil && problem.Visibility == VisibilityPublic, err
 }
 
 func loadProblemAuthoringReadiness(ctx context.Context, store problemPublishReadStore, problemID int64) (problemAuthoringReadiness, error) {
