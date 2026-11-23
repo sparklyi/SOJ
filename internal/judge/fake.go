@@ -2,6 +2,7 @@ package judge
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 )
@@ -35,7 +36,14 @@ func (e *FakeEngine) SetDelay(delay time.Duration) {
 func (e *FakeEngine) Requests() []Request {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]Request(nil), e.requests...)
+	if len(e.requests) == 0 {
+		return nil
+	}
+	requests := make([]Request, len(e.requests))
+	for i, request := range e.requests {
+		requests[i] = cloneRequest(request)
+	}
+	return requests
 }
 
 // RunRequests returns every scratch run the engine has seen. Kept separate from
@@ -44,12 +52,19 @@ func (e *FakeEngine) Requests() []Request {
 func (e *FakeEngine) RunRequests() []RunRequest {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]RunRequest(nil), e.runRequests...)
+	if len(e.runRequests) == 0 {
+		return nil
+	}
+	requests := make([]RunRequest, len(e.runRequests))
+	for i, request := range e.runRequests {
+		requests[i] = cloneRunRequest(request)
+	}
+	return requests
 }
 
 func (e *FakeEngine) Judge(ctx context.Context, request Request) (Result, error) {
 	e.mu.Lock()
-	e.requests = append(e.requests, request)
+	e.requests = append(e.requests, cloneRequest(request))
 	e.mu.Unlock()
 
 	return e.serve(ctx)
@@ -64,10 +79,21 @@ func (e *FakeEngine) Run(ctx context.Context, request RunRequest) (Result, error
 	}
 
 	e.mu.Lock()
-	e.runRequests = append(e.runRequests, request)
+	e.runRequests = append(e.runRequests, cloneRunRequest(request))
 	e.mu.Unlock()
 
 	return e.serve(ctx)
+}
+
+func cloneRequest(request Request) Request {
+	request.Source = slices.Clone(request.Source)
+	request.Testcases = slices.Clone(request.Testcases)
+	return request
+}
+
+func cloneRunRequest(request RunRequest) RunRequest {
+	request.Source = slices.Clone(request.Source)
+	return request
 }
 
 // serve applies the configured delay and returns the next scripted result.
