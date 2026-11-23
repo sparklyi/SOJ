@@ -9,11 +9,13 @@ import (
 )
 
 type fakeStore struct {
-	mu               sync.Mutex
-	problems         int64
-	submissions      int64
-	languages        int64
-	failProblemCount bool
+	mu                 sync.Mutex
+	problems           int64
+	submissions        int64
+	languages          int64
+	failProblemCount   bool
+	submissionCountErr error
+	languageCountErr   error
 }
 
 func (s *fakeStore) CountPublishedProblems(context.Context) (int64, error) {
@@ -28,13 +30,13 @@ func (s *fakeStore) CountPublishedProblems(context.Context) (int64, error) {
 func (s *fakeStore) CountSubmissions(context.Context) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.submissions, nil
+	return s.submissions, s.submissionCountErr
 }
 
 func (s *fakeStore) CountEnabledLanguages(context.Context) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.languages, nil
+	return s.languages, s.languageCountErr
 }
 
 type fakeCache struct {
@@ -147,5 +149,48 @@ func TestRefreshSwallowsPostgresErrors(t *testing.T) {
 	defer cache.mu.Unlock()
 	if cache.facts.Problems != 1 {
 		t.Fatalf("cache was modified despite postgres failure: %+v", cache.facts)
+	}
+}
+
+func TestSiteStatsDoNotCachePartialCounts(t *testing.T) {
+	countErr := errors.New("count failed")
+	tests := []struct {
+		name  string
+		store *fakeStore
+	}{
+		{"submission count fails", &fakeStore{problems: 7, submissionCountErr: countErr}},
+		{"enabled language count fails", &fakeStore{problems: 7, submissions: 42, languageCountErr: countErr}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Run("cache miss", func(t *testing.T) {
+				cache := &fakeCache{}
+				service := newTestService(tt.store, cache)
+
+				facts, err := service.SiteFacts(t.Context())
+				if !errors.Is(err, countErr) {
+					t.Errorf("SiteFacts error = %v, want %v", err, countErr)
+				}
+				if facts != (Facts{}) {
+					t.Errorf("SiteFacts = %+v, want zero facts", facts)
+				}
+				if cache.sets != 0 {
+					t.Errorf("cache writes = %d, want 0", cache.sets)
+				}
+			})
+			t.Run("refresh", func(t *testing.T) {
+				cached := Facts{Problems: 3, Submissions: 12, Languages: 5}
+				cache := &fakeCache{facts: cached, hasKey: true}
+				service := newTestService(tt.store, cache)
+
+				service.Refresh(t.Context())
+				if !cache.hasKey || cache.facts != cached {
+					t.Errorf("cache = %+v, found = %t, want cached facts %+v", cache.facts, cache.hasKey, cached)
+				}
+				if cache.sets != 0 {
+					t.Errorf("cache writes = %d, want 0", cache.sets)
+				}
+			})
+		})
 	}
 }
