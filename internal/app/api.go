@@ -100,7 +100,7 @@ func RunAPI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	problemReview := problem.NewProblemReviewService(problemRepo, problemRepo, problem.RBACProblemPolicy{}, problem.WithStatsRefresher(statsService))
 	problemService := problem.NewService(
 		problemReader,
-		problem.NewProblemAuthoring(problemRepo, objectStorage),
+		problem.NewProblemAuthoring(problemRepo, objectStorage, problem.WithAuthoringStatsRefresher(statsService)),
 		problem.NewProblemCheckService(problemRepo, objectStorage, time.Now),
 		problemReview,
 	)

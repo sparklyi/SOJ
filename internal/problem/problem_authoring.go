@@ -44,15 +44,28 @@ type problemAuthoringTx interface {
 type ProblemAuthoring struct {
 	store    problemAuthoringStore
 	archives testcaseArchiveWriter
+	stats    statsRefresher
+}
+
+// ProblemAuthoringOption adjusts optional collaborators.
+type ProblemAuthoringOption func(*ProblemAuthoring)
+
+// WithAuthoringStatsRefresher wires the site statistics cache refresher.
+func WithAuthoringStatsRefresher(refresher statsRefresher) ProblemAuthoringOption {
+	return func(a *ProblemAuthoring) { a.stats = refresher }
 }
 
 // NewProblemAuthoring builds an authoring service with its transactional store and archive sink.
 // It panics if store is nil.
-func NewProblemAuthoring(store problemAuthoringStore, archives testcaseArchiveWriter) *ProblemAuthoring {
+func NewProblemAuthoring(store problemAuthoringStore, archives testcaseArchiveWriter, options ...ProblemAuthoringOption) *ProblemAuthoring {
 	if store == nil {
 		panic("problem authoring store is required")
 	}
-	return &ProblemAuthoring{store: store, archives: archives}
+	authoring := &ProblemAuthoring{store: store, archives: archives}
+	for _, option := range options {
+		option(authoring)
+	}
+	return authoring
 }
 
 func (a *ProblemAuthoring) CreateProblem(ctx context.Context, actor auth.Actor, input CreateProblemInput) (ProblemRecord, error) {
@@ -195,6 +208,7 @@ func (a *ProblemAuthoring) CreateStatement(ctx context.Context, actor auth.Actor
 		return Statement{}, err
 	}
 	var statement Statement
+	var demotedPublic bool
 	err := a.store.WithProblemAuthoringTx(ctx, func(ctx context.Context, tx problemAuthoringTx) error {
 		p, err := tx.LockProblemForUpdate(ctx, problemID)
 		if err != nil {
@@ -219,8 +233,12 @@ func (a *ProblemAuthoring) CreateStatement(ctx context.Context, actor auth.Actor
 		if err != nil {
 			return err
 		}
-		return demotePublishedProblem(ctx, tx, p)
+		demotedPublic, err = demotePublishedProblem(ctx, tx, p)
+		return err
 	})
+	if err == nil && demotedPublic && a.stats != nil {
+		a.stats.Refresh(ctx)
+	}
 	return statement, err
 }
 
@@ -293,6 +311,7 @@ func (a *ProblemAuthoring) UploadTestcaseArchive(ctx context.Context, actor auth
 	caseCount := int32(len(manifest.Cases))
 
 	var created TestcaseSetRecord
+	var demotedPublic bool
 	err = a.store.WithProblemAuthoringTx(ctx, func(ctx context.Context, tx problemAuthoringTx) error {
 		p, err := tx.LockProblemForUpdate(ctx, problemID)
 		if err != nil {
@@ -312,11 +331,15 @@ func (a *ProblemAuthoring) UploadTestcaseArchive(ctx context.Context, actor auth
 		if err != nil {
 			return err
 		}
-		return demotePublishedProblem(ctx, tx, p)
+		demotedPublic, err = demotePublishedProblem(ctx, tx, p)
+		return err
 	})
 	if err != nil {
 		_ = a.archives.Delete(ctx, key)
 		return TestcaseSetRecord{}, findings, err
+	}
+	if demotedPublic && a.stats != nil {
+		a.stats.Refresh(ctx)
 	}
 	return created, findings, nil
 }

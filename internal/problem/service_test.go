@@ -332,21 +332,6 @@ func TestCreateStatementSwitchesCurrentVersion(t *testing.T) {
 	}
 }
 
-func TestCreateStatementDemotesPublishedProblemToDraft(t *testing.T) {
-	repo := newFakeRepository()
-	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic}
-	service := newProblemService(repo, &fakeStorage{})
-
-	_, err := service.CreateStatement(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, CreateStatementInput{Title: "Updated", Description: "desc"})
-
-	if err != nil {
-		t.Fatalf("CreateStatement returned error: %v", err)
-	}
-	if got := repo.problems[1].Status; got != StatusDraft {
-		t.Fatalf("problem status = %q, want draft", got)
-	}
-}
-
 func uploadArchiveInput(archive []byte) UploadTestcaseInput {
 	return UploadTestcaseInput{Source: bytes.NewReader(archive), Size: int64(len(archive))}
 }
@@ -440,19 +425,82 @@ func TestUploadTestcaseArchiveDeletesObjectWhenTransactionFails(t *testing.T) {
 	}
 }
 
-func TestUploadTestcaseArchiveDemotesPublishedProblemToDraft(t *testing.T) {
-	repo := newFakeRepository()
-	repo.problems[1] = ProblemRecord{ID: 1, OwnerUserID: 10, Status: StatusPublished, Visibility: VisibilityPublic}
-	service := newProblemService(repo, &fakeStorage{})
+func TestProblemRevisionRefreshesSiteStats(t *testing.T) {
+	actor := auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}
 	archive := zipArchive(t, map[string]string{"1.in": "1\n", "1.ans": "1\n"})
+	revisions := []struct {
+		name string
+		save func(context.Context, *ProblemAuthoring) error
+	}{
+		{"statement", func(ctx context.Context, authoring *ProblemAuthoring) error {
+			_, err := authoring.CreateStatement(ctx, actor, 1, CreateStatementInput{Description: "Revised statement"})
+			return err
+		}},
+		{"testcases", func(ctx context.Context, authoring *ProblemAuthoring) error {
+			_, _, err := authoring.UploadTestcaseArchive(ctx, actor, 1, uploadArchiveInput(archive))
+			return err
+		}},
+	}
+	commitErr := errors.New("revision commit failed")
+	tests := []struct {
+		name          string
+		status        string
+		visibility    string
+		commitErr     error
+		wantRefreshes int
+	}{
+		{name: "public published problem", status: StatusPublished, visibility: VisibilityPublic, wantRefreshes: 1},
+		{name: "public draft", status: StatusDraft, visibility: VisibilityPublic},
+		{name: "private published problem", status: StatusPublished, visibility: VisibilityPrivate},
+		{name: "failed commit", status: StatusPublished, visibility: VisibilityPublic, commitErr: commitErr},
+	}
+	for _, revision := range revisions {
+		t.Run(revision.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					store := &revisionTestStore{fakeRepository: newFakeRepository(), commitErr: tt.commitErr}
+					store.problems[1] = ProblemRecord{ID: 1, OwnerUserID: actor.UserID, Status: tt.status, Visibility: tt.visibility}
+					stats := &revisionStatsRecorder{store: store}
+					authoring := NewProblemAuthoring(store, &fakeStorage{}, WithAuthoringStatsRefresher(stats))
 
-	_, _, err := service.UploadTestcaseArchive(t.Context(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1, uploadArchiveInput(archive))
-	if err != nil {
-		t.Fatalf("UploadTestcaseArchive returned error: %v", err)
+					if err := revision.save(t.Context(), authoring); !errors.Is(err, tt.commitErr) {
+						t.Fatalf("revision error = %v, want %v", err, tt.commitErr)
+					}
+					if tt.commitErr == nil && store.problems[1].Status != StatusDraft {
+						t.Errorf("problem status = %q, want draft", store.problems[1].Status)
+					}
+					if stats.beforeCommit || stats.calls != tt.wantRefreshes {
+						t.Errorf("refresh calls = %d, before commit = %t, want %d after commit", stats.calls, stats.beforeCommit, tt.wantRefreshes)
+					}
+				})
+			}
+		})
 	}
-	if got := repo.problems[1].Status; got != StatusDraft {
-		t.Fatalf("problem status = %q, want draft", got)
+}
+
+type revisionTestStore struct {
+	*fakeRepository
+	commitErr error
+	committed bool
+}
+
+func (s *revisionTestStore) WithProblemAuthoringTx(ctx context.Context, fn func(context.Context, problemAuthoringTx) error) error {
+	if err := s.fakeRepository.WithProblemAuthoringTx(ctx, fn); err != nil {
+		return err
 	}
+	s.committed = s.commitErr == nil
+	return s.commitErr
+}
+
+type revisionStatsRecorder struct {
+	store        *revisionTestStore
+	calls        int
+	beforeCommit bool
+}
+
+func (r *revisionStatsRecorder) Refresh(context.Context) {
+	r.calls++
+	r.beforeCommit = r.beforeCommit || !r.store.committed
 }
 
 func TestNormalizeListFilterKeepsOwnerPrivateVisibility(t *testing.T) {
