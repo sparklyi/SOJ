@@ -528,7 +528,10 @@ func rankRows(rows []ScoreboardRow) {
 		if rows[i].PenaltyMinutes != rows[j].PenaltyMinutes {
 			return rows[i].PenaltyMinutes < rows[j].PenaltyMinutes
 		}
-		return rows[i].DisplayName < rows[j].DisplayName
+		if rows[i].DisplayName != rows[j].DisplayName {
+			return rows[i].DisplayName < rows[j].DisplayName
+		}
+		return rows[i].UserID < rows[j].UserID
 	})
 	var previous *ScoreboardRow
 	for i := range rows {

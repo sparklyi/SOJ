@@ -73,6 +73,25 @@ func TestScoreboardUsesACMPenaltyAndTieRank(t *testing.T) {
 	}
 }
 
+func TestScoreboardSnapshotTieBreak(t *testing.T) {
+	rows := []ScoreboardRow{
+		{UserID: 30, DisplayName: "sam", AcceptedCount: 2, PenaltyMinutes: 60},
+		{UserID: 20, DisplayName: "sam", AcceptedCount: 2, PenaltyMinutes: 60},
+		{UserID: 10, DisplayName: "alex", AcceptedCount: 1, PenaltyMinutes: 30},
+	}
+	rankRows(rows)
+
+	want := []struct {
+		userID int64
+		rank   int32
+	}{{20, 1}, {30, 1}, {10, 3}}
+	for i, row := range rows {
+		if row.UserID != want[i].userID || row.Rank != want[i].rank {
+			t.Errorf("row %d = (user %d, rank %d), want (user %d, rank %d)", i, row.UserID, row.Rank, want[i].userID, want[i].rank)
+		}
+	}
+}
+
 func TestFrozenScoreboardHidesAttemptsAfterFreeze(t *testing.T) {
 	start := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	freeze := start.Add(time.Hour)
