@@ -36,7 +36,7 @@ func (c *RedisCache) Get(ctx context.Context) (Facts, bool, error) {
 	if err != nil {
 		return Facts{}, false, err
 	}
-	if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
+	if bytes.Equal(bytes.Trim(payload, " \t\r\n"), []byte("null")) {
 		// 一条值为 JSON null 的缓存项不是有效结果，按未命中处理，
 		// 让 cache-aside 回源 PostgreSQL 并重新回填。
 		return Facts{}, false, nil

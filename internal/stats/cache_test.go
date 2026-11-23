@@ -54,6 +54,37 @@ func TestRedisCacheGetTreatsNullEntryAsMiss(t *testing.T) {
 	}
 }
 
+// TestRedisCacheGetRejectsNonJSONWhitespaceBeforeNull ensures a vertical tab
+// (not valid JSON whitespace) before "null" is not stripped, so the payload
+// still fails to decode and the malformed-cache error path is preserved.
+func TestRedisCacheGetRejectsNonJSONWhitespaceBeforeNull(t *testing.T) {
+	client := newScriptedGetClient(t, "\vnull")
+	cache := NewRedisCache(client, time.Minute)
+
+	facts, found, err := cache.Get(context.Background())
+	if err == nil {
+		t.Fatalf("Get() returned no error for %q, want decode error (facts = %+v, found = %v)", "\vnull", facts, found)
+	}
+	if found {
+		t.Fatalf("Get() found = true for %q, want false", "\vnull")
+	}
+}
+
+// TestRedisCacheGetTreatsWhitespaceSurroundedNullAsMiss ensures JSON
+// whitespace (spaces, tabs, CR, LF) around a null entry is still trimmed.
+func TestRedisCacheGetTreatsWhitespaceSurroundedNullAsMiss(t *testing.T) {
+	client := newScriptedGetClient(t, " \t\r\nnull\r\n\t ")
+	cache := NewRedisCache(client, time.Minute)
+
+	facts, found, err := cache.Get(context.Background())
+	if err != nil {
+		t.Fatalf("Get() returned error: %v", err)
+	}
+	if found {
+		t.Fatalf("Get() found = true for a whitespace-surrounded null cache entry, want false (facts = %+v)", facts)
+	}
+}
+
 func TestRedisCacheGetKeepsValidAllZeroHit(t *testing.T) {
 	client := newScriptedGetClient(t, `{"problems":0,"submissions":0,"languages":0}`)
 	cache := NewRedisCache(client, time.Minute)
