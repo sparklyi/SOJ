@@ -2,6 +2,7 @@ package problem
 
 import (
 	"context"
+	"math"
 	"strings"
 	"time"
 
@@ -174,6 +175,9 @@ func (s *ProblemReviewService) Queue(ctx context.Context, actor auth.Actor, filt
 	}
 	if filter.PageSize <= 0 || filter.PageSize > 100 {
 		filter.PageSize = 20
+	}
+	if int64(filter.Page-1)*int64(filter.PageSize) > math.MaxInt32 {
+		return ProblemReviewQueue{}, apperror.BadRequest("request.invalid", "page is too large for the requested page size")
 	}
 	items, total, err := s.store.ListProblemsForReview(ctx, filter)
 	if err != nil {
