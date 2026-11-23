@@ -2,6 +2,8 @@ package problem
 
 import (
 	"context"
+	"math"
+	"net/http"
 	"testing"
 
 	"SOJ/internal/apperror"
@@ -76,6 +78,48 @@ func TestProblemReviewRejectsConcurrentStateChange(t *testing.T) {
 	}
 }
 
+func TestProblemReviewQueueOffsetRange(t *testing.T) {
+	const pageSize int32 = 20
+	const lastPage = math.MaxInt32/pageSize + 1
+	lastFilter := ProblemReviewQueueFilter{Page: lastPage, PageSize: pageSize}
+	tests := []struct {
+		name    string
+		filter  ProblemReviewQueueFilter
+		want    ProblemReviewQueueFilter
+		wantErr bool
+	}{
+		{name: "last valid page", filter: lastFilter, want: lastFilter},
+		{name: "offset overflow", filter: ProblemReviewQueueFilter{Page: lastPage + 1, PageSize: pageSize}, wantErr: true},
+		{name: "defaults", want: ProblemReviewQueueFilter{Page: 1, PageSize: 20}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newReviewMemoryStore(ProblemRecord{ID: 1, Status: StatusInReview})
+			service := NewProblemReviewService(store, store, allowProblemReviewPolicy{})
+			queue, err := service.Queue(t.Context(), auth.Actor{UserID: 9}, tt.filter)
+			if tt.wantErr {
+				appErr, ok := apperror.From(err)
+				if !ok || appErr.HTTPStatus != http.StatusBadRequest || appErr.Code != "request.invalid" {
+					t.Errorf("Queue error = %v, want request.invalid (HTTP 400)", err)
+				}
+				if len(store.queueFilters) != 0 {
+					t.Errorf("store received filters %v, want no calls", store.queueFilters)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Queue returned error: %v", err)
+			}
+			if len(store.queueFilters) != 1 || store.queueFilters[0] != tt.want {
+				t.Errorf("store received filters %v, want [%+v]", store.queueFilters, tt.want)
+			}
+			if queue.Page != tt.want.Page || queue.PageSize != tt.want.PageSize {
+				t.Errorf("queue page = %d, size = %d, want page %d and size %d", queue.Page, queue.PageSize, tt.want.Page, tt.want.PageSize)
+			}
+		})
+	}
+}
+
 type allowProblemReviewPolicy struct{}
 
 func (allowProblemReviewPolicy) CanSubmitReview(auth.Actor, ProblemRecord) error { return nil }
@@ -88,6 +132,7 @@ func (allowProblemReviewPolicy) CanViewReviewEvents(auth.Actor, ProblemRecord) e
 type reviewMemoryStore struct {
 	problem      ProblemRecord
 	events       []ProblemReviewEvent
+	queueFilters []ProblemReviewQueueFilter
 	statement    Statement
 	testcaseSet  TestcaseSetRecord
 	check        ProblemCheckRunRecord
@@ -105,7 +150,8 @@ func (s *reviewMemoryStore) GetProblem(context.Context, int64) (ProblemRecord, e
 	return s.problem, nil
 }
 
-func (s *reviewMemoryStore) ListProblemsForReview(context.Context, ProblemReviewQueueFilter) ([]ProblemRecord, int64, error) {
+func (s *reviewMemoryStore) ListProblemsForReview(_ context.Context, filter ProblemReviewQueueFilter) ([]ProblemRecord, int64, error) {
+	s.queueFilters = append(s.queueFilters, filter)
 	if s.problem.Status != StatusInReview {
 		return []ProblemRecord{}, 0, nil
 	}
