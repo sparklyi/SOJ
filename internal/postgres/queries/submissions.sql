@@ -607,6 +607,11 @@ SELECT *
 FROM judge_tasks
 WHERE submission_id = $1;
 
+-- name: ListJudgeTasksBySubmissionIDs :many
+SELECT *
+FROM judge_tasks
+WHERE submission_id = ANY(sqlc.arg('submission_ids')::bigint[]);
+
 -- name: ClaimPendingJudgeTasks :many
 -- Submission tasks only. Runs are claimed by ClaimPendingRunTasks so they can
 -- be published to their own stream: playground traffic must not sit in front of
