@@ -271,7 +271,12 @@ func (s *RunService) CompleteRun(ctx context.Context, runID int64, result judge.
 func (s *RunService) discardSource(ctx context.Context, artifact ArtifactRecord) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultRunFinalizeTimeout)
 	defer cancel()
-	_ = s.sourceStore.Delete(cleanupCtx, artifact.StorageKey)
+	if err := s.sourceStore.Delete(cleanupCtx, artifact.StorageKey); err != nil {
+		// The object is still in storage, so the row that points at it has to
+		// stay: it is the only handle the orphan sweep has to find the object
+		// and retry. Dropping it here would leave an object nothing can query.
+		return
+	}
 	_ = s.store.DeleteArtifact(cleanupCtx, artifact.ID)
 }
 
