@@ -2,6 +2,7 @@ package submission
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -316,8 +317,10 @@ func (s *RunService) awaitRun(ctx context.Context, run RunRecord) (CreateRunOutp
 			if ctx.Err() != nil {
 				return CreateRunOutput{}, ctx.Err()
 			}
-			if budget.Err() != nil {
+			if budget.Err() != nil && isContextEnd(err) {
 				// Only the budget ended the lookup: report the last observed state.
+				// A store error that lands as the budget expires is not a budget
+				// error, so it is returned below.
 				return CreateRunOutput{Run: last}, nil
 			}
 			return CreateRunOutput{}, err
@@ -327,6 +330,11 @@ func (s *RunService) awaitRun(ctx context.Context, run RunRecord) (CreateRunOutp
 			return CreateRunOutput{Run: current}, nil
 		}
 	}
+}
+
+// isContextEnd reports whether err is a context end rather than a store failure.
+func isContextEnd(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // completeRunAsync executes one admitted run in this process. It only runs in

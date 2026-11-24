@@ -541,6 +541,79 @@ func (s blockingLookupStore) GetRun(ctx context.Context, _ int64) (RunRecord, er
 	return RunRecord{}, ctx.Err()
 }
 
+// failingLookupStore blocks the status lookup until its context ends, then
+// fails with a genuine store error rather than the context error.
+type failingLookupStore struct {
+	*memoryRepo
+	lookups *int
+	err     error
+}
+
+func (s failingLookupStore) GetRun(ctx context.Context, _ int64) (RunRecord, error) {
+	*s.lookups++
+	<-ctx.Done()
+	return RunRecord{}, s.err
+}
+
+// A store error that lands as the budget expires is not a budget end: the budget
+// must not turn it into a pending response.
+func TestAwaitRunReturnsStoreErrorAtBudgetExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var errRunStoreUnavailable = errors.New("run store unavailable")
+		lookups := 0
+		service := NewRunService(RunServiceOptions{
+			Store:         failingLookupStore{memoryRepo: runTestRepo(), lookups: &lookups, err: errRunStoreUnavailable},
+			ProblemReader: fakeProblemReader{},
+			SourceStore:   NewMemorySourceStore(),
+			Wait:          2 * runAwaitPollInterval,
+			Timeout:       time.Second,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+
+		_, err := service.CreateRun(ctx, auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")})
+		if lookups != 1 {
+			t.Fatalf("status lookups = %d, want 1 so the failing lookup ran", lookups)
+		}
+		if !errors.Is(err, errRunStoreUnavailable) {
+			t.Fatalf("CreateRun error = %v, want the store error %v", err, errRunStoreUnavailable)
+		}
+	})
+}
+
+// A budget shorter than one poll interval ends before the first tick, so no
+// status lookup may start.
+func TestAwaitRunBudgetShorterThanPollStartsNoLookup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lookups := 0
+		budget := runAwaitPollInterval / 2
+		service := NewRunService(RunServiceOptions{
+			Store:         blockingLookupStore{memoryRepo: runTestRepo(), lookups: &lookups},
+			ProblemReader: fakeProblemReader{},
+			SourceStore:   NewMemorySourceStore(),
+			Wait:          budget,
+			Timeout:       time.Second,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+
+		start := time.Now()
+		out, err := service.CreateRun(ctx, auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")})
+		if elapsed := time.Since(start); elapsed > budget {
+			t.Fatalf("CreateRun waited %v, which exceeded the response budget %v", elapsed, budget)
+		}
+		if lookups != 0 {
+			t.Fatalf("status lookups = %d, want 0: the budget ended before the first poll", lookups)
+		}
+		if err != nil {
+			t.Fatalf("CreateRun returned error: %v", err)
+		}
+		if out.Run.Status != StatusQueued {
+			t.Fatalf("run status = %s, want the initial %s", out.Run.Status, StatusQueued)
+		}
+	})
+}
+
 func TestAwaitRunHonorsResponseWaitBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		repo := runTestRepo()
