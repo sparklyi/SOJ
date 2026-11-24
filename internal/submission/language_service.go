@@ -53,8 +53,9 @@ func (s *LanguageService) UpdateLanguage(ctx context.Context, actor auth.Actor, 
 		return LanguageRecord{}, err
 	}
 	record, err := s.store.UpdateLanguage(ctx, id, input, actor.UserID)
-	if err == nil {
+	if err == nil && input.Enabled != nil {
 		// 启用/停用会改变公开语言数，首页聚合跟着走。
+		// 仅修改时间/内存限制（未传 enabled）不影响公开语言数，跳过刷新。
 		s.refreshStats(ctx)
 	}
 	return record, err
