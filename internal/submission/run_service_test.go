@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -524,4 +525,55 @@ func TestCreateRunKeepsTheArtifactRowWhenSourceCleanupFails(t *testing.T) {
 			t.Fatalf("events = %v, want no artifact row delete after a failed object delete", repo.events)
 		}
 	}
+}
+
+// blockingLookupStore is a run store whose status lookup blocks until the
+// context it is given ends, which is how a slow database read behaves under a
+// caller deadline.
+type blockingLookupStore struct {
+	*memoryRepo
+	lookups *int
+}
+
+func (s blockingLookupStore) GetRun(ctx context.Context, _ int64) (RunRecord, error) {
+	*s.lookups++
+	<-ctx.Done()
+	return RunRecord{}, ctx.Err()
+}
+
+func TestAwaitRunHonorsResponseWaitBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		repo := runTestRepo()
+		// The budget must outlast one poll interval, otherwise the budget ends
+		// before the first lookup and the blocking read is never exercised.
+		budget := 2 * runAwaitPollInterval
+		lookups := 0
+		service := NewRunService(RunServiceOptions{
+			Store:         blockingLookupStore{memoryRepo: repo, lookups: &lookups},
+			ProblemReader: fakeProblemReader{},
+			SourceStore:   NewMemorySourceStore(),
+			Wait:          budget,
+			Timeout:       time.Second,
+		})
+		// The caller's deadline is far longer than the response budget, so only
+		// the budget can end the wait.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+
+		start := time.Now()
+		out, err := service.CreateRun(ctx, auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")})
+		elapsed := time.Since(start)
+		if elapsed > budget {
+			t.Fatalf("CreateRun waited %v, which exceeded the response budget %v", elapsed, budget)
+		}
+		if lookups != 1 {
+			t.Fatalf("status lookups = %d, want 1 so the blocking lookup ran", lookups)
+		}
+		if err != nil {
+			t.Fatalf("CreateRun returned error after budget expiry: %v", err)
+		}
+		if out.Run.Status != StatusQueued {
+			t.Fatalf("run status = %s, want the last observed %s", out.Run.Status, StatusQueued)
+		}
+	})
 }

@@ -289,20 +289,41 @@ func (s *RunService) awaitRun(ctx context.Context, run RunRecord) (CreateRunOutp
 	if terminalStatus(run.Status) {
 		return CreateRunOutput{Run: run}, nil
 	}
-	deadline := time.Now().Add(s.runWait)
+	// The response budget bounds the whole wait, including each status lookup.
+	// The caller's context may carry a later deadline, so it cannot be the only
+	// bound: a lookup that blocks on it would hold the response past the budget.
+	budget, cancelBudget := context.WithTimeout(ctx, s.runWait)
+	defer cancelBudget()
 	ticker := time.NewTicker(runAwaitPollInterval)
 	defer ticker.Stop()
+	last := run
 	for {
 		select {
 		case <-ctx.Done():
 			return CreateRunOutput{}, ctx.Err()
+		case <-budget.Done():
+			if ctx.Err() != nil {
+				return CreateRunOutput{}, ctx.Err()
+			}
+			return CreateRunOutput{Run: last}, nil
 		case <-ticker.C:
 		}
-		current, err := s.store.GetRun(ctx, run.ID)
+		if budget.Err() != nil {
+			continue
+		}
+		current, err := s.store.GetRun(budget, run.ID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return CreateRunOutput{}, ctx.Err()
+			}
+			if budget.Err() != nil {
+				// Only the budget ended the lookup: report the last observed state.
+				return CreateRunOutput{Run: last}, nil
+			}
 			return CreateRunOutput{}, err
 		}
-		if terminalStatus(current.Status) || time.Now().After(deadline) {
+		last = current
+		if terminalStatus(current.Status) {
 			return CreateRunOutput{Run: current}, nil
 		}
 	}
