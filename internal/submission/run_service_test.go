@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -577,6 +578,32 @@ func TestAwaitRunReturnsStoreErrorAtBudgetExpiry(t *testing.T) {
 		}
 		if !errors.Is(err, errRunStoreUnavailable) {
 			t.Fatalf("CreateRun error = %v, want the store error %v", err, errRunStoreUnavailable)
+		}
+	})
+}
+
+func TestAwaitRunReturnsLastObservedStateForWrappedBudgetError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lookups := 0
+		service := NewRunService(RunServiceOptions{
+			Store:         failingLookupStore{memoryRepo: runTestRepo(), lookups: &lookups, err: fmt.Errorf("read run: %w", context.DeadlineExceeded)},
+			ProblemReader: fakeProblemReader{},
+			SourceStore:   NewMemorySourceStore(),
+			Wait:          2 * runAwaitPollInterval,
+			Timeout:       time.Second,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+
+		out, err := service.CreateRun(ctx, auth.Actor{UserID: 5, Role: auth.RoleUser}, CreateRunInput{LanguageID: 71, Source: []byte("package main")})
+		if lookups != 1 {
+			t.Fatalf("status lookups = %d, want 1 so the blocking lookup ran", lookups)
+		}
+		if err != nil {
+			t.Fatalf("CreateRun returned error: %v", err)
+		}
+		if out.Run.Status != StatusQueued {
+			t.Fatalf("run status = %s, want the last observed %s", out.Run.Status, StatusQueued)
 		}
 	})
 }
