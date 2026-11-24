@@ -456,3 +456,30 @@ func TestRedisStreamClaimStaleResumesFromScanCursor(t *testing.T) {
 		t.Fatalf("XAUTOCLAIM start IDs = %q, want %q", hook.starts, want)
 	}
 }
+
+func TestRedisStreamClaimStaleKeepsCursorWhenMessageConversionFails(t *testing.T) {
+	hook := &scriptedAutoClaimHook{steps: []autoClaimStep{
+		{messages: []redis.XMessage{{ID: "1-0", Values: map[string]any{"task_id": "bad"}}}, next: "5-0"},
+		{messages: []redis.XMessage{{ID: "2-0", Values: map[string]any{"task_id": "42", "payload": `{}`}}}, next: "0-0"},
+	}}
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+	q := NewRedisStreamQueue(client, RedisStreamConfig{Stream: "tasks", Group: "workers", Consumer: "c1"})
+
+	ctx := context.Background()
+	if _, err := q.ClaimStale(ctx, time.Minute, 1); err == nil {
+		t.Fatal("ClaimStale() error = nil, want invalid task_id error")
+	}
+	msgs, err := q.ClaimStale(ctx, time.Minute, 1)
+	if err != nil || len(msgs) != 1 || msgs[0].ID != "2-0" {
+		t.Fatalf("second ClaimStale() = %+v, %v; want message 2-0", msgs, err)
+	}
+
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	want := []string{"0-0", "0-0"}
+	if !reflect.DeepEqual(hook.starts, want) {
+		t.Fatalf("XAUTOCLAIM start IDs = %q, want %q", hook.starts, want)
+	}
+}

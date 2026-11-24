@@ -146,10 +146,15 @@ func (q *RedisStreamQueue) ClaimStale(ctx context.Context, minIdle time.Duration
 		// Keep the previous cursor so a failed scan retries the same range.
 		return nil, err
 	}
-	// A successful page, even an empty one, advances the scan. "0-0" means the
-	// scan finished, so the next pass starts again from the beginning.
+	converted, err := xMessages(messages)
+	if err != nil {
+		return nil, err
+	}
+	// A successfully converted page, even an empty one, advances the scan.
+	// "0-0" means the scan finished, so the next pass starts again from the
+	// beginning. Keep the previous cursor if conversion fails.
 	q.claimCursor = next
-	return xMessages(messages)
+	return converted, nil
 }
 
 func (q *RedisStreamQueue) Ack(ctx context.Context, messageID string) error {
