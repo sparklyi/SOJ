@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -30,6 +31,11 @@ type RedisStreamConfig struct {
 type RedisStreamQueue struct {
 	client redis.UniversalClient
 	cfg    RedisStreamConfig
+
+	// claimMu guards claimCursor, the XAUTOCLAIM scan position for this
+	// queue instance. It is in-memory only and is not persisted.
+	claimMu     sync.Mutex
+	claimCursor string
 }
 
 func NewRedisStreamQueue(client redis.UniversalClient, cfg RedisStreamConfig) *RedisStreamQueue {
@@ -119,21 +125,36 @@ func (q *RedisStreamQueue) ClaimStale(ctx context.Context, minIdle time.Duration
 	if limit <= 0 {
 		limit = 1
 	}
-	messages, _, err := q.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+	q.claimMu.Lock()
+	defer q.claimMu.Unlock()
+	start := q.claimCursor
+	if start == "" {
+		start = "0-0"
+	}
+	messages, next, err := q.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   q.cfg.Stream,
 		Group:    q.cfg.Group,
 		Consumer: q.cfg.Consumer,
 		MinIdle:  minIdle,
-		Start:    "0-0",
+		Start:    start,
 		Count:    int64(limit),
 	}).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
 	if err != nil {
+		// Keep the previous cursor so a failed scan retries the same range.
 		return nil, err
 	}
-	return xMessages(messages)
+	converted, err := xMessages(messages)
+	if err != nil {
+		return nil, err
+	}
+	// A successfully converted page, even an empty one, advances the scan.
+	// "0-0" means the scan finished, so the next pass starts again from the
+	// beginning. Keep the previous cursor if conversion fails.
+	q.claimCursor = next
+	return converted, nil
 }
 
 func (q *RedisStreamQueue) Ack(ctx context.Context, messageID string) error {

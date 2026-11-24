@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -367,4 +368,118 @@ func (missingKeyRedisHook) ProcessHook(redis.ProcessHook) redis.ProcessHook {
 
 func (missingKeyRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return next
+}
+
+// scriptedAutoClaimHook answers XAUTOCLAIM commands from a fixed script, one
+// step per command, and records the start ID each command was sent with.
+type scriptedAutoClaimHook struct {
+	mu     sync.Mutex
+	steps  []autoClaimStep
+	starts []string
+}
+
+type autoClaimStep struct {
+	messages []redis.XMessage
+	next     string
+	err      error
+}
+
+func (h *scriptedAutoClaimHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *scriptedAutoClaimHook) ProcessHook(redis.ProcessHook) redis.ProcessHook {
+	return func(_ context.Context, cmd redis.Cmder) error {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		args := cmd.Args()
+		if len(args) < 6 || fmt.Sprint(args[0]) != "xautoclaim" {
+			return nil
+		}
+		h.starts = append(h.starts, fmt.Sprint(args[5]))
+		if len(h.steps) == 0 {
+			return fmt.Errorf("unexpected XAUTOCLAIM with no scripted reply")
+		}
+		step := h.steps[0]
+		h.steps = h.steps[1:]
+		autoClaim, ok := cmd.(*redis.XAutoClaimCmd)
+		if !ok {
+			return fmt.Errorf("unexpected command type %T", cmd)
+		}
+		if step.err != nil {
+			autoClaim.SetErr(step.err)
+			return step.err
+		}
+		autoClaim.SetVal(step.messages, step.next)
+		return nil
+	}
+}
+
+func (h *scriptedAutoClaimHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// TestRedisStreamClaimStaleResumesFromScanCursor drives ClaimStale through an
+// empty page with a nonzero cursor, a failed call, and a successful page that
+// returns the terminal "0-0" cursor. Each call must start where the previous
+// successful page left off, and a failed call must retry from the same cursor.
+func TestRedisStreamClaimStaleResumesFromScanCursor(t *testing.T) {
+	sentinelErr := errors.New("LOADING Redis is loading the dataset in memory")
+	hook := &scriptedAutoClaimHook{steps: []autoClaimStep{
+		{next: "5-0"},
+		{err: sentinelErr},
+		{messages: []redis.XMessage{{ID: "7-0", Values: map[string]any{"task_id": "42", "payload": `{}`, "attempts": "1"}}}, next: "0-0"},
+		{next: "0-0"},
+	}}
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+	q := NewRedisStreamQueue(client, RedisStreamConfig{Stream: "tasks", Group: "workers", Consumer: "c1"})
+
+	ctx := context.Background()
+	if msgs, err := q.ClaimStale(ctx, time.Minute, 1); err != nil || len(msgs) != 0 {
+		t.Fatalf("first ClaimStale() = %v, %v; want empty page", msgs, err)
+	}
+	if _, err := q.ClaimStale(ctx, time.Minute, 1); !errors.Is(err, sentinelErr) {
+		t.Fatalf("second ClaimStale() error = %v, want %v", err, sentinelErr)
+	}
+	msgs, err := q.ClaimStale(ctx, time.Minute, 1)
+	if err != nil || len(msgs) != 1 || msgs[0].ID != "7-0" {
+		t.Fatalf("third ClaimStale() = %+v, %v; want message 7-0", msgs, err)
+	}
+	if _, err := q.ClaimStale(ctx, time.Minute, 1); err != nil {
+		t.Fatalf("fourth ClaimStale() error = %v", err)
+	}
+
+	want := []string{"0-0", "5-0", "5-0", "0-0"}
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	if !reflect.DeepEqual(hook.starts, want) {
+		t.Fatalf("XAUTOCLAIM start IDs = %q, want %q", hook.starts, want)
+	}
+}
+
+func TestRedisStreamClaimStaleKeepsCursorWhenMessageConversionFails(t *testing.T) {
+	hook := &scriptedAutoClaimHook{steps: []autoClaimStep{
+		{messages: []redis.XMessage{{ID: "1-0", Values: map[string]any{"task_id": "bad"}}}, next: "5-0"},
+		{messages: []redis.XMessage{{ID: "2-0", Values: map[string]any{"task_id": "42", "payload": `{}`}}}, next: "0-0"},
+	}}
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+	q := NewRedisStreamQueue(client, RedisStreamConfig{Stream: "tasks", Group: "workers", Consumer: "c1"})
+
+	ctx := context.Background()
+	if _, err := q.ClaimStale(ctx, time.Minute, 1); err == nil {
+		t.Fatal("ClaimStale() error = nil, want invalid task_id error")
+	}
+	msgs, err := q.ClaimStale(ctx, time.Minute, 1)
+	if err != nil || len(msgs) != 1 || msgs[0].ID != "2-0" {
+		t.Fatalf("second ClaimStale() = %+v, %v; want message 2-0", msgs, err)
+	}
+
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	want := []string{"0-0", "0-0"}
+	if !reflect.DeepEqual(hook.starts, want) {
+		t.Fatalf("XAUTOCLAIM start IDs = %q, want %q", hook.starts, want)
+	}
 }
