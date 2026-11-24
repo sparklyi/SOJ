@@ -3,6 +3,7 @@ package submission
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,72 @@ func TestCancelRejudgeBatchAuthorizesTarget(t *testing.T) {
 	}
 	if batch.Status != RejudgeBatchStatusCanceled || policy.contestID != 22 || repo.cancelReason != "operator canceled" {
 		t.Fatalf("batch=%+v contest=%d reason=%q", batch, policy.contestID, repo.cancelReason)
+	}
+}
+
+func TestRejudgeReasonByteLimit(t *testing.T) {
+	ctx := context.Background()
+	actor := auth.Actor{UserID: 5, Role: auth.RoleUser}
+	batch := RejudgeBatchRecord{ID: 9, ProblemID: int64Ptr(11), RequestedBy: 5, Status: RejudgeBatchStatusRunning}
+
+	// U+754C occupies three bytes in UTF-8.
+	exact := strings.Repeat("\u754c", 166) + "ab"
+	over := strings.Repeat("\u754c", 167)
+	if len(exact) != 500 || len(over) != 501 {
+		t.Fatalf("reason fixture lengths = %d and %d bytes, want 500 and 501", len(exact), len(over))
+	}
+
+	t.Run("create at limit", func(t *testing.T) {
+		repo := &fakeRejudgeRepository{}
+		service := NewRejudgeService(repo, &fakeRejudgePolicy{}, time.Now)
+		_, err := service.CreateBatch(ctx, actor, CreateRejudgeBatchInput{ProblemID: batch.ProblemID, Reason: " " + exact + " "})
+		if err != nil {
+			t.Fatalf("CreateBatch returned error: %v", err)
+		}
+		if got := repo.createInput.Reason; got != exact {
+			t.Errorf("persisted create reason = %q, want %q", got, exact)
+		}
+	})
+
+	t.Run("create over limit", func(t *testing.T) {
+		repo := &fakeRejudgeRepository{}
+		service := NewRejudgeService(repo, &fakeRejudgePolicy{}, time.Now)
+		_, err := service.CreateBatch(ctx, actor, CreateRejudgeBatchInput{ProblemID: batch.ProblemID, Reason: over})
+		assertRejudgeCode(t, err, "rejudge.reason_invalid")
+		if repo.createInput != (CreateRejudgeBatchRecordInput{}) {
+			t.Errorf("CreateBatch sent an invalid reason to the repository: %+v", repo.createInput)
+		}
+	})
+
+	t.Run("cancel at limit", func(t *testing.T) {
+		repo := &fakeRejudgeRepository{batch: batch}
+		service := NewRejudgeService(repo, &fakeRejudgePolicy{}, time.Now)
+		_, err := service.CancelBatch(ctx, actor, batch.ID, " "+exact+" ")
+		if err != nil {
+			t.Fatalf("CancelBatch returned error: %v", err)
+		}
+		if got := repo.cancelReason; got != exact {
+			t.Errorf("persisted cancel reason = %q, want %q", got, exact)
+		}
+	})
+
+	for _, tt := range []struct {
+		name     string
+		reason   string
+		wantCode string
+	}{
+		{name: "cancel over limit", reason: over, wantCode: "rejudge.reason_invalid"},
+		{name: "cancel whitespace only", reason: " \t\n ", wantCode: "rejudge.cancel_reason_required"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRejudgeRepository{batch: batch}
+			service := NewRejudgeService(repo, &fakeRejudgePolicy{}, time.Now)
+			_, err := service.CancelBatch(ctx, actor, batch.ID, tt.reason)
+			assertRejudgeCode(t, err, tt.wantCode)
+			if repo.batch.Status != RejudgeBatchStatusRunning {
+				t.Errorf("CancelBatch sent an invalid reason to the repository: %q", repo.cancelReason)
+			}
+		})
 	}
 }
 
