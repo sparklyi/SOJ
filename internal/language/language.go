@@ -98,6 +98,7 @@ func (p Profile) validate() error {
 	}
 
 	usesSource := false
+	usesBinary := false
 	for _, argv := range [][]string{p.Compile, p.Run} {
 		for _, arg := range argv {
 			for _, ref := range placeholderPattern.FindAllString(arg, -1) {
@@ -109,11 +110,19 @@ func (p Profile) validate() error {
 				if ref == "{{source}}" {
 					usesSource = true
 				}
+				if ref == "{{binary}}" {
+					usesBinary = true
+				}
 			}
 		}
 	}
 	if !usesSource {
 		add("%s: compile or run must reference {{source}}", p.Slug)
+	}
+	// A {{binary}} reference names a file the compile step must produce; without
+	// a binary_file the placeholder has nothing to expand to.
+	if usesBinary && strings.TrimSpace(p.BinaryFile) == "" {
+		add("%s: compile or run references {{binary}} but binary_file is not set", p.Slug)
 	}
 
 	return errors.Join(errs...)
