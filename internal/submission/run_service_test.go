@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -471,5 +472,56 @@ func TestCreateRunDiscardsTheSourceWhenAdmissionRefuses(t *testing.T) {
 	// failed, the object would be unreachable from every query in the system.
 	if len(repo.events) != 2 || repo.events[0] != "delete_object" || repo.events[1] != "delete_artifact" {
 		t.Fatalf("events = %v, want the object removed before the artifact row", repo.events)
+	}
+}
+
+// failingSourceStore fails every Delete, so a test can prove the artifact row
+// survives a failed cleanup for the orphan sweep to retry against.
+type failingSourceStore struct {
+	inner *MemorySourceStore
+	err   error
+}
+
+var errSourceStoreUnavailable = errors.New("source store unavailable")
+
+func (s failingSourceStore) Put(ctx context.Context, ownerType string, ownerID int64, source []byte) (SourceObject, error) {
+	return s.inner.Put(ctx, ownerType, ownerID, source)
+}
+
+func (s failingSourceStore) Delete(context.Context, string) error {
+	return s.err
+}
+
+func TestCreateRunKeepsTheArtifactRowWhenSourceCleanupFails(t *testing.T) {
+	repo := runTestRepo()
+	store := NewMemorySourceStore()
+	service := newServiceForTest(serviceTestOptions{
+		Repository:    repo,
+		ProblemReader: fakeProblemReader{},
+		SourceStore:   failingSourceStore{inner: store, err: errSourceStoreUnavailable},
+		RunWait:       time.Millisecond,
+		RunPerUser:    1,
+		RunQueued:     true,
+	})
+	actor := auth.Actor{UserID: 5, Role: auth.RoleUser}
+
+	if _, err := service.CreateRun(t.Context(), actor, CreateRunInput{LanguageID: 71, Source: []byte("package main")}); err != nil {
+		t.Fatalf("first run returned error: %v", err)
+	}
+	before := len(repo.artifacts)
+	_, err := service.CreateRun(t.Context(), actor, CreateRunInput{LanguageID: 71, Source: []byte("package second")})
+	// The refusal the caller sees stays the admission error: cleanup is
+	// best-effort and must not replace it with a storage error.
+	appErr, ok := apperror.From(err)
+	if !ok || appErr.Code != "run.user_limit_exceeded" {
+		t.Fatalf("second run error=%v, want the admission refusal run.user_limit_exceeded", err)
+	}
+	if got := len(repo.artifacts); got != before+1 {
+		t.Fatalf("artifacts after failed cleanup = %d, want %d: the refused run's row has to survive so the orphan sweep can retry the object delete", got, before+1)
+	}
+	for _, event := range repo.events {
+		if event == "delete_artifact" {
+			t.Fatalf("events = %v, want no artifact row delete after a failed object delete", repo.events)
+		}
 	}
 }
