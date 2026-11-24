@@ -2,6 +2,7 @@ package submission
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -289,23 +290,51 @@ func (s *RunService) awaitRun(ctx context.Context, run RunRecord) (CreateRunOutp
 	if terminalStatus(run.Status) {
 		return CreateRunOutput{Run: run}, nil
 	}
-	deadline := time.Now().Add(s.runWait)
+	// The response budget bounds the whole wait, including each status lookup.
+	// The caller's context may carry a later deadline, so it cannot be the only
+	// bound: a lookup that blocks on it would hold the response past the budget.
+	budget, cancelBudget := context.WithTimeout(ctx, s.runWait)
+	defer cancelBudget()
 	ticker := time.NewTicker(runAwaitPollInterval)
 	defer ticker.Stop()
+	last := run
 	for {
 		select {
 		case <-ctx.Done():
 			return CreateRunOutput{}, ctx.Err()
+		case <-budget.Done():
+			if ctx.Err() != nil {
+				return CreateRunOutput{}, ctx.Err()
+			}
+			return CreateRunOutput{Run: last}, nil
 		case <-ticker.C:
 		}
-		current, err := s.store.GetRun(ctx, run.ID)
+		if budget.Err() != nil {
+			continue
+		}
+		current, err := s.store.GetRun(budget, run.ID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return CreateRunOutput{}, ctx.Err()
+			}
+			if budget.Err() != nil && isContextEnd(err) {
+				// Only the budget ended the lookup: report the last observed state.
+				// A store error that lands as the budget expires is not a budget
+				// error, so it is returned below.
+				return CreateRunOutput{Run: last}, nil
+			}
 			return CreateRunOutput{}, err
 		}
-		if terminalStatus(current.Status) || time.Now().After(deadline) {
+		last = current
+		if terminalStatus(current.Status) {
 			return CreateRunOutput{Run: current}, nil
 		}
 	}
+}
+
+// isContextEnd reports whether err is a context end rather than a store failure.
+func isContextEnd(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // completeRunAsync executes one admitted run in this process. It only runs in
