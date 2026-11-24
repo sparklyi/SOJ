@@ -86,6 +86,28 @@ func TestCursorQueriesExecuteAgainstPostgres(t *testing.T) {
 	if err != nil || len(submissions) != 1 || submissions[0].Submission.ID != fixture.submissionID || submissions[0].OutcomeStatus != "accepted" {
 		t.Fatalf("list submissions: rows=%v err=%v", submissions, err)
 	}
+
+	queuedSubmissions, err := queries.ListSubmissionsByCursor(ctx, ListSubmissionsByCursorParams{
+		UserID:            pgtype.Int8{Int64: fixture.userOneID, Valid: true},
+		Status:            pgtype.Text{String: "queued", Valid: true},
+		BeforeSubmittedAt: before,
+		BeforeID:          1<<63 - 1,
+		Limit:             10,
+	})
+	if err != nil || len(queuedSubmissions) != 1 || queuedSubmissions[0].Submission.ID != fixture.queuedSubmissionID || queuedSubmissions[0].OutcomeStatus != "queued" {
+		t.Fatalf("list queued submissions: rows=%v err=%v", queuedSubmissions, err)
+	}
+
+	var submissionStatus, attemptStatus string
+	if err := tx.QueryRow(ctx, `SELECT s.status, a.status
+		FROM submissions s
+		JOIN judge_attempts a ON a.id = s.effective_attempt_id
+		WHERE s.id = $1`, fixture.queuedSubmissionID).Scan(&submissionStatus, &attemptStatus); err != nil {
+		t.Fatalf("read queued rejudge attempt: %v", err)
+	}
+	if submissionStatus != "queued" || attemptStatus != "accepted" {
+		t.Fatalf("queued rejudge status = %s/%s, want queued/accepted", submissionStatus, attemptStatus)
+	}
 }
 
 type integrationExecer interface {
@@ -93,31 +115,33 @@ type integrationExecer interface {
 }
 
 type cursorQueryIntegrationFixture struct {
-	token            string
-	userOneID        int64
-	userTwoID        int64
-	publicProblemID  int64
-	privateProblemID int64
-	languageID       int64
-	testcaseSetID    int64
-	publicContestID  int64
-	privateContestID int64
-	submissionID     int64
+	token              string
+	userOneID          int64
+	userTwoID          int64
+	publicProblemID    int64
+	privateProblemID   int64
+	languageID         int64
+	testcaseSetID      int64
+	publicContestID    int64
+	privateContestID   int64
+	submissionID       int64
+	queuedSubmissionID int64
 }
 
 func newCursorQueryIntegrationFixture() cursorQueryIntegrationFixture {
 	base := time.Now().UnixNano() & ((1 << 62) - 1)
 	return cursorQueryIntegrationFixture{
-		token:            time.Now().UTC().Format("20060102T150405.000000000"),
-		userOneID:        base,
-		userTwoID:        base + 1,
-		publicProblemID:  base + 2,
-		privateProblemID: base + 3,
-		languageID:       base + 4,
-		testcaseSetID:    base + 5,
-		publicContestID:  base + 6,
-		privateContestID: base + 7,
-		submissionID:     base + 8,
+		token:              time.Now().UTC().Format("20060102T150405.000000000"),
+		userOneID:          base,
+		userTwoID:          base + 1,
+		publicProblemID:    base + 2,
+		privateProblemID:   base + 3,
+		languageID:         base + 4,
+		testcaseSetID:      base + 5,
+		publicContestID:    base + 6,
+		privateContestID:   base + 7,
+		submissionID:       base + 8,
+		queuedSubmissionID: base + 9,
 	}
 }
 
@@ -190,6 +214,27 @@ func seedCursorQueryIntegrationData(t *testing.T, ctx context.Context, tx integr
 			query: `UPDATE submissions s SET status = 'judged', effective_attempt_id = a.id, judged_at = a.finished_at, first_judged_at = a.finished_at
 				FROM judge_attempts a WHERE a.submission_id = s.id AND s.id = $1`,
 			args: []any{fixture.submissionID},
+		},
+		{
+			query: `INSERT INTO submissions (id, user_id, problem_id, language_id, testcase_set_id, status)
+				VALUES ($1, $2, $3, $4, $5, 'queued')`,
+			args: []any{fixture.queuedSubmissionID, fixture.userOneID, fixture.publicProblemID, fixture.languageID, fixture.testcaseSetID},
+		},
+		{
+			query: `INSERT INTO judge_attempts
+				(submission_id, attempt_no, protocol_version, judge_core_version, judge_engine, language_id, status, finished_at)
+				VALUES ($1, 1, 'test-protocol', 'test-core', 'test-engine', $2, 'accepted', now())`,
+			args: []any{fixture.queuedSubmissionID, fixture.languageID},
+		},
+		{
+			query: `UPDATE submissions s SET status = 'judged', effective_attempt_id = a.id, judged_at = a.finished_at, first_judged_at = a.finished_at
+				FROM judge_attempts a WHERE a.submission_id = s.id AND s.id = $1`,
+			args: []any{fixture.queuedSubmissionID},
+		},
+		{
+			query: `UPDATE submissions SET status = 'queued', judged_at = NULL
+				WHERE id = $1 AND status = 'judged'`,
+			args: []any{fixture.queuedSubmissionID},
 		},
 	}
 	for _, statement := range statements {
