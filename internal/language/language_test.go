@@ -277,3 +277,70 @@ func TestLoadAcceptsSingleDocumentWithTrailingComments(t *testing.T) {
 		t.Fatalf("Lookup(go) = (%+v, %v), want Go profile", profile, ok)
 	}
 }
+
+func TestNewRejectsBinaryPlaceholderWithoutBinaryFile(t *testing.T) {
+	// A {{binary}} reference names a file the compile step must produce; without
+	// a binary_file the placeholder has nothing to expand to. Check the compile
+	// and run arguments separately, exercising only the catalog validator.
+	tests := []struct {
+		name    string
+		profile Profile
+	}{
+		{
+			name: "binary in compile",
+			profile: Profile{
+				Slug:       "go",
+				Name:       "Go",
+				SourceFile: "main.go",
+				Compile:    []string{"go", "build", "-o", "{{binary}}", "{{source}}"},
+				Run:        []string{"./main"},
+				Image:      "img:1",
+			},
+		},
+		{
+			name: "binary in run",
+			profile: Profile{
+				Slug:       "go",
+				Name:       "Go",
+				SourceFile: "main.go",
+				Compile:    []string{"go", "build", "{{source}}"},
+				Run:        []string{"{{binary}}"},
+				Image:      "img:1",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			catalog, err := New(test.profile)
+			if err == nil {
+				t.Fatal("New() error = nil, want {{binary}} without binary_file rejected")
+			}
+			if catalog != nil {
+				t.Fatal("New() returned a catalog for a rejected profile")
+			}
+			if !strings.Contains(err.Error(), "go") || !strings.Contains(err.Error(), "binary_file") {
+				t.Fatalf("New() error = %v, want it to name the profile and binary_file", err)
+			}
+		})
+	}
+}
+
+func TestNewAcceptsBinaryPlaceholderWithBinaryFile(t *testing.T) {
+	// The compiled profile that declares a binary_file must still validate.
+	catalog, err := New(Profile{
+		Slug:       "go",
+		Name:       "Go",
+		SourceFile: "main.go",
+		BinaryFile: "main",
+		Compile:    []string{"go", "build", "-o", "{{binary}}", "{{source}}"},
+		Run:        []string{"{{binary}}"},
+		Image:      "img:1",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, ok := catalog.Lookup("go"); !ok {
+		t.Fatal("Lookup(go) missed")
+	}
+}
