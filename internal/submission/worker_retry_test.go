@@ -135,7 +135,7 @@ func TestTaskFailureHandlerRetryWriteOrder(t *testing.T) {
 				errors.New("judge unavailable"),
 			)
 
-			if err != tt.wantErr {
+			if !errors.Is(err, tt.wantErr) {
 				t.Errorf(
 					"retryOrDead() error = %v, want %v",
 					err, tt.wantErr,
