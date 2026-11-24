@@ -241,29 +241,37 @@ func (r *SQLRepository) ListLanguages(ctx context.Context, arg ListLanguagesInpu
 // ReconcileLanguages makes the catalog rows match the language directory: rows
 // for configured slugs are created or updated, and rows whose slug is gone are
 // disabled. Enablement and limits belong to administrators and are never
-// overwritten.
+// overwritten. The upserts and the disable run in one transaction so a later
+// failure rolls the whole reconciliation back instead of leaving earlier writes
+// committed.
 func (r *SQLRepository) ReconcileLanguages(ctx context.Context, profiles []language.Profile) error {
-	slugs := make([]string, 0, len(profiles))
-	for _, profile := range profiles {
-		if _, err := r.q.UpsertCatalogLanguage(ctx, db.UpsertCatalogLanguageParams{
-			Engine:               judge.EngineSOJAgent,
-			EngineLanguageID:     profile.Slug,
-			Name:                 profile.Name,
-			DefaultTimeLimitMs:   int32(profile.TimeLimitMS),
-			DefaultMemoryLimitKb: int32(profile.MemoryLimitKB),
-		}); err != nil {
-			return fmt.Errorf("upsert language %s: %w", profile.Slug, err)
+	if r.txRunner == nil {
+		return errors.New("submission: transaction runner is required")
+	}
+	return postgres.WithTx(ctx, r.txRunner, func(tx pgx.Tx) error {
+		queries := r.q.WithTx(tx)
+		slugs := make([]string, 0, len(profiles))
+		for _, profile := range profiles {
+			if _, err := queries.UpsertCatalogLanguage(ctx, db.UpsertCatalogLanguageParams{
+				Engine:               judge.EngineSOJAgent,
+				EngineLanguageID:     profile.Slug,
+				Name:                 profile.Name,
+				DefaultTimeLimitMs:   int32(profile.TimeLimitMS),
+				DefaultMemoryLimitKb: int32(profile.MemoryLimitKB),
+			}); err != nil {
+				return fmt.Errorf("upsert language %s: %w", profile.Slug, err)
+			}
+			slugs = append(slugs, profile.Slug)
 		}
-		slugs = append(slugs, profile.Slug)
-	}
 
-	if _, err := r.q.DisableLanguagesNotListed(ctx, db.DisableLanguagesNotListedParams{
-		Engine: judge.EngineSOJAgent,
-		Slugs:  slugs,
-	}); err != nil {
-		return fmt.Errorf("disable removed languages: %w", err)
-	}
-	return nil
+		if _, err := queries.DisableLanguagesNotListed(ctx, db.DisableLanguagesNotListedParams{
+			Engine: judge.EngineSOJAgent,
+			Slugs:  slugs,
+		}); err != nil {
+			return fmt.Errorf("disable removed languages: %w", err)
+		}
+		return nil
+	})
 }
 
 // UpdateLanguage applies administrator fields and records the enablement change
