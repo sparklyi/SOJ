@@ -38,15 +38,27 @@ func (r *SQLRepository) CreateRejudgeBatchWithItems(ctx context.Context, input C
 		if len(submissions) == 0 {
 			return ErrNoRejudgeSubmissions
 		}
+		submissionIDs := make([]int64, 0, len(submissions))
+		for _, candidate := range submissions {
+			submissionIDs = append(submissionIDs, candidate.ID)
+		}
+		tasks, err := q.ListJudgeTasksBySubmissionIDs(ctx, submissionIDs)
+		if err != nil {
+			return err
+		}
+		tasksBySubmission := make(map[int64]db.JudgeTask, len(tasks))
+		for _, task := range tasks {
+			tasksBySubmission[task.SubmissionID.Int64] = task
+		}
 		type rejudgeTarget struct {
 			submission db.Submission
 			task       db.JudgeTask
 		}
 		targets := make([]rejudgeTarget, 0, len(submissions))
 		for _, candidate := range submissions {
-			task, err := q.GetJudgeTaskBySubmissionID(ctx, validInt8(candidate.ID))
-			if err != nil {
-				return err
+			task, ok := tasksBySubmission[candidate.ID]
+			if !ok {
+				return pgx.ErrNoRows
 			}
 			targets = append(targets, rejudgeTarget{submission: candidate, task: task})
 		}

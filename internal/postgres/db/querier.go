@@ -134,6 +134,7 @@ type Querier interface {
 	ListJudgeAttemptsByRejudgeBatch(ctx context.Context, rejudgeBatchID pgtype.Int8) ([]JudgeAttempt, error)
 	ListJudgeAttemptsBySubmissionID(ctx context.Context, submissionID pgtype.Int8) ([]JudgeAttempt, error)
 	ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID int64) ([]JudgeCaseResult, error)
+	ListJudgeTasksBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]JudgeTask, error)
 	ListLanguages(ctx context.Context, arg ListLanguagesParams) ([]Language, error)
 	// Run source objects that no run points at.
 	//

@@ -1863,6 +1863,43 @@ func (q *Queries) ListJudgeCaseResultsByAttemptID(ctx context.Context, attemptID
 	return items, nil
 }
 
+const listJudgeTasksBySubmissionIDs = `-- name: ListJudgeTasksBySubmissionIDs :many
+SELECT id, submission_id, stream_id, status, attempts, next_run_at, last_error, created_at, updated_at, run_id
+FROM judge_tasks
+WHERE submission_id = ANY($1::bigint[])
+`
+
+func (q *Queries) ListJudgeTasksBySubmissionIDs(ctx context.Context, submissionIds []int64) ([]JudgeTask, error) {
+	rows, err := q.db.Query(ctx, listJudgeTasksBySubmissionIDs, submissionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JudgeTask
+	for rows.Next() {
+		var i JudgeTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.SubmissionID,
+			&i.StreamID,
+			&i.Status,
+			&i.Attempts,
+			&i.NextRunAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RunID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrphanedRunArtifacts = `-- name: ListOrphanedRunArtifacts :many
 SELECT artifacts.id, artifacts.storage_key
 FROM artifacts
