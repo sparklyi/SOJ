@@ -189,9 +189,10 @@ func (s *cleanupDeadlineSandbox) Cleanup(ctx context.Context, _ sandbox.Workspac
 	return ctx.Err()
 }
 
-// scriptedSandbox replays one RunResult per Run call, in order, and records
-// the requests it saw. Compile always succeeds.
+// scriptedSandbox returns the configured compile result and replays one
+// RunResult per Run call, in order, recording the requests it saw.
 type scriptedSandbox struct {
+	compiled sandbox.CompileResult
 	runs     []sandbox.RunResult
 	requests []sandbox.RunRequest
 	cleanups int
@@ -209,7 +210,7 @@ func (s *scriptedSandbox) Prepare(context.Context, sandbox.PrepareRequest) (sand
 }
 
 func (s *scriptedSandbox) Compile(context.Context, sandbox.Workspace, language.Profile) (sandbox.CompileResult, error) {
-	return sandbox.CompileResult{Verdict: judge.VerdictAccepted}, nil
+	return s.compiled, nil
 }
 
 func (s *scriptedSandbox) Run(_ context.Context, _ sandbox.Workspace, _ language.Profile, request sandbox.RunRequest) (sandbox.RunResult, error) {
@@ -239,8 +240,47 @@ func (c *scriptedChecker) Check(_ context.Context, request checker.Request) (che
 	return c.results[len(c.requests)-1], nil
 }
 
+func TestCorePreservesCompileVerdict(t *testing.T) {
+	profile := testGoProfile()
+	source := []byte("package main\nfunc main() {}\n")
+	entries := []struct {
+		name string
+		call func(*Core) (judge.Result, error)
+	}{
+		{"Judge", func(core *Core) (judge.Result, error) {
+			return core.Judge(t.Context(), Request{
+				Language: profile, Source: source, Cases: []Case{{Input: "1\n", ExpectedOutput: "2\n"}},
+			})
+		}},
+		{"Run", func(core *Core) (judge.Result, error) {
+			return core.Run(t.Context(), RunRequest{Language: profile, Source: source, Stdin: "1\n"})
+		}},
+	}
+	for _, entry := range entries {
+		for _, compiled := range []sandbox.CompileResult{
+			{Verdict: judge.VerdictCompileError, Output: "main.go:3: undefined: value", ErrorMessage: "compilation failed"},
+			{Verdict: judge.VerdictSystemError, Output: "toolchain unavailable", ErrorMessage: "compiler could not start"},
+		} {
+			t.Run(entry.name+"/"+string(compiled.Verdict), func(t *testing.T) {
+				backend := &scriptedSandbox{compiled: compiled}
+				outputChecker := &scriptedChecker{}
+				got, err := entry.call(New(Options{Sandbox: backend, Checker: outputChecker}))
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if got.Verdict != compiled.Verdict || got.CompileOutput != compiled.Output || got.ErrorMessage != compiled.ErrorMessage {
+					t.Errorf("got verdict %q, output %q, message %q; want %+v", got.Verdict, got.CompileOutput, got.ErrorMessage, compiled)
+				}
+				if len(backend.requests) != 0 || len(outputChecker.requests) != 0 {
+					t.Errorf("got %d run calls and %d checker calls after compilation failed", len(backend.requests), len(outputChecker.requests))
+				}
+			})
+		}
+	}
+}
+
 func TestCoreAggregatesCaseResults(t *testing.T) {
-	backend := &scriptedSandbox{runs: []sandbox.RunResult{
+	backend := &scriptedSandbox{compiled: sandbox.CompileResult{Verdict: judge.VerdictAccepted}, runs: []sandbox.RunResult{
 		// Case 1: executes fine, checker accepts. Memory maximum lives here.
 		{Verdict: judge.VerdictAccepted, Stdout: "3\n", TimeMS: 10, MemoryKB: 900},
 		// Case 2: executes fine, checker rejects -> wrong_answer. Time maximum lives here.
