@@ -81,6 +81,11 @@ func (p Profile) validate() error {
 	}
 	if len(p.Run) == 0 {
 		add("%s: run must not be empty", p.Slug)
+	} else if strings.TrimSpace(p.Run[0]) == "" {
+		add("%s: run executable must not be blank", p.Slug)
+	}
+	if len(p.Compile) > 0 && strings.TrimSpace(p.Compile[0]) == "" {
+		add("%s: compile executable must not be blank", p.Slug)
 	}
 	// An interpreted language may compile (a syntax check) without producing a
 	// binary; the reverse -- a binary nothing built -- is always a mistake.
