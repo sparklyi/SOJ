@@ -1,6 +1,8 @@
 package language
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,19 +101,12 @@ func TestLoadReportsInvalidDefinitions(t *testing.T) {
 		{"source never used", "go", "name: Go\nsource_file: main.go\nrun: [\"true\"]\nimage: img:1\n", "must reference {{source}}"},
 		{"missing image", "go", "name: Go\nsource_file: main.go\nrun: [\"{{source}}\"]\n", "image must not be empty"},
 		{"invalid slug", "Go", "name: Go\nsource_file: main.go\nrun: [\"{{source}}\"]\nimage: img:1\n", "slug"},
-		{"missing definition", "go", "", "no such file"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if test.definition == "" {
-				if err := os.MkdirAll(filepath.Join(dir, test.slug), 0o755); err != nil {
-					t.Fatalf("mkdir: %v", err)
-				}
-			} else {
-				writeLanguage(t, dir, test.slug, test.definition)
-			}
+			writeLanguage(t, dir, test.slug, test.definition)
 
 			_, err := Load(dir)
 			if err == nil {
@@ -122,6 +117,16 @@ func TestLoadReportsInvalidDefinitions(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("missing definition", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, "go"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(dir); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("Load() error = %v, want %v", err, fs.ErrNotExist)
+		}
+	})
 }
 
 func TestLoadExpandsImagePlaceholders(t *testing.T) {
