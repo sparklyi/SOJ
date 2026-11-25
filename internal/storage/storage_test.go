@@ -75,7 +75,21 @@ func TestNormalizeEndpoint(t *testing.T) {
 		{name: "explicit https sets secure", endpoint: "https://minio:9000", secure: false, want: "minio:9000", wantSec: true},
 		{name: "explicit http IPv4", endpoint: "http://127.0.0.1:9000", secure: true, want: "127.0.0.1:9000", wantSec: false},
 		{name: "explicit https bracketed IPv6", endpoint: "https://[::1]:9000", secure: false, want: "[::1]:9000", wantSec: true},
+		{name: "host-only DNS preserves secure flag", endpoint: "minio", secure: true, want: "minio", wantSec: true},
+		{name: "host-only IPv4", endpoint: "127.0.0.1", secure: false, want: "127.0.0.1", wantSec: false},
 		{name: "unsupported scheme", endpoint: "ftp://minio:9000", wantErr: true},
+		{name: "unsupported scheme without slashes", endpoint: "mailto:minio@example.com", wantErr: true},
+		{name: "bare host with empty port", endpoint: "minio:", wantErr: true},
+		{name: "bare host with non-numeric port", endpoint: "minio:abc", wantErr: true},
+		{name: "bare host with out-of-range port", endpoint: "minio:65536", wantErr: true},
+		{name: "bare host with zero port", endpoint: "minio:0", wantErr: true},
+		{name: "bare host and port with path", endpoint: "minio:9000/bucket", wantErr: true},
+		{name: "bare port without host", endpoint: ":9000", wantErr: true},
+		{name: "bare invalid DNS host", endpoint: "min_io:9000", wantErr: true},
+		{name: "bare malformed IPv4 host", endpoint: "999.1.1.1:9000", wantErr: true},
+		{name: "bare unbracketed IPv6 host and port", endpoint: "::1:9000", wantErr: true},
+		{name: "bare bracketed non-IPv6 host", endpoint: "[minio]:9000", wantErr: true},
+		{name: "bare bracketed IPv6 with invalid port", endpoint: "[::1]:abc", wantErr: true},
 	}
 
 	for _, test := range tests {
@@ -83,7 +97,7 @@ func TestNormalizeEndpoint(t *testing.T) {
 			got, gotSec, err := normalizeEndpoint(test.endpoint, test.secure)
 			if test.wantErr {
 				if err == nil {
-					t.Fatal("normalizeEndpoint() error = nil, want unsupported scheme")
+					t.Fatalf("normalizeEndpoint() error = nil, want error for %q", test.endpoint)
 				}
 				return
 			}

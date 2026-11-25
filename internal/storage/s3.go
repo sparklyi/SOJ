@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -60,13 +62,16 @@ func NewS3Storage(opts S3Options) (*S3Storage, error) {
 func normalizeEndpoint(endpoint string, secure bool) (string, bool, error) {
 	endpoint = strings.TrimSpace(endpoint)
 	// url.Parse treats "minio:9000" as scheme "minio", not as a host:port.
-	// Bare host-and-port values (DNS, IPv4, bracketed IPv6) keep the caller's Secure flag.
-	if !strings.Contains(endpoint, "://") {
+	// Validated bare host-and-port values (DNS, IPv4, bracketed IPv6) keep the caller's Secure flag.
+	if isBareHostPort(endpoint) {
 		return endpoint, secure, nil
 	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return "", false, err
+	}
+	if parsed.Scheme == "" {
+		return endpoint, secure, nil
 	}
 	switch parsed.Scheme {
 	case "http":
@@ -76,6 +81,51 @@ func normalizeEndpoint(endpoint string, secure bool) (string, bool, error) {
 	default:
 		return "", false, errors.New("unsupported s3 endpoint scheme")
 	}
+}
+
+// isBareHostPort reports whether endpoint is a host:port value without a scheme,
+// where host is a DNS name, an IPv4 address or a bracketed IPv6 address and port
+// is in the range 1-65535.
+func isBareHostPort(endpoint string) bool {
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil || host == "" {
+		return false
+	}
+	portNum, err := strconv.Atoi(port)
+	if err != nil || portNum < 1 || portNum > 65535 || strconv.Itoa(portNum) != port {
+		return false
+	}
+	if strings.HasPrefix(endpoint, "[") {
+		return net.ParseIP(host) != nil && strings.Contains(host, ":")
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	return isDNSName(host)
+}
+
+func isDNSName(host string) bool {
+	if len(host) > 253 {
+		return false
+	}
+	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
+	// A numeric final label is a malformed IPv4 address, not a DNS name.
+	if _, err := strconv.Atoi(labels[len(labels)-1]); err == nil {
+		return false
+	}
+	for _, label := range labels {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (s *S3Storage) Put(ctx context.Context, object Object) (ObjectInfo, error) {
