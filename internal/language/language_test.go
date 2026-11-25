@@ -147,6 +147,35 @@ image: ghcr.io/sparklyi/soj-runner-go:${SOJ_RUNNER_TAG:-main}
 	}
 }
 
+func TestNewValidatesCommandExecutables(t *testing.T) {
+	tests := []struct {
+		name    string
+		run     []string
+		compile []string
+		want    string
+	}{
+		{"empty run executable", []string{"", "{{source}}"}, nil, "script: run"},
+		{"blank run executable", []string{" \t", "{{source}}"}, nil, "script: run"},
+		{"empty compile executable", []string{"runner", "{{source}}"}, []string{"", "{{source}}"}, "script: compile"},
+		{"blank compile executable", []string{"runner", "{{source}}"}, []string{" \t", "{{source}}"}, "script: compile"},
+		{"interpreted without compile", []string{"runner", "{{source}}"}, nil, ""},
+		{"empty later arguments", []string{"runner", "", "{{source}}"}, []string{"compiler", "", "{{source}}"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(Profile{Slug: "script", Name: "Script", SourceFile: "main", Image: "runner:1",
+				Run: tt.run, Compile: tt.compile})
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("New() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewRejectsDuplicateAndAppliesDefaults(t *testing.T) {
 	profile := Profile{
 		Slug:       "go",
