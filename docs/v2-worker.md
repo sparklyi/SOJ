@@ -24,7 +24,10 @@ When a task exhausts retries, the worker first marks PostgreSQL `judge_tasks.sta
 
 ## Local Judge
 
-Docker Compose defaults to the internal `fake://accepted` path. It returns accepted results and exposes one fake language for fast local async-flow tests. The compose seed job also inserts Go and C++17 `soj-agent` language rows for local real-code smoke.
+Docker Compose defaults to the internal `fake://accepted` path. It returns accepted results and the
+Compose seed job can insert one fake language for fast local async-flow tests. On startup, the API
+reconciles the mounted language profiles into the catalog. The real-code smoke requires an enabled
+`soj-agent/go` catalog entry from that API startup step.
 
 To run the local real-code path, start Compose with:
 

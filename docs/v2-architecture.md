@@ -1,6 +1,6 @@
 # Sundial Online Judge (SOJ) v2 Architecture
 
-SOJ v2 targets Go 1.25 and splits the backend into four commands:
+Direct builds require Go 1.26.0 or later, as specified in `go.mod`. The backend has four commands.
 
 - `soj-api`: Gin HTTP transport and REST API.
 - `soj-worker`: judge task dispatcher, Redis Stream consumer, and reconciliation loops.

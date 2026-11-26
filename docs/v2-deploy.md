@@ -1,6 +1,7 @@
 # Sundial Online Judge (SOJ) v2 Docker Deployment
 
-The first supported deployment target is Docker Compose. The v2 runtime is built and verified with Go 1.25.
+The first supported deployment target is Docker Compose. Direct builds require Go 1.26.0 or later,
+as specified in `go.mod`. Container builds use the Go builder image pinned in `Dockerfile.v2`.
 
 ```bash
 docker compose -f deploy/docker-compose.yaml up --build -d
@@ -248,12 +249,12 @@ The process backend exists only for development tests and local real-code smoke.
 
 ## Local Reset
 
+`down -v` deletes the local PostgreSQL, Redis, and MinIO volumes and all data they contain.
+
 ```bash
 docker compose -f deploy/docker-compose.yaml down -v --remove-orphans
 docker compose -f deploy/docker-compose.yaml up --build -d
 ./deploy/smoke.sh
 ```
-
-`down -v` deletes PostgreSQL, Redis, and MinIO volumes.
 
 Schema initialization and existing database cutover are described in [Schema cutover](schema-cutover.md).

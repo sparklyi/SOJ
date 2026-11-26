@@ -75,7 +75,7 @@ require_metric "${JUDGE_AGENT_URL:-http://localhost:8082}" "soj_http_requests_to
 if [[ "$SMOKE_REAL_JUDGE" == "1" ]]; then
   LANG_ID="$(compose exec -T postgres psql -U soj -d soj -Atc "select id from languages where engine = 'soj-agent' and engine_language_id = 'go' and enabled = true order by id limit 1;")"
   if [[ -z "$LANG_ID" ]]; then
-    echo "go language seed was not found" >&2
+    echo "Enabled soj-agent/go language is missing from the API catalog. Check API startup logs and mounted language profiles." >&2
     exit 1
   fi
   SOURCE_CODE="$(cat <<'SRC'

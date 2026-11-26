@@ -1,6 +1,6 @@
 # Sundial Online Judge
 
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26.0-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/sparklyi/SOJ/actions/workflows/ci.yml/badge.svg)](https://github.com/sparklyi/SOJ/actions/workflows/ci.yml)
 
@@ -44,16 +44,16 @@ SOJ 自带 **7 种语言**：C、C++17、Go、Java、Node.js、Python 3、Rust�
 
 ## 快速开始
 
-需要 Docker（Compose v2）。只有直接运行后端时才需要 Go 1.25。
+使用 Docker（Compose v2）启动本地服务。
 
 ```bash
-make down
 make up
-make smoke
 ```
 
-`make smoke` 会把完整流程跑一遍：注册、出题、上传测试点、发布、提交、评测、重测、办比赛、
-看记分板。
+可选运行 `make smoke` 做端到端验证。它会创建开发测试数据，并覆盖注册、出题、上传测试点、发布、提交、
+评测、重测、办比赛和查看记分板。
+
+需要主动重置时，参阅[本地重置](docs/v2-deploy.md#local-reset)。重置会删除本地 PostgreSQL、Redis 和 MinIO 数据。
 
 | 服务 | 地址 |
 | --- | --- |
@@ -63,7 +63,7 @@ make smoke
 | MinIO 控制台 | `http://localhost:9001` |
 | Prometheus | `http://localhost:9090` |
 
-不用容器，直接跑进程：
+直接运行进程需要安装 Go 1.26.0 或更新版本，最低版本由 `go.mod` 指定。
 
 ```bash
 go run ./cmd/soj-migrate
