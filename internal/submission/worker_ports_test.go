@@ -264,12 +264,12 @@ func (s *partialProgressDispatchStore) GetSubmission(
 	int64,
 ) (SubmissionRecord, error) {
 	return SubmissionRecord{
-		ID:              9,
-		ProblemID:       1,
-		LanguageID:      71,
-		TestcaseSetID:   3,
+		ID:               9,
+		ProblemID:        1,
+		LanguageID:       71,
+		TestcaseSetID:    3,
 		SourceArtifactID: 4,
-		Status:          StatusRunning,
+		Status:           StatusRunning,
 	}, nil
 }
 
@@ -386,7 +386,9 @@ func TestTaskDispatcherPreservesPartialProgressOnPublishFailure(t *testing.T) {
 	if len(publisher.calls) != 2 {
 		t.Errorf("Publish calls = %v, want 2 calls", publisher.calls)
 	}
-	if len(store.dispatched) != 1 || store.dispatched[0].ID != 1 {
+	if len(store.dispatched) != 1 ||
+		store.dispatched[0].ID != 1 ||
+		store.dispatched[0].StreamID != "stream-1" {
 		t.Errorf("dispatched tasks = %v, want task 1", store.dispatched)
 	}
 	if len(store.retried) != 1 || store.retried[0].ID != 2 {
