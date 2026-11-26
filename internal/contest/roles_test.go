@@ -2,10 +2,13 @@ package contest
 
 import (
 	"context"
+	"math"
+	"net/http"
 	"sort"
 	"testing"
 	"time"
 
+	"SOJ/internal/apperror"
 	"SOJ/internal/auth"
 	"SOJ/internal/submission"
 )
@@ -148,6 +151,45 @@ func TestContestRoleIsIncludedInListVisibilityFilter(t *testing.T) {
 	}
 	if !containsContestID(store.filter.VisibleToContestIDs, 9) {
 		t.Fatalf("visible contest ids = %v, want contest 9", store.filter.VisibleToContestIDs)
+	}
+}
+
+func TestListContestsOffsetRange(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		page       int32
+		pageSize   int32
+		wantOffset int32
+		invalid    bool
+	}{
+		{name: "normal page", page: 3, pageSize: 20, wantOffset: 40},
+		{name: "largest reachable offset", page: math.MaxInt32, pageSize: 1, wantOffset: math.MaxInt32 - 1},
+		{name: "positive wrap", page: 1<<30 + 2, pageSize: 4, invalid: true},
+		{name: "first out of range", page: math.MaxInt32/2 + 2, pageSize: 2, invalid: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &recordingContestReaderStore{}
+			reader := NewContestReader(store, nil)
+			_, err := reader.ListContests(t.Context(), auth.Actor{UserID: 7}, ListContestFilter{
+				Page: tt.page, PageSize: tt.pageSize,
+			})
+			if tt.invalid {
+				appErr, ok := apperror.From(err)
+				if !ok || appErr.Code != "request.invalid" || appErr.HTTPStatus != http.StatusBadRequest {
+					t.Errorf("ListContests error = %v, want request.invalid (400)", err)
+				}
+				if store.filter.Limit != 0 {
+					t.Errorf("store called with limit %d and offset %d", store.filter.Limit, store.filter.Offset)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ListContests returned error: %v", err)
+			}
+			if store.filter.Limit != tt.pageSize || store.filter.Offset != tt.wantOffset {
+				t.Errorf("store limit/offset = %d/%d, want %d/%d", store.filter.Limit, store.filter.Offset, tt.pageSize, tt.wantOffset)
+			}
+		})
 	}
 }
 

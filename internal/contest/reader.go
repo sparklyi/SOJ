@@ -2,6 +2,7 @@ package contest
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"SOJ/internal/apperror"
@@ -67,6 +68,10 @@ func (r *ContestReader) ListContests(ctx context.Context, actor auth.Actor, filt
 	if filter.PageSize <= 0 || filter.PageSize > 100 {
 		filter.PageSize = 20
 	}
+	offset := int64(filter.Page-1) * int64(filter.PageSize)
+	if offset > math.MaxInt32 {
+		return ContestList{}, apperror.BadRequest("request.invalid", "page offset is too large")
+	}
 	if canManageAllContests(actor) {
 		filter.IncludePrivate = true
 	} else if actor.Authenticated() {
@@ -80,7 +85,7 @@ func (r *ContestReader) ListContests(ctx context.Context, actor auth.Actor, filt
 		}
 	}
 	filter.Limit = filter.PageSize
-	filter.Offset = (filter.Page - 1) * filter.PageSize
+	filter.Offset = int32(offset)
 	items, total, err := r.store.ListContests(ctx, filter)
 	if err != nil {
 		return ContestList{}, err
