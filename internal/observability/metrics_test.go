@@ -62,3 +62,29 @@ func TestMetricsExposeJudgeAgentAndSandboxSignals(t *testing.T) {
 		}
 	}
 }
+func TestTestcaseCacheMetricsBoundLabels(t *testing.T) {
+	metrics := NewMetrics("test")
+
+	metrics.RecordTestcaseCache("hit")
+	metrics.RecordTestcaseCache("unexpected_lookup_1")
+	metrics.RecordTestcaseCache("unexpected_lookup_2")
+
+	metrics.ObserveTestcaseCachePhase("download", "success", time.Millisecond)
+	metrics.ObserveTestcaseCachePhase("unexpected_phase_1", "unexpected_result_1", time.Millisecond)
+	metrics.ObserveTestcaseCachePhase("unexpected_phase_2", "unexpected_result_2", time.Millisecond)
+
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+
+	for _, want := range []string{
+		`soj_judge_agent_testcase_cache_total{result="hit",service="test"} 1`,
+		`soj_judge_agent_testcase_cache_total{result="error",service="test"} 2`,
+		`soj_judge_agent_testcase_cache_phase_duration_seconds_count{phase="download",result="success",service="test"} 1`,
+		`soj_judge_agent_testcase_cache_phase_duration_seconds_count{phase="unknown",result="error",service="test"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %s:\n%s", want, body)
+		}
+	}
+}
