@@ -256,6 +256,40 @@ func TestRedisStreamStatsTreatMissingStreamOrGroupAsZero(t *testing.T) {
 	}
 }
 
+func TestRedisStreamStatsClampUnusablePendingTimestamps(t *testing.T) {
+	now := time.UnixMilli(1_700_000_010_000)
+	future := now.Add(5 * time.Second).UnixMilli()
+
+	cases := []struct {
+		name  string
+		lower string
+	}{
+		{name: "empty id", lower: ""},
+		{name: "no millisecond separator", lower: "5"},
+		{name: "nonnumeric timestamp", lower: "not-a-number-0"},
+		{name: "exactly at now", lower: fmt.Sprintf("%d-0", now.UnixMilli())},
+		{name: "later than now", lower: fmt.Sprintf("%d-0", future)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stats, err := redisQueueStatsFromRedis(
+				&redis.XInfoStream{Length: 9},
+				nil,
+				&redis.XPending{Count: 4, Lower: tc.lower},
+				nil,
+				now,
+			)
+			if err != nil {
+				t.Fatalf("redisQueueStatsFromRedis returned error: %v", err)
+			}
+			if stats.Depth != 9 || stats.Pending != 4 || stats.OldestPendingAge != 0 {
+				t.Fatalf("stats = %+v, want depth 9, pending 4 and zero oldest pending age", stats)
+			}
+		})
+	}
+}
+
 type redisCommandRecorder struct {
 	commands [][]any
 }
