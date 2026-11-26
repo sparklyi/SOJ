@@ -1,6 +1,6 @@
 # Sundial Online Judge
 
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26.0-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/sparklyi/SOJ/actions/workflows/ci.yml/badge.svg)](https://github.com/sparklyi/SOJ/actions/workflows/ci.yml)
 
@@ -49,16 +49,18 @@ runs without a sandbox runtime.
 
 ## Getting started
 
-Requires Docker with Compose v2. Go 1.25 is only needed to run the backend directly.
+Start the local stack with Docker and Compose v2.
 
 ```bash
-make down
 make up
-make smoke
 ```
 
-`make smoke` runs the whole flow: register, author a problem, upload test cases, publish, submit,
-judge, rejudge, run a contest, and read the scoreboard.
+For optional end-to-end verification, run `make smoke`. It creates development fixtures and
+exercises registration, problem authoring, testcase upload, publishing, submission, judging,
+rejudging, contest creation, and scoreboard reads.
+
+For an intentional reset, follow [Local Reset](docs/v2-deploy.md#local-reset).
+Resetting deletes local PostgreSQL, Redis, and MinIO data.
 
 | Service | URL |
 | --- | --- |
@@ -68,7 +70,7 @@ judge, rejudge, run a contest, and read the scoreboard.
 | MinIO console | `http://localhost:9001` |
 | Prometheus | `http://localhost:9090` |
 
-Run the processes directly instead of in containers:
+To run the processes directly, install Go 1.26.0 or later, as specified in `go.mod`.
 
 ```bash
 go run ./cmd/soj-migrate
