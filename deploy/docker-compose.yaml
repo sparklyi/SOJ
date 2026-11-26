@@ -41,7 +41,7 @@ services:
       POSTGRES_PASSWORD: soj
       POSTGRES_DB: soj
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U soj -d soj"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U soj -d soj"]
       interval: 5s
       timeout: 3s
       retries: 20
