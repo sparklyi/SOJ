@@ -23,10 +23,12 @@ func newJudgeAgentSlotLimiter(global int, languages map[string]int) *judgeAgentS
 	if global <= 0 {
 		global = 1
 	}
+
 	limiter := &judgeAgentSlotLimiter{
 		global:    make(chan struct{}, global),
 		languages: make(map[string]chan struct{}, len(languages)),
 	}
+
 	for language, slots := range languages {
 		key := normalizeJudgeAgentLanguageKey(language)
 		if key == "" || slots <= 0 {
@@ -34,6 +36,7 @@ func newJudgeAgentSlotLimiter(global int, languages map[string]int) *judgeAgentS
 		}
 		limiter.languages[key] = make(chan struct{}, slots)
 	}
+
 	return limiter
 }
 
@@ -44,40 +47,44 @@ func (l *judgeAgentSlotLimiter) Available() int {
 	return cap(l.global) - len(l.global)
 }
 
-func (l *judgeAgentSlotLimiter) Usages() []judgeAgentSlotUsage {
-	if l == nil {
-		return nil
+func (l *judgeAgentSlotLimiter) ForEachUsage(visit func(judgeAgentSlotUsage)) {
+	if l == nil || visit == nil {
+		return
 	}
-	usages := []judgeAgentSlotUsage{{
+
+	visit(judgeAgentSlotUsage{
 		Scope:    "global",
 		Language: "",
 		Used:     len(l.global),
 		Capacity: cap(l.global),
-	}}
+	})
+
 	for language, slots := range l.languages {
-		usages = append(usages, judgeAgentSlotUsage{
+		visit(judgeAgentSlotUsage{
 			Scope:    "language",
 			Language: language,
 			Used:     len(slots),
 			Capacity: cap(slots),
 		})
 	}
-	return usages
 }
 
 func (l *judgeAgentSlotLimiter) Acquire(ctx context.Context, language string) (func(), error) {
 	if l == nil {
 		return func() {}, nil
 	}
+
 	select {
 	case l.global <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+
 	languageSlots := l.languages[normalizeJudgeAgentLanguageKey(language)]
 	if languageSlots == nil {
 		return l.release(nil), nil
 	}
+
 	select {
 	case languageSlots <- struct{}{}:
 		return l.release(languageSlots), nil
@@ -89,11 +96,13 @@ func (l *judgeAgentSlotLimiter) Acquire(ctx context.Context, language string) (f
 
 func (l *judgeAgentSlotLimiter) release(languageSlots chan struct{}) func() {
 	var released bool
+
 	return func() {
 		if released {
 			return
 		}
 		released = true
+
 		if languageSlots != nil {
 			<-languageSlots
 		}
@@ -103,30 +112,37 @@ func (l *judgeAgentSlotLimiter) release(languageSlots chan struct{}) func() {
 
 func parseJudgeAgentLanguageSlots(value string) (map[string]int, error) {
 	out := map[string]int{}
+
 	for _, item := range strings.Split(value, ",") {
 		item = strings.TrimSpace(item)
 		if item == "" {
 			continue
 		}
+
 		key, raw, ok := strings.Cut(item, "=")
 		if !ok {
 			return nil, fmt.Errorf("invalid language slot %q: want language=count", item)
 		}
+
 		language := normalizeJudgeAgentLanguageKey(key)
 		if language == "" {
 			return nil, fmt.Errorf("invalid language slot %q: language is required", item)
 		}
+
 		count, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil || count <= 0 {
 			return nil, fmt.Errorf("invalid language slot %q: count must be positive", item)
 		}
+
 		// Entries that normalize to the same language must agree: silently
 		// keeping the last count makes the cap depend on entry order.
 		if existing, ok := out[language]; ok && existing != count {
 			return nil, fmt.Errorf("conflicting slot counts for language %q: %d and %d", language, existing, count)
 		}
+
 		out[language] = count
 	}
+
 	return out, nil
 }
 

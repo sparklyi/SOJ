@@ -311,3 +311,72 @@ func (m *recordingJudgeAgentSlotMetrics) observed(scope, language string, used, 
 	}
 	return false
 }
+
+type benchmarkJudgeAgentSlotMetrics struct{}
+
+func (benchmarkJudgeAgentSlotMetrics) ObserveJudgeAgentSlots(string, string, int, int) {
+}
+
+func BenchmarkRecordJudgeAgentSlotMetrics(b *testing.B) {
+	slots := newJudgeAgentSlotLimiter(8, map[string]int{
+		"go":     2,
+		"cpp":    2,
+		"python": 2,
+		"java":   2,
+	})
+
+	metrics := benchmarkJudgeAgentSlotMetrics{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		recordJudgeAgentSlotMetrics(metrics, slots)
+	}
+}
+
+func TestRecordJudgeAgentSlotMetricsBeforeWhileHeldAndAfterRelease(t *testing.T) {
+	limiter := newJudgeAgentSlotLimiter(2, map[string]int{
+		"go":  1,
+		"cpp": 1,
+	})
+
+	assertMetrics := func(name string, wantGlobal, wantGo, wantCPP int) {
+		t.Helper()
+
+		metrics := &recordingJudgeAgentSlotMetrics{}
+		recordJudgeAgentSlotMetrics(metrics, limiter)
+		if got, want := len(metrics.observations), 3; got != want {
+			t.Fatalf("%s: got %d observations, want %d", name, got, want)
+		}
+		expected := []judgeAgentSlotUsage{
+			{Scope: "global", Language: "", Used: wantGlobal, Capacity: 2},
+			{Scope: "language", Language: "go", Used: wantGo, Capacity: 1},
+			{Scope: "language", Language: "cpp", Used: wantCPP, Capacity: 1},
+		}
+
+		for _, want := range expected {
+			if !metrics.observed(want.Scope, want.Language, want.Used, want.Capacity) {
+				t.Errorf(
+					"%s: missing slot metric %+v; observations: %+v",
+					name,
+					want,
+					metrics.observations,
+				)
+			}
+		}
+	}
+
+	assertMetrics("before acquisition", 0, 0, 0)
+
+	release, err := limiter.Acquire(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("Acquire returned error: %v", err)
+	}
+
+	assertMetrics("while held", 1, 1, 0)
+
+	release()
+
+	assertMetrics("after release", 0, 0, 0)
+}
