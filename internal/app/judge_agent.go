@@ -236,9 +236,15 @@ func recordJudgeAgentSlotMetrics(metrics judgeAgentSlotMetrics, slots *judgeAgen
 	if metrics == nil || slots == nil {
 		return
 	}
-	for _, usage := range slots.Usages() {
-		metrics.ObserveJudgeAgentSlots(usage.Scope, usage.Language, usage.Used, usage.Capacity)
-	}
+
+	slots.ForEachUsage(func(usage judgeAgentSlotUsage) {
+		metrics.ObserveJudgeAgentSlots(
+			usage.Scope,
+			usage.Language,
+			usage.Used,
+			usage.Capacity,
+		)
+	})
 }
 
 func sendJudgeAgentLoopError(errCh chan<- error, err error) {
