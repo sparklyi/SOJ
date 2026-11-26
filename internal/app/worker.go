@@ -173,7 +173,7 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
 	}()
 	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, retention, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block, cfg.Worker.ReconcileInterval)
+		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, runQueue, resultQueue, reconciler, retention, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block, cfg.Worker.ReconcileInterval)
 	}()
 
 	err = <-errCh
@@ -205,10 +205,10 @@ type runRetentionSweeper interface {
 	Sweep(context.Context) (submission.RunRetentionResult, error)
 }
 
-func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, retention runRetentionSweeper, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration, reconcileEvery time.Duration) error {
+func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, runQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, retention runRetentionSweeper, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration, reconcileEvery time.Duration) error {
 	errCh := make(chan error, 4)
 	go func() {
-		errCh <- runDispatchLoop(ctx, worker, requestQueue, batchSize, dispatchInterval(block), metrics)
+		errCh <- runDispatchLoop(ctx, worker, requestQueue, runQueue, batchSize, dispatchInterval(block), metrics)
 	}()
 	go func() {
 		errCh <- runResultConsumerLoop(ctx, resultConsumer, resultQueue, batchSize, block, metrics)
@@ -233,7 +233,7 @@ type workerLoopMetrics interface {
 	RecordResultConsumerProcess(queueName, result string, duration time.Duration)
 }
 
-func runDispatchLoop(ctx context.Context, worker *submission.Worker, requestQueue queue.TaskQueue, batchSize int, interval time.Duration, metrics workerLoopMetrics) error {
+func runDispatchLoop(ctx context.Context, worker *submission.Worker, requestQueue, runQueue queue.TaskQueue, batchSize int, interval time.Duration, metrics workerLoopMetrics) error {
 	if batchSize <= 0 {
 		batchSize = 16
 	}
@@ -247,6 +247,7 @@ func runDispatchLoop(ctx context.Context, worker *submission.Worker, requestQueu
 			return ctx.Err()
 		}
 		recordQueueStats(ctx, metrics, "request", requestQueue)
+		recordQueueStats(ctx, metrics, "run_request", runQueue)
 		loopCtx, span := observability.Tracer("SOJ/internal/app").Start(ctx, "worker.dispatch", trace.WithAttributes(attribute.Int("soj.worker.batch_size", batchSize)))
 		dispatched, err := worker.DispatchPending(loopCtx, int32(batchSize))
 		span.SetAttributes(attribute.Int("soj.worker.dispatched", dispatched))

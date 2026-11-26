@@ -373,7 +373,7 @@ func (m *Metrics) RecordReconcilerAction(action, result string, count int) {
 
 func logicalQueueLabel(queueName string) string {
 	switch queueName {
-	case "request", "result":
+	case "request", "run_request", "result":
 		return queueName
 	default:
 		return "unknown"

@@ -204,3 +204,24 @@ func TestTestcaseCacheMetricsBoundLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueStatsKeepRunRequestSeparate(t *testing.T) {
+	metrics := NewMetrics("test")
+	metrics.ObserveQueueStats("request", 7, 3, 45*time.Second)
+	metrics.ObserveQueueStats("run_request", 11, 5, 90*time.Second)
+
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+
+	for _, want := range []string{
+		`soj_queue_depth{queue="request",service="test"} 7`,
+		`soj_queue_depth{queue="run_request",service="test"} 11`,
+		`soj_queue_pending_messages{queue="run_request",service="test"} 5`,
+		`soj_queue_oldest_pending_age_seconds{queue="run_request",service="test"} 90`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics body missing %s:\n%s", want, body)
+		}
+	}
+}
