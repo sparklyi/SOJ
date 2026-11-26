@@ -1729,3 +1729,37 @@ func assertHTTPStatus(t *testing.T, err error, status int) {
 		t.Fatalf("expected HTTP status %d, got %d", status, appErr.HTTPStatus)
 	}
 }
+
+type failingBodyReader struct{}
+
+func (failingBodyReader) Read([]byte) (int, error) {
+	return 0, errors.New("disk I/O error")
+}
+
+type failingArchiveReader struct{}
+
+func (failingArchiveReader) Get(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	return io.NopCloser(failingBodyReader{}), storage.ObjectInfo{}, nil
+}
+
+func TestRunProblemCheckReportsFailedArchiveReadAsUnreadable(t *testing.T) {
+	repo := newFakeRepository()
+	store := &fakeStorage{}
+	seedProblemCheckData(t, repo, store, `[]`, zipArchive(t, map[string]string{
+		"1.in":  "1 1\n",
+		"1.ans": "2\n",
+	}), 1)
+	service := newProblemService(repo, store)
+	service.checks.archives = failingArchiveReader{}
+
+	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
+	if err != nil {
+		t.Fatalf("RunProblemCheck returned error: %v", err)
+	}
+
+	assertFindingCodes(t, result.Findings, []string{"testcase.storage_unreadable"})
+	summary := result.Run.Summary
+	if summary.StorageReadable || summary.ZipReadable || summary.Valid {
+		t.Fatalf("summary = %+v, want storage_readable false, zip_readable false, valid false", summary)
+	}
+}
