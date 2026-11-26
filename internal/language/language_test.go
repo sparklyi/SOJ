@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -207,6 +208,67 @@ func TestNewRejectsDuplicateAndAppliesDefaults(t *testing.T) {
 	got, _ := catalog.Lookup("go")
 	if got.TimeLimitMS != DefaultTimeLimitMS || got.MemoryLimitKB != DefaultMemoryLimitKB {
 		t.Fatalf("limits = %d/%d, want defaults", got.TimeLimitMS, got.MemoryLimitKB)
+	}
+}
+
+func TestNewLimitBoundaries(t *testing.T) {
+	const (
+		timeField   = "time_limit_ms"
+		memoryField = "memory_limit_kb"
+	)
+	tests := []struct {
+		name       string
+		timeMS     int
+		memoryKB   int
+		wantTimeMS int
+		wantMemKB  int
+		wantFields []string
+	}{
+		{name: "zero time keeps memory", timeMS: 0, memoryKB: 65536,
+			wantTimeMS: DefaultTimeLimitMS, wantMemKB: 65536},
+		{name: "zero memory keeps time", timeMS: 2500, memoryKB: 0,
+			wantTimeMS: 2500, wantMemKB: DefaultMemoryLimitKB},
+		{name: "negative time", timeMS: -1, memoryKB: 65536, wantFields: []string{timeField}},
+		{name: "negative memory", timeMS: 2500, memoryKB: -1, wantFields: []string{memoryField}},
+		{name: "both negative", timeMS: -1, memoryKB: -1, wantFields: []string{timeField, memoryField}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			catalog, err := New(Profile{
+				Slug:          "py",
+				Name:          "Python",
+				SourceFile:    "main.py",
+				Run:           []string{"python3", "{{source}}"},
+				Image:         "img:1",
+				TimeLimitMS:   tt.timeMS,
+				MemoryLimitKB: tt.memoryKB,
+			})
+			if len(tt.wantFields) > 0 {
+				if err == nil {
+					t.Fatal("New() error = nil, want a limit rejected")
+				}
+				if catalog != nil {
+					t.Fatal("New() returned a catalog for a rejected profile")
+				}
+				for _, field := range []string{timeField, memoryField} {
+					want := slices.Contains(tt.wantFields, field)
+					if got := strings.Contains(err.Error(), field); got != want {
+						t.Errorf("New() error = %v, mentions %s = %t, want %t", err, field, got, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			got, ok := catalog.Lookup("py")
+			if !ok {
+				t.Fatal("Lookup(py) found nothing")
+			}
+			if got.TimeLimitMS != tt.wantTimeMS || got.MemoryLimitKB != tt.wantMemKB {
+				t.Fatalf("limits = %d/%d, want %d/%d", got.TimeLimitMS, got.MemoryLimitKB, tt.wantTimeMS, tt.wantMemKB)
+			}
+		})
 	}
 }
 
