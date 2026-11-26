@@ -87,3 +87,36 @@ func TestNewTracingResourceAppliesConfiguredAttributes(t *testing.T) {
 		}
 	}
 }
+
+func TestNewTracingResourceKeepsResolvedServiceName(t *testing.T) {
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-env")
+
+	res, err := newTracingResource(context.Background(), "soj-api", "service.name=from-config")
+	if err != nil {
+		t.Fatalf("newTracingResource() error = %v", err)
+	}
+
+	got, ok := res.Set().Value(attribute.Key("service.name"))
+	if !ok || got.AsString() != "soj-api" {
+		t.Fatalf("resource attribute service.name = %q (present=%v), want soj-api", got.AsString(), ok)
+	}
+}
+
+func TestNewTracingResourceFallsBackToEnvironmentOnMalformedConfiguredAttributes(t *testing.T) {
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "shared=from-env")
+
+	res, err := newTracingResource(context.Background(), "soj-api",
+		"yaml.only=from-config,shared=from-config,malformed")
+	if err != nil {
+		t.Fatalf("newTracingResource() error = %v", err)
+	}
+
+	if got, ok := res.Set().Value(attribute.Key("yaml.only")); ok {
+		t.Fatalf("resource attribute yaml.only = %q (present=true), want absent", got.AsString())
+	}
+
+	got, ok := res.Set().Value(attribute.Key("shared"))
+	if !ok || got.AsString() != "from-env" {
+		t.Fatalf("resource attribute shared = %q (present=%v), want from-env", got.AsString(), ok)
+	}
+}
