@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"go.opentelemetry.io/otel/attribute"
 )
 
 func TestSetupTracingDisabledReturnsNoopShutdown(t *testing.T) {
@@ -59,5 +61,29 @@ func TestSetupTracingEnabledRejectsInvalidExporterEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "tracing exporter endpoint") {
 		t.Fatalf("SetupTracing() error = %v, want tracing exporter endpoint error", err)
+	}
+}
+
+func TestNewTracingResourceAppliesConfiguredAttributes(t *testing.T) {
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "env.only=from-env,shared=from-env")
+
+	res, err := newTracingResource(context.Background(), "soj-api",
+		"deployment.environment=trial,shared=from-config,note=a%2Cb%3Dc")
+	if err != nil {
+		t.Fatalf("newTracingResource() error = %v", err)
+	}
+
+	want := map[string]string{
+		"deployment.environment": "trial",
+		"env.only":               "from-env",
+		"shared":                 "from-config",
+		"note":                   "a,b=c",
+		"service.name":           "soj-api",
+	}
+	for key, value := range want {
+		got, ok := res.Set().Value(attribute.Key(key))
+		if !ok || got.AsString() != value {
+			t.Fatalf("resource attribute %q = %q (present=%v), want %q", key, got.AsString(), ok, value)
+		}
 	}
 }
