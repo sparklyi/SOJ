@@ -383,9 +383,12 @@ func TestTaskDispatcherPreservesPartialProgressOnPublishFailure(t *testing.T) {
 	if !errors.Is(err, publishErr) {
 		t.Errorf("DispatchPending() error = %v, want %v", err, publishErr)
 	}
-	if len(publisher.calls) != 2 {
-		t.Errorf("Publish calls = %v, want 2 calls", publisher.calls)
+	if len(publisher.calls) != 2 ||
+		publisher.calls[0] != 1 ||
+		publisher.calls[1] != 2 {
+		t.Errorf("Publish calls = %v, want [1 2]", publisher.calls)
 	}
+
 	if len(store.dispatched) != 1 ||
 		store.dispatched[0].ID != 1 ||
 		store.dispatched[0].StreamID != "stream-1" {
