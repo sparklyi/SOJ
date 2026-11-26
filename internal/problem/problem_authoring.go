@@ -147,6 +147,7 @@ func (a *ProblemAuthoring) UpdateProblem(ctx context.Context, actor auth.Actor, 
 
 func (a *ProblemAuthoring) ArchiveProblem(ctx context.Context, actor auth.Actor, id int64) (ProblemRecord, error) {
 	var archived ProblemRecord
+	var wasPublicPublished bool
 	err := a.store.WithProblemAuthoringTx(ctx, func(ctx context.Context, tx problemAuthoringTx) error {
 		current, err := tx.LockProblemForUpdate(ctx, id)
 		if err != nil {
@@ -155,6 +156,7 @@ func (a *ProblemAuthoring) ArchiveProblem(ctx context.Context, actor auth.Actor,
 		if err := canWriteProblem(actor, current); err != nil {
 			return err
 		}
+		wasPublicPublished = current.Status == StatusPublished && current.Visibility == VisibilityPublic
 		archived, err = tx.ArchiveProblem(ctx, id)
 		if err != nil {
 			return err
@@ -167,6 +169,9 @@ func (a *ProblemAuthoring) ArchiveProblem(ctx context.Context, actor auth.Actor,
 			Metadata:    map[string]string{"previous_status": current.Status},
 		})
 	})
+	if err == nil && wasPublicPublished && a.stats != nil {
+		a.stats.Refresh(ctx)
+	}
 	return archived, err
 }
 
@@ -197,6 +202,9 @@ func (a *ProblemAuthoring) RestoreProblem(ctx context.Context, actor auth.Actor,
 			ObjectID:    id,
 		})
 	})
+	if err == nil && restored.Status == StatusPublished && restored.Visibility == VisibilityPublic && a.stats != nil {
+		a.stats.Refresh(ctx)
+	}
 	return restored, err
 }
 

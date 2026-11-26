@@ -10,6 +10,7 @@ import (
 
 type fakeStore struct {
 	mu                 sync.Mutex
+	counts             int
 	problems           int64
 	submissions        int64
 	languages          int64
@@ -21,6 +22,7 @@ type fakeStore struct {
 func (s *fakeStore) CountPublishedProblems(context.Context) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.counts++
 	if s.failProblemCount {
 		return 0, errors.New("pg down")
 	}
@@ -30,12 +32,14 @@ func (s *fakeStore) CountPublishedProblems(context.Context) (int64, error) {
 func (s *fakeStore) CountSubmissions(context.Context) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.counts++
 	return s.submissions, s.submissionCountErr
 }
 
 func (s *fakeStore) CountEnabledLanguages(context.Context) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.counts++
 	return s.languages, s.languageCountErr
 }
 
@@ -135,6 +139,24 @@ func TestRefreshRepopulatesCacheAfterPostgresWrite(t *testing.T) {
 	defer cache.mu.Unlock()
 	if cache.facts.Problems != 2 || cache.facts.Submissions != 3 {
 		t.Fatalf("cache = %+v, want refreshed aggregate", cache.facts)
+	}
+}
+
+func TestRefreshWithoutCacheSkipsStore(t *testing.T) {
+	store := &fakeStore{problems: 3, submissions: 12, languages: 5}
+	service := newTestService(store, nil)
+
+	service.Refresh(t.Context())
+	if store.counts != 0 {
+		t.Errorf("Refresh made %d store calls, want 0", store.counts)
+	}
+
+	facts, err := service.SiteFacts(t.Context())
+	if want := (Facts{Problems: 3, Submissions: 12, Languages: 5}); err != nil || facts != want {
+		t.Fatalf("SiteFacts = %+v, %v, want %+v", facts, err, want)
+	}
+	if store.counts != 3 {
+		t.Errorf("SiteFacts made %d store calls, want 3", store.counts)
 	}
 }
 

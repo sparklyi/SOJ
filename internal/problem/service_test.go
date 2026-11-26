@@ -147,6 +147,52 @@ func TestRestoreProblemReListsArchivedProblem(t *testing.T) {
 	}
 }
 
+func TestArchiveRestoreRefreshesSiteStats(t *testing.T) {
+	actor := auth.Actor{UserID: 99, Roles: []auth.Role{auth.RoleAdmin}, Permissions: seededPermissions(auth.RoleAdmin)}
+	commitErr := errors.New("commit failed")
+	operations := []struct {
+		name    string
+		initial string
+		final   string
+		change  func(*ProblemAuthoring, context.Context, auth.Actor, int64) (ProblemRecord, error)
+	}{
+		{"archive", StatusPublished, StatusArchived, (*ProblemAuthoring).ArchiveProblem},
+		{"restore", StatusArchived, StatusPublished, (*ProblemAuthoring).RestoreProblem},
+	}
+	for _, op := range operations {
+		t.Run(op.name, func(t *testing.T) {
+			for _, tt := range []struct {
+				name          string
+				visibility    string
+				commitErr     error
+				wantRefreshes int
+			}{
+				{name: "public", visibility: VisibilityPublic, wantRefreshes: 1},
+				{name: "private", visibility: VisibilityPrivate},
+				{name: "failed commit", visibility: VisibilityPublic, commitErr: commitErr},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					store := &revisionTestStore{fakeRepository: newFakeRepository(), commitErr: tt.commitErr}
+					store.problems[1] = ProblemRecord{ID: 1, OwnerUserID: actor.UserID, Status: op.initial, Visibility: tt.visibility}
+					stats := &revisionStatsRecorder{store: store}
+					authoring := NewProblemAuthoring(store, nil, WithAuthoringStatsRefresher(stats))
+
+					problem, err := op.change(authoring, t.Context(), actor, 1)
+					if !errors.Is(err, tt.commitErr) {
+						t.Fatalf("change error = %v, want %v", err, tt.commitErr)
+					}
+					if err == nil && problem.Status != op.final {
+						t.Errorf("problem status = %q, want %q", problem.Status, op.final)
+					}
+					if stats.beforeCommit || stats.calls != tt.wantRefreshes {
+						t.Errorf("refresh calls = %d, before commit = %t, want %d after commit", stats.calls, stats.beforeCommit, tt.wantRefreshes)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestSavingNewStatementInvalidatesPreviousValidCheck(t *testing.T) {
 	repo := newFakeRepository()
 	seedPublishableProblem(repo)

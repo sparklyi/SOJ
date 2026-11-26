@@ -76,6 +76,9 @@ func (s *Service) SiteFacts(ctx context.Context) (Facts, error) {
 // 领域服务在自己的 PG 写入提交成功后调用；失败只记日志——
 // 缓存脏一拍会由下一次读或写路径自愈，不该让一次提交为此报错。
 func (s *Service) Refresh(ctx context.Context) {
+	if s.cache == nil {
+		return
+	}
 	facts, err := s.readFromStore(ctx)
 	if err != nil {
 		s.logger.WarnContext(ctx, "stats refresh: postgres read failed", "error", err)
