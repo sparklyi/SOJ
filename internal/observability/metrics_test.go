@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"math"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -193,6 +194,157 @@ func TestTestcaseCacheMetricsBoundLabels(t *testing.T) {
 						expected.labels,
 						got,
 						expected.sampleCount,
+					)
+				}
+				break
+			}
+		}
+
+		if !found {
+			t.Errorf("missing histogram series with exact labels %v", expected.labels)
+		}
+	}
+}
+
+// TestResultConsumerMetricsBoundLabels covers
+// https://github.com/sparklyi/SOJ/issues/312: unsupported queue and outcome
+// names must not leak into the result-consumer counter or duration histogram.
+func TestResultConsumerMetricsBoundLabels(t *testing.T) {
+	metrics := NewMetrics("test")
+
+	metrics.RecordResultConsumerProcess("result", "success", 125*time.Millisecond)
+	metrics.RecordResultConsumerProcess("unexpected_queue_1", "unexpected_result_1", 125*time.Millisecond)
+	metrics.RecordResultConsumerProcess("unexpected_queue_2", "unexpected_result_2", 375*time.Millisecond)
+
+	families, err := metrics.registry.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	familyByName := make(map[string]*dto.MetricFamily)
+	for _, family := range families {
+		familyByName[family.GetName()] = family
+	}
+
+	labelsFor := func(metric *dto.Metric) map[string]string {
+		labels := make(map[string]string)
+		for _, label := range metric.GetLabel() {
+			labels[label.GetName()] = label.GetValue()
+		}
+		return labels
+	}
+
+	counter := familyByName["soj_worker_result_consumer_messages_total"]
+	if counter == nil {
+		t.Fatal("result consumer counter family not found")
+	}
+
+	if got := len(counter.GetMetric()); got != 2 {
+		t.Fatalf("expected exactly 2 result consumer counter series, got %d", got)
+	}
+
+	expectedCounter := []struct {
+		labels map[string]string
+		value  float64
+	}{
+		{
+			labels: map[string]string{
+				"queue":   "result",
+				"result":  "success",
+				"service": "test",
+			},
+			value: 1,
+		},
+		{
+			labels: map[string]string{
+				"queue":   "unknown",
+				"result":  "error",
+				"service": "test",
+			},
+			value: 2,
+		},
+	}
+
+	for _, expected := range expectedCounter {
+		found := false
+
+		for _, metric := range counter.GetMetric() {
+			if reflect.DeepEqual(labelsFor(metric), expected.labels) {
+				found = true
+
+				if got := metric.GetCounter().GetValue(); got != expected.value {
+					t.Errorf(
+						"counter value for labels %v = %v, want %v",
+						expected.labels,
+						got,
+						expected.value,
+					)
+				}
+				break
+			}
+		}
+
+		if !found {
+			t.Errorf("missing counter series with exact labels %v", expected.labels)
+		}
+	}
+
+	duration := familyByName["soj_worker_result_consumer_duration_seconds"]
+	if duration == nil {
+		t.Fatal("result consumer duration histogram family not found")
+	}
+
+	if got := len(duration.GetMetric()); got != 2 {
+		t.Fatalf("expected exactly 2 result consumer duration series, got %d", got)
+	}
+
+	expectedDuration := []struct {
+		labels      map[string]string
+		sampleCount uint64
+		sampleSum   float64
+	}{
+		{
+			labels: map[string]string{
+				"queue":   "result",
+				"result":  "success",
+				"service": "test",
+			},
+			sampleCount: 1,
+			sampleSum:   0.125,
+		},
+		{
+			labels: map[string]string{
+				"queue":   "unknown",
+				"result":  "error",
+				"service": "test",
+			},
+			sampleCount: 2,
+			sampleSum:   0.5,
+		},
+	}
+
+	for _, expected := range expectedDuration {
+		found := false
+
+		for _, metric := range duration.GetMetric() {
+			if reflect.DeepEqual(labelsFor(metric), expected.labels) {
+				found = true
+
+				histogram := metric.GetHistogram()
+				if got := histogram.GetSampleCount(); got != expected.sampleCount {
+					t.Errorf(
+						"histogram sample count for labels %v = %d, want %d",
+						expected.labels,
+						got,
+						expected.sampleCount,
+					)
+				}
+				if got := histogram.GetSampleSum(); math.Abs(got-expected.sampleSum) > 1e-9 {
+					t.Errorf(
+						"histogram sample sum for labels %v = %v, want %v",
+						expected.labels,
+						got,
+						expected.sampleSum,
 					)
 				}
 				break
