@@ -182,6 +182,17 @@ func (q *RedisStreamQueue) Close() error {
 }
 
 func redisMessages(streams []redis.XStream) ([]Message, error) {
+	if len(streams) == 0 {
+		return nil, nil
+	}
+
+	if len(streams) == 1 {
+		if len(streams[0].Messages) == 0 {
+			return nil, nil
+		}
+		return xMessages(streams[0].Messages)
+	}
+
 	var messages []Message
 	for _, stream := range streams {
 		items, err := xMessages(stream.Messages)

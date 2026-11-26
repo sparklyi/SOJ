@@ -517,3 +517,120 @@ func TestRedisStreamClaimStaleKeepsCursorWhenMessageConversionFails(t *testing.T
 		t.Fatalf("XAUTOCLAIM start IDs = %q, want %q", hook.starts, want)
 	}
 }
+
+func TestRedisMessagesMapping(t *testing.T) {
+	makeMessage := func(id, taskID, payload, attempts string) redis.XMessage {
+		return redis.XMessage{
+			ID: id,
+			Values: map[string]any{
+				"task_id":  taskID,
+				"payload":  payload,
+				"attempts": attempts,
+			},
+		}
+	}
+
+	t.Run("no streams", func(t *testing.T) {
+		messages, err := redisMessages(nil)
+		if err != nil {
+			t.Fatalf("redisMessages returned error: %v", err)
+		}
+		if messages != nil {
+			t.Fatalf("messages = %+v, want nil", messages)
+		}
+	})
+
+	t.Run("empty stream", func(t *testing.T) {
+		messages, err := redisMessages([]redis.XStream{{Messages: nil}})
+		if err != nil {
+			t.Fatalf("redisMessages returned error: %v", err)
+		}
+		if messages != nil {
+			t.Fatalf("messages = %+v, want nil", messages)
+		}
+	})
+
+	t.Run("preserves order across streams", func(t *testing.T) {
+		streams := []redis.XStream{
+			{Messages: []redis.XMessage{
+				makeMessage("1-0", "1", "first", "0"),
+				makeMessage("2-0", "2", "second", "1"),
+			}},
+			{Messages: []redis.XMessage{
+				makeMessage("3-0", "3", "third", "2"),
+			}},
+		}
+
+		messages, err := redisMessages(streams)
+		if err != nil {
+			t.Fatalf("redisMessages returned error: %v", err)
+		}
+
+		want := []Message{
+			{ID: "1-0", TaskID: 1, Payload: []byte("first"), Attempts: 0},
+			{ID: "2-0", TaskID: 2, Payload: []byte("second"), Attempts: 1},
+			{ID: "3-0", TaskID: 3, Payload: []byte("third"), Attempts: 2},
+		}
+
+		if !reflect.DeepEqual(messages, want) {
+			t.Fatalf("messages = %+v, want %+v", messages, want)
+		}
+	})
+
+	t.Run("conversion failure after valid message", func(t *testing.T) {
+		streams := []redis.XStream{
+			{Messages: []redis.XMessage{
+				makeMessage("1-0", "1", "valid", "0"),
+				makeMessage("2-0", "bad", "invalid", "0"),
+			}},
+		}
+
+		messages, err := redisMessages(streams)
+		if err == nil {
+			t.Fatal("redisMessages error = nil, want conversion error")
+		}
+		if messages != nil {
+			t.Fatalf("messages = %+v, want nil on conversion error", messages)
+		}
+	})
+}
+func BenchmarkRedisMessages(b *testing.B) {
+	benchmarks := []struct {
+		name  string
+		count int
+	}{
+		{name: "single_message", count: 1},
+		{name: "batch_100_messages", count: 100},
+	}
+
+	for _, benchmark := range benchmarks {
+		b.Run(benchmark.name, func(b *testing.B) {
+			items := make([]redis.XMessage, benchmark.count)
+
+			for i := range items {
+				items[i] = redis.XMessage{
+					ID: "1-0",
+					Values: map[string]any{
+						"task_id":  "123",
+						"payload":  "benchmark payload",
+						"attempts": "1",
+					},
+				}
+			}
+
+			streams := []redis.XStream{
+				{Messages: items},
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				_, err := redisMessages(streams)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
