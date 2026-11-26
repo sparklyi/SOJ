@@ -242,3 +242,160 @@ func TestWorkerUsesOnlyQueueConsumer(t *testing.T) {
 		t.Fatalf("ConsumeOnce() processed = %d, want 0", processed)
 	}
 }
+
+type partialProgressDispatchStore struct {
+	taskDispatchStoreStub
+	tasks      []JudgeTaskRecord
+	dispatched []JudgeTaskRecord
+	retried    []JudgeTaskRecord
+	retryAt    time.Time
+	retryError string
+}
+
+func (s *partialProgressDispatchStore) ClaimPendingJudgeTasks(
+	context.Context,
+	int32,
+) ([]JudgeTaskRecord, error) {
+	return s.tasks, nil
+}
+
+func (s *partialProgressDispatchStore) GetSubmission(
+	context.Context,
+	int64,
+) (SubmissionRecord, error) {
+	return SubmissionRecord{
+		ID:              9,
+		ProblemID:       1,
+		LanguageID:      71,
+		TestcaseSetID:   3,
+		SourceArtifactID: 4,
+		Status:          StatusRunning,
+	}, nil
+}
+
+func (s *partialProgressDispatchStore) GetArtifact(
+	context.Context,
+	int64,
+) (ArtifactRecord, error) {
+	return ArtifactRecord{
+		ID:             4,
+		StorageKey:     "source",
+		ChecksumSHA256: "source-hash",
+	}, nil
+}
+
+func (s *partialProgressDispatchStore) GetLanguage(
+	context.Context,
+	int64,
+) (LanguageRecord, error) {
+	return LanguageRecord{
+		ID:               71,
+		EngineLanguageID: "go",
+		DefaultTimeLimit: time.Second,
+		DefaultMemoryKB:  262144,
+		Enabled:          true,
+	}, nil
+}
+
+func (s *partialProgressDispatchStore) EnsureJudgeAttempt(
+	_ context.Context,
+	input EnsureJudgeAttemptInput,
+) (JudgeAttemptRecord, error) {
+	return JudgeAttemptRecord{ID: input.TaskID}, nil
+}
+
+func (s *partialProgressDispatchStore) MarkJudgeTaskDispatched(
+	_ context.Context,
+	id int64,
+	streamID string,
+) (JudgeTaskRecord, error) {
+	task := JudgeTaskRecord{
+		ID:       id,
+		StreamID: streamID,
+		Status:   "dispatched",
+	}
+	s.dispatched = append(s.dispatched, task)
+	return task, nil
+}
+
+func (s *partialProgressDispatchStore) RetryJudgeTask(
+	_ context.Context,
+	id int64,
+	retryAt time.Time,
+	reason string,
+) (JudgeTaskRecord, error) {
+	s.retryAt = retryAt
+	s.retryError = reason
+
+	task := JudgeTaskRecord{
+		ID:     id,
+		Status: "pending",
+	}
+	s.retried = append(s.retried, task)
+	return task, nil
+}
+
+type partialProgressPublisher struct {
+	calls []int64
+	err   error
+}
+
+func (p *partialProgressPublisher) Publish(
+	_ context.Context,
+	taskID int64,
+	_ []byte,
+) (string, error) {
+	p.calls = append(p.calls, taskID)
+
+	if len(p.calls) == 2 {
+		return "", p.err
+	}
+
+	return "stream-1", nil
+}
+func TestTaskDispatcherPreservesPartialProgressOnPublishFailure(t *testing.T) {
+	publishErr := errors.New("publish failed")
+	now := time.Unix(100, 0).UTC()
+
+	store := &partialProgressDispatchStore{
+		tasks: []JudgeTaskRecord{
+			{ID: 1, SubmissionID: int64Ptr(9), Status: "pending", Attempts: 1},
+			{ID: 2, SubmissionID: int64Ptr(9), Status: "pending", Attempts: 1},
+			{ID: 3, SubmissionID: int64Ptr(9), Status: "pending", Attempts: 1},
+		},
+	}
+
+	publisher := &partialProgressPublisher{err: publishErr}
+
+	dispatcher := NewTaskDispatcher(TaskDispatcherOptions{
+		Store:            store,
+		Queue:            publisher,
+		TestcaseResolver: testcaseSnapshotResolverStub{},
+		Now:              func() time.Time { return now },
+		Backoff:          func(int32) time.Duration { return 30 * time.Second },
+	})
+
+	count, err := dispatcher.DispatchPending(t.Context(), 3)
+
+	if count != 1 {
+		t.Errorf("DispatchPending() count = %d, want 1", count)
+	}
+	if !errors.Is(err, publishErr) {
+		t.Errorf("DispatchPending() error = %v, want %v", err, publishErr)
+	}
+	if len(publisher.calls) != 2 {
+		t.Errorf("Publish calls = %v, want 2 calls", publisher.calls)
+	}
+	if len(store.dispatched) != 1 || store.dispatched[0].ID != 1 {
+		t.Errorf("dispatched tasks = %v, want task 1", store.dispatched)
+	}
+	if len(store.retried) != 1 || store.retried[0].ID != 2 {
+		t.Errorf("retried tasks = %v, want task 2", store.retried)
+	}
+	if !store.retryAt.Equal(now.Add(30 * time.Second)) {
+		t.Errorf("retry time = %v, want %v", store.retryAt, now.Add(30*time.Second))
+	}
+	if store.retryError != publishErr.Error() {
+		t.Errorf("retry error = %q, want %q", store.retryError, publishErr.Error())
+	}
+}
