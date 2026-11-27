@@ -166,25 +166,14 @@ func RunWorker(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		ReadTimeout:  cfg.HTTP.ReadTimeout,
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	errCh := make(chan error, 2)
-	go func() {
-		errCh <- runHTTPServer(runCtx, server, cfg.Worker.ShutdownTimeout)
-	}()
-	go func() {
-		errCh <- runWorkerLoops(runCtx, worker, resultConsumer, taskQueue, resultQueue, reconciler, retention, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block, cfg.Worker.ReconcileInterval)
-	}()
-
-	err = <-errCh
-	cancel()
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		if ctx.Err() != nil {
-			return nil
-		}
-		return err
-	}
-	return err
+	return runWorkerGroup(ctx,
+		func(ctx context.Context) error {
+			return runHTTPServer(ctx, server, cfg.Worker.ShutdownTimeout)
+		},
+		func(ctx context.Context) error {
+			return runWorkerLoops(ctx, worker, resultConsumer, taskQueue, resultQueue, reconciler, retention, scoreboardService, metrics, cfg.Redis.BatchSize, cfg.Redis.Block, cfg.Worker.ReconcileInterval)
+		},
+	)
 }
 
 type workerReconciler interface {
@@ -206,24 +195,41 @@ type runRetentionSweeper interface {
 }
 
 func runWorkerLoops(ctx context.Context, worker *submission.Worker, resultConsumer *submission.ResultConsumer, requestQueue, resultQueue queue.TaskQueue, reconciler workerReconciler, retention runRetentionSweeper, snapshots scoreSnapshotGenerator, metrics workerLoopMetrics, batchSize int, block time.Duration, reconcileEvery time.Duration) error {
-	errCh := make(chan error, 4)
-	go func() {
-		errCh <- runDispatchLoop(ctx, worker, requestQueue, batchSize, dispatchInterval(block), metrics)
-	}()
-	go func() {
-		errCh <- runResultConsumerLoop(ctx, resultConsumer, resultQueue, batchSize, block, metrics)
-	}()
-	go func() {
-		errCh <- runReconcilerLoop(ctx, reconciler, snapshots, reconcileEvery)
-	}()
+	loops := []func(context.Context) error{
+		func(ctx context.Context) error {
+			return runDispatchLoop(ctx, worker, requestQueue, batchSize, dispatchInterval(block), metrics)
+		},
+		func(ctx context.Context) error {
+			return runResultConsumerLoop(ctx, resultConsumer, resultQueue, batchSize, block, metrics)
+		},
+		func(ctx context.Context) error {
+			return runReconcilerLoop(ctx, reconciler, snapshots, reconcileEvery)
+		},
+	}
 	if retention != nil && retention.Enabled() {
+		loops = append(loops, func(ctx context.Context) error {
+			return runRunRetentionLoop(ctx, retention)
+		})
+	}
+	return runWorkerGroup(ctx, loops...)
+}
+
+// runWorkerGroup cancels on the first exit and waits for every started loop.
+func runWorkerGroup(ctx context.Context, loops ...func(context.Context) error) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	errCh := make(chan error, len(loops))
+	for _, loop := range loops {
 		go func() {
-			errCh <- runRunRetentionLoop(ctx, retention)
+			errCh <- loop(runCtx)
 		}()
 	}
 	err := <-errCh
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil
+	if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		err = nil
+	}
+	cancel()
+	for range loops[1:] {
+		<-errCh
 	}
 	return err
 }
