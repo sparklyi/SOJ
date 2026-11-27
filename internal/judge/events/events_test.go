@@ -202,6 +202,38 @@ func TestNormalizeResultRewritesAggregateAndCaseVerdicts(t *testing.T) {
 	}
 }
 
+func TestNormalizeResultKeepsInputCaseVerdicts(t *testing.T) {
+	result := judge.Result{
+		Verdict: judge.VerdictAccepted,
+		Cases: []judge.CaseResult{
+			{Index: 1, Verdict: judge.VerdictMemoryLimitExceeded},
+			{Index: 2, Verdict: judge.VerdictWrongAnswer},
+		},
+	}
+
+	if _, err := NormalizeResult(result); err != nil {
+		t.Fatalf("NormalizeResult returned error: %v", err)
+	}
+	if result.Cases[0].Verdict != judge.VerdictMemoryLimitExceeded {
+		t.Fatalf("input case 1 verdict rewritten to %q", result.Cases[0].Verdict)
+	}
+
+	invalid := judge.Result{
+		Verdict: judge.VerdictAccepted,
+		Cases: []judge.CaseResult{
+			{Index: 1, Verdict: judge.VerdictMemoryLimitExceeded},
+			{Index: 2, Verdict: judge.Verdict("not-a-verdict")},
+		},
+	}
+	_, err := NormalizeResult(invalid)
+	if err == nil || !strings.Contains(err.Error(), "case 2") {
+		t.Fatalf("NormalizeResult error = %v, want case 2 failure", err)
+	}
+	if invalid.Cases[0].Verdict != judge.VerdictMemoryLimitExceeded {
+		t.Fatalf("input case 1 verdict rewritten on failure to %q", invalid.Cases[0].Verdict)
+	}
+}
+
 // A self-run has nothing to judge, so it carries no testcase set. Accepting that
 // is what lets the agent call Run instead of Judge; requiring a testcase set
 // only of submissions keeps "there is nothing to compare" from being spelled as
