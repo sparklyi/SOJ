@@ -80,9 +80,33 @@ func (q *RedisStreamQueue) Ready(ctx context.Context) error {
 }
 
 func (q *RedisStreamQueue) Stats(ctx context.Context) (QueueStats, error) {
-	info, infoErr := q.client.XInfoStream(ctx, q.cfg.Stream).Result()
-	pending, pendingErr := q.client.XPending(ctx, q.cfg.Stream, q.cfg.Group).Result()
-	return redisQueueStatsFromRedis(info, infoErr, pending, pendingErr, time.Now())
+	pipe := q.client.Pipeline()
+
+	infoCmd := pipe.XInfoStream(ctx, q.cfg.Stream)
+	pendingCmd := pipe.XPending(ctx, q.cfg.Stream, q.cfg.Group)
+
+	_, execErr := pipe.Exec(ctx)
+
+	info, infoErr := infoCmd.Result()
+	pending, pendingErr := pendingCmd.Result()
+
+	// Preserve pipeline-level errors that are not already represented
+	// by either individual command error.
+	if execErr != nil &&
+		!errors.Is(infoErr, execErr) &&
+		!errors.Is(execErr, infoErr) &&
+		!errors.Is(pendingErr, execErr) &&
+		!errors.Is(execErr, pendingErr) {
+		return QueueStats{}, execErr
+	}
+
+	return redisQueueStatsFromRedis(
+		info,
+		infoErr,
+		pending,
+		pendingErr,
+		time.Now(),
+	)
 }
 
 func (q *RedisStreamQueue) Publish(ctx context.Context, taskID int64, payload []byte) (string, error) {
