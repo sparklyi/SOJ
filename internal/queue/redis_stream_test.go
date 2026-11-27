@@ -671,7 +671,9 @@ func TestRedisStreamQueueStatsUsesPipeline(t *testing.T) {
 	if len(hook.commands) != 2 {
 		t.Fatalf("pipeline commands = %#v, want exactly 2", hook.commands)
 	}
-
+	if hook.pipelineCalls != 1 {
+		t.Fatalf("pipeline hook calls = %d, want exactly 1", hook.pipelineCalls)
+	}
 	want := [][]any{
 		{"xinfo", "stream", "tasks"},
 		{"xpending", "tasks", "workers"},
@@ -681,6 +683,7 @@ func TestRedisStreamQueueStatsUsesPipeline(t *testing.T) {
 		t.Fatalf("pipeline commands = %#v, want %#v", hook.commands, want)
 	}
 }
+
 func TestRedisMessagesMapping(t *testing.T) {
 	makeMessage := func(id, taskID, payload, attempts string) redis.XMessage {
 		return redis.XMessage{
@@ -824,12 +827,13 @@ func BenchmarkRedisMessages(b *testing.B) {
 }
 
 type redisStatsPipelineHook struct {
-	commands    [][]any
-	info        *redis.XInfoStream
-	pending     *redis.XPending
-	infoErr     error
-	pendingErr  error
-	pipelineErr error
+	commands      [][]any
+	pipelineCalls int
+	info          *redis.XInfoStream
+	pending       *redis.XPending
+	infoErr       error
+	pendingErr    error
+	pipelineErr   error
 }
 
 func (h *redisStatsPipelineHook) DialHook(next redis.DialHook) redis.DialHook {
@@ -842,6 +846,8 @@ func (h *redisStatsPipelineHook) ProcessHook(next redis.ProcessHook) redis.Proce
 
 func (h *redisStatsPipelineHook) ProcessPipelineHook(redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(_ context.Context, cmds []redis.Cmder) error {
+		h.pipelineCalls++
+
 		for _, cmd := range cmds {
 			h.commands = append(h.commands, append([]any(nil), cmd.Args()...))
 
