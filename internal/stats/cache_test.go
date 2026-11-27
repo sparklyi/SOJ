@@ -194,3 +194,76 @@ func TestRedisCacheSetPropagatesWriteError(t *testing.T) {
 		t.Fatalf("Set() error = %v, want %v", err, sentinel)
 	}
 }
+
+// recordingGetRedisHook stands in for a Redis server: it records every command
+// it sees and answers it with a scripted error, so the missing-key and
+// command-failure paths can be exercised without a socket.
+type recordingGetRedisHook struct {
+	cmds []redis.Cmder
+	err  error
+}
+
+func (h *recordingGetRedisHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *recordingGetRedisHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(_ context.Context, cmd redis.Cmder) error {
+		h.cmds = append(h.cmds, cmd)
+		return h.err
+	}
+}
+
+func (h *recordingGetRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// TestRedisCacheGetDistinguishesMissFromCommandFailure covers
+// https://github.com/sparklyi/SOJ/issues/322: a missing key is a normal cache
+// miss, while any other Redis error must reach the caller unchanged, and both
+// cases still issue exactly one GET for the versioned key.
+func TestRedisCacheGetDistinguishesMissFromCommandFailure(t *testing.T) {
+	sentinel := errors.New("redis GET failed")
+	tests := []struct {
+		name    string
+		reply   error
+		wantErr error
+	}{
+		{name: "missing key", reply: redis.Nil},
+		{name: "command failure", reply: sentinel, wantErr: sentinel},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hook := &recordingGetRedisHook{err: tt.reply}
+			client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0", MaxRetries: -1})
+			client.AddHook(hook)
+			t.Cleanup(func() { _ = client.Close() })
+			cache := NewRedisCache(client, time.Minute)
+
+			facts, found, err := cache.Get(context.Background())
+
+			if found {
+				t.Fatalf("Get() found = true, want false (facts = %+v)", facts)
+			}
+			if facts != (Facts{}) {
+				t.Fatalf("Get() facts = %+v, want zero value", facts)
+			}
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Get() error = %v, want nil for a missing key", err)
+				}
+			} else if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Get() error = %v, want %v", err, tt.wantErr)
+			}
+
+			if len(hook.cmds) != 1 {
+				t.Fatalf("recorded %d commands, want exactly 1", len(hook.cmds))
+			}
+			cmd := hook.cmds[0]
+			if got := cmd.Name(); got != "get" {
+				t.Fatalf("command name = %q, want %q", got, "get")
+			}
+			if got := cmd.Args()[1]; got != cacheKey {
+				t.Fatalf("GET key = %v, want %q", got, cacheKey)
+			}
+		})
+	}
+}
