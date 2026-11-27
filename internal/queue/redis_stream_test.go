@@ -263,6 +263,46 @@ func TestRedisStreamDeadLetterUsesSeparateApproximateMaxLen(t *testing.T) {
 	requireXAddRetention(t, recorder.singleCommand(t), "tasks:dead", 7)
 }
 
+func TestRedisStreamDeadLetterPreservesMessageFields(t *testing.T) {
+	client, recorder := newRecordingRedisClient(t)
+	q := NewRedisStreamQueue(client, RedisStreamConfig{
+		Stream:     "tasks",
+		MaxLen:     50,
+		DeadMaxLen: 7,
+	})
+	payload := []byte("payload-очередь")
+	reason := "timed out: 超时"
+	message := Message{ID: "9-1", TaskID: 42, Payload: payload, Attempts: 3}
+
+	if err := q.DeadLetter(context.Background(), message, reason); err != nil {
+		t.Fatalf("DeadLetter() error = %v", err)
+	}
+
+	got := xaddFieldValues(t, recorder.singleCommand(t), "tasks:dead", 7)
+	want := map[string]string{
+		"original_id": "9-1",
+		"task_id":     "42",
+		"payload":     string(payload),
+		"attempts":    "3",
+		"reason":      reason,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("XADD fields = %#v, want %#v", got, want)
+	}
+}
+
+func TestRedisStreamDeadLetterReturnsRecorderWriteError(t *testing.T) {
+	sentinelErr := errors.New("sentinel dead-letter write")
+	client, recorder := newRecordingRedisClient(t)
+	recorder.err = sentinelErr
+	q := NewRedisStreamQueue(client, RedisStreamConfig{Stream: "tasks", DeadMaxLen: 7})
+
+	err := q.DeadLetter(context.Background(), Message{ID: "9-1", TaskID: 42, Payload: []byte("payload-очередь"), Attempts: 3}, "timed out: 超时")
+	if !errors.Is(err, sentinelErr) {
+		t.Fatalf("DeadLetter() error = %v, want %v", err, sentinelErr)
+	}
+}
+
 func TestRedisStreamStatsFromKnownRedisShape(t *testing.T) {
 	now := time.UnixMilli(1_700_000_010_000)
 	stats, err := redisQueueStatsFromRedis(
@@ -326,6 +366,7 @@ func TestRedisStreamStatsClampUnusablePendingTimestamps(t *testing.T) {
 
 type redisCommandRecorder struct {
 	commands [][]any
+	err      error
 }
 
 func newRecordingRedisClient(t *testing.T) (*redis.Client, *redisCommandRecorder) {
@@ -344,7 +385,7 @@ func (r *redisCommandRecorder) DialHook(next redis.DialHook) redis.DialHook {
 func (r *redisCommandRecorder) ProcessHook(_ redis.ProcessHook) redis.ProcessHook {
 	return func(_ context.Context, cmd redis.Cmder) error {
 		r.commands = append(r.commands, append([]any(nil), cmd.Args()...))
-		return nil
+		return r.err
 	}
 }
 
@@ -366,6 +407,31 @@ func requireXAddRetention(t *testing.T, args []any, stream string, maxLen int64)
 	if len(args) < len(want) || !reflect.DeepEqual(args[:len(want)], want) {
 		t.Fatalf("XADD args = %#v, want prefix %#v", args, want)
 	}
+}
+
+func xaddFieldValues(t *testing.T, args []any, stream string, maxLen int64) map[string]string {
+	t.Helper()
+	requireXAddRetention(t, args, stream, maxLen)
+	tail := args[6:]
+	if len(tail)%2 != 0 {
+		t.Fatalf("XADD field args = %#v, want an even key/value count", tail)
+	}
+	got := make(map[string]string, len(tail)/2)
+	for i := 0; i < len(tail); i += 2 {
+		key, ok := tail[i].(string)
+		if !ok {
+			t.Fatalf("XADD field name = %#v, want string", tail[i])
+		}
+		if _, exists := got[key]; exists {
+			t.Fatalf("XADD duplicate field %q in %#v", key, tail)
+		}
+		value, ok := tail[i+1].(string)
+		if !ok {
+			t.Fatalf("XADD field %q value = %#v, want string", key, tail[i+1])
+		}
+		got[key] = value
+	}
+	return got
 }
 
 func TestRedisStreamStatsTreatMissingKeyAndNoGroupAsZero(t *testing.T) {
