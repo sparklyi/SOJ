@@ -530,6 +530,31 @@ func TestRedisMessagesMapping(t *testing.T) {
 		}
 	}
 
+	t.Run("single stream preserves all messages in order", func(t *testing.T) {
+		streams := []redis.XStream{
+			{Messages: []redis.XMessage{
+				makeMessage("1-0", "1", "first", "0"),
+				makeMessage("2-0", "2", "second", "1"),
+				makeMessage("3-0", "3", "third", "2"),
+			}},
+		}
+
+		messages, err := redisMessages(streams)
+		if err != nil {
+			t.Fatalf("redisMessages returned error: %v", err)
+		}
+
+		want := []Message{
+			{ID: "1-0", TaskID: 1, Payload: []byte("first"), Attempts: 0},
+			{ID: "2-0", TaskID: 2, Payload: []byte("second"), Attempts: 1},
+			{ID: "3-0", TaskID: 3, Payload: []byte("third"), Attempts: 2},
+		}
+
+		if !reflect.DeepEqual(messages, want) {
+			t.Fatalf("messages = %+v, want %+v", messages, want)
+		}
+	})
+
 	t.Run("no streams", func(t *testing.T) {
 		messages, err := redisMessages(nil)
 		if err != nil {
