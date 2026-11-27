@@ -46,6 +46,80 @@ func TestRedisStreamReadinessFindsConsumerGroup(t *testing.T) {
 	}
 }
 
+func TestRedisStreamQueueReadiness(t *testing.T) {
+	const (
+		stream = "soj:custom:tasks"
+		group  = "custom-workers"
+	)
+
+	sentinelErr := errors.New("ERR XINFO GROUPS failed")
+
+	cases := []struct {
+		name        string
+		groups      []redis.XInfoGroup
+		replyErr    error
+		wantErr     error
+		wantMissing bool
+	}{
+		{
+			name: "configured group exists",
+			groups: []redis.XInfoGroup{
+				{Name: "other-workers"},
+				{Name: group},
+			},
+		},
+		{
+			name: "configured group missing",
+			groups: []redis.XInfoGroup{
+				{Name: "other-workers"},
+				{Name: "another-group"},
+			},
+			wantMissing: true,
+		},
+		{
+			name:     "Redis command fails",
+			replyErr: sentinelErr,
+			wantErr:  sentinelErr,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, recorder := newRecordingRedisClient(t)
+
+			recorder.groups = tc.groups
+			recorder.err = tc.replyErr
+
+			q := NewRedisStreamQueue(client, RedisStreamConfig{
+				Stream: stream,
+				Group:  group,
+			})
+
+			err := q.Ready(context.Background())
+
+			if tc.wantMissing {
+				want := fmt.Sprintf(
+					"redis stream %s missing consumer group %s",
+					stream, group,
+				)
+
+				if err == nil || err.Error() != want {
+					t.Fatalf("Ready() error = %v, want %q", err, want)
+				}
+			} else if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Ready() error = %v, want %v", err, tc.wantErr)
+			}
+
+			got := recorder.singleCommand(t)
+			want := []any{"xinfo", "groups", stream}
+
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("Ready() command = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
 func TestRedisStreamQueueImplementsStatsProvider(t *testing.T) {
 	var _ QueueStatsProvider = (*RedisStreamQueue)(nil)
 }
@@ -445,6 +519,7 @@ type redisCommandRecorder struct {
 	commands [][]any
 	err      error
 	entryID  string
+	groups   []redis.XInfoGroup
 }
 
 func newRecordingRedisClient(t *testing.T) (*redis.Client, *redisCommandRecorder) {
@@ -472,6 +547,10 @@ func (r *redisCommandRecorder) ProcessHook(_ redis.ProcessHook) redis.ProcessHoo
 			if xadd, ok := cmd.(*redis.StringCmd); ok {
 				xadd.SetVal(r.entryID)
 			}
+		}
+
+		if groups, ok := cmd.(*redis.XInfoGroupsCmd); ok {
+			groups.SetVal(r.groups)
 		}
 
 		return nil
