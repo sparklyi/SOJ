@@ -78,12 +78,17 @@ func (s *ProblemCheckService) RunProblemCheck(ctx context.Context, actor auth.Ac
 			findings = append(findings, storageUnreadableFinding(set.StorageKey, "testcase archive cannot be read from storage"))
 			break
 		}
-		storageReadable = true
 		data, err := readAllAndClose(body, MaxTestcaseArchiveBytes)
 		if err != nil {
+			// readAllAndClose stops at the size limit plus one byte, which is
+			// enough to establish that storage returned an oversized object.
+			if appErr, ok := apperror.From(err); ok && appErr.Code == codeArchiveTooLarge {
+				storageReadable = true
+			}
 			findings = append(findings, archiveErrorFinding(err, set.StorageKey))
 			break
 		}
+		storageReadable = true
 		manifest, archiveFindings := VerifyArchive(bytes.NewReader(data), int64(len(data)), set.ChecksumSHA256)
 		for _, finding := range archiveFindings {
 			findings = append(findings, problemCheckFindingDraft{

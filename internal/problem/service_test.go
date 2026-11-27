@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -1727,5 +1728,132 @@ func assertHTTPStatus(t *testing.T, err error, status int) {
 	}
 	if appErr.HTTPStatus != status {
 		t.Fatalf("expected HTTP status %d, got %d", status, appErr.HTTPStatus)
+	}
+}
+
+type failingBodyReader struct{}
+
+func (failingBodyReader) Read([]byte) (int, error) {
+	return 0, errors.New("disk I/O error")
+}
+
+type applicationErrorBodyReader struct{}
+
+func (applicationErrorBodyReader) Read([]byte) (int, error) {
+	return 0, apperror.New("storage.read_failed", "disk I/O error", http.StatusInternalServerError)
+}
+
+type failingArchiveReader struct {
+	body io.ReadCloser
+}
+
+func (r failingArchiveReader) Get(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	return r.body, storage.ObjectInfo{}, nil
+}
+
+func TestRunProblemCheckReportsFailedArchiveReadAsUnreadable(t *testing.T) {
+	repo := newFakeRepository()
+	store := &fakeStorage{}
+	seedProblemCheckData(t, repo, store, `[]`, zipArchive(t, map[string]string{
+		"1.in":  "1 1\n",
+		"1.ans": "2\n",
+	}), 1)
+	service := newProblemService(repo, store)
+	service.checks.archives = failingArchiveReader{body: io.NopCloser(failingBodyReader{})}
+
+	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
+	if err != nil {
+		t.Fatalf("RunProblemCheck returned error: %v", err)
+	}
+
+	assertFindingCodes(t, result.Findings, []string{"testcase.storage_unreadable"})
+	summary := result.Run.Summary
+	if summary.StorageReadable || summary.ZipReadable || summary.Valid {
+		t.Fatalf("summary = %+v, want storage_readable false, zip_readable false, valid false", summary)
+	}
+}
+
+func TestRunProblemCheckDoesNotTreatOtherAppErrorsAsReadableStorage(t *testing.T) {
+	repo := newFakeRepository()
+	store := &fakeStorage{}
+	seedProblemCheckData(t, repo, store, `[]`, zipArchive(t, map[string]string{
+		"1.in":  "1 1\n",
+		"1.ans": "2\n",
+	}), 1)
+	service := newProblemService(repo, store)
+	service.checks.archives = failingArchiveReader{body: io.NopCloser(applicationErrorBodyReader{})}
+
+	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
+	if err != nil {
+		t.Fatalf("RunProblemCheck returned error: %v", err)
+	}
+	assertFindingCodes(t, result.Findings, []string{"storage.read_failed"})
+	if summary := result.Run.Summary; summary.StorageReadable || summary.ZipReadable || summary.Valid {
+		t.Fatalf("summary = %+v, want storage_readable false, zip_readable false, valid false", summary)
+	}
+}
+
+type countingZeroReader struct {
+	remaining int64
+	read      int64
+}
+
+func (r *countingZeroReader) Read(p []byte) (int, error) {
+	if r.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if int64(n) > r.remaining {
+		n = int(r.remaining)
+	}
+	clear(p[:n])
+	r.remaining -= int64(n)
+	r.read += int64(n)
+	return n, nil
+}
+
+type streamingArchiveReader struct {
+	body io.ReadCloser
+}
+
+func (r streamingArchiveReader) Get(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	return r.body, storage.ObjectInfo{}, nil
+}
+
+func TestRunProblemCheckReportsOversizedArchiveAsReadable(t *testing.T) {
+	repo := newFakeRepository()
+	store := &fakeStorage{}
+	seedProblemCheckData(t, repo, store, `[]`, nil, 1)
+	// Provide more than cap+1 bytes so the assertion below fails if the read limit is removed.
+	body := &countingZeroReader{remaining: MaxTestcaseArchiveBytes + 2}
+	service := newProblemService(repo, store)
+	service.checks.archives = streamingArchiveReader{body: io.NopCloser(body)}
+
+	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
+	if err != nil {
+		t.Fatalf("RunProblemCheck returned error: %v", err)
+	}
+	assertFindingCodes(t, result.Findings, []string{codeArchiveTooLarge})
+	if summary := result.Run.Summary; !summary.StorageReadable || summary.ZipReadable || summary.Valid {
+		t.Fatalf("summary = %+v, want storage_readable true, zip_readable false, valid false", summary)
+	}
+	if body.read != MaxTestcaseArchiveBytes+1 {
+		t.Fatalf("read %d bytes, want limit plus one byte (%d)", body.read, MaxTestcaseArchiveBytes+1)
+	}
+}
+
+func TestRunProblemCheckReportsInvalidZipAsReadableStorage(t *testing.T) {
+	repo := newFakeRepository()
+	store := &fakeStorage{}
+	seedProblemCheckData(t, repo, store, `[]`, []byte("not a zip"), 1)
+	service := newProblemService(repo, store)
+
+	result, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
+	if err != nil {
+		t.Fatalf("RunProblemCheck returned error: %v", err)
+	}
+	assertFindingCodes(t, result.Findings, []string{codeZipInvalid})
+	if summary := result.Run.Summary; !summary.StorageReadable || summary.ZipReadable || summary.Valid {
+		t.Fatalf("summary = %+v, want storage_readable true, zip_readable false, valid false", summary)
 	}
 }
