@@ -93,8 +93,19 @@ func TestDispatchLoopSamplesRequestAndRunQueuesSeparately(t *testing.T) {
 		`soj_queue_pending_messages{queue="run_request",service="test"} 5`,
 		`soj_queue_oldest_pending_age_seconds{queue="run_request",service="test"} 90`,
 	} {
-		if !strings.Contains(body, want) {
+		if !hasMetricLine(body, want) {
 			t.Fatalf("metrics body missing %s:\n%s", want, body)
 		}
 	}
+}
+
+// hasMetricLine reports whether body contains want as a complete line, so a
+// sample value of 7 does not also match 70.
+func hasMetricLine(body, want string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if line == want {
+			return true
+		}
+	}
+	return false
 }
