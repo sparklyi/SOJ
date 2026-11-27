@@ -136,6 +136,56 @@ func TestTestcaseCacheEvictsLeastRecentlyUsedSet(t *testing.T) {
 	}
 }
 
+func TestTestcaseCacheOversizedSetKeepsExistingEntry(t *testing.T) {
+	// Parsed testcase accounting counts len(InputKey)+len(OutputKey):
+	// the cached set is exactly 5 bytes and the oversized set is 6 bytes.
+	cachedArchive := testcaseCacheArchive(t, map[string]string{
+		"1.in":  "1234",
+		"1.ans": "5",
+	})
+	oversizedArchive := testcaseCacheArchive(t, map[string]string{
+		"1.in":  "abc",
+		"1.ans": "def",
+	})
+	store := &testcaseCacheStorage{objects: map[string][]byte{
+		"cached.zip":    cachedArchive,
+		"oversized.zip": oversizedArchive,
+	}}
+	cache := NewTestcaseCache(store, TestcaseCacheOptions{MaxBytes: 5})
+	cachedRef := testcaseCacheRef(cachedArchive, 1)
+	cachedRef.StorageKey = "cached.zip"
+	oversizedRef := testcaseCacheRef(oversizedArchive, 2)
+	oversizedRef.StorageKey = "oversized.zip"
+
+	steps := []struct {
+		name       string
+		ref        judgeevents.TestcaseSetRef
+		wantInput  string
+		wantOutput string
+		wantGets   int
+	}{
+		{name: "load exact-budget set", ref: cachedRef, wantInput: "1234", wantOutput: "5", wantGets: 1},
+		{name: "load oversized set", ref: oversizedRef, wantInput: "abc", wantOutput: "def", wantGets: 2},
+		{name: "reload oversized set", ref: oversizedRef, wantInput: "abc", wantOutput: "def", wantGets: 3},
+		{name: "reload exact-budget set", ref: cachedRef, wantInput: "1234", wantOutput: "5", wantGets: 3},
+	}
+	for _, step := range steps {
+		cases, err := cache.Load(t.Context(), step.ref)
+		if err != nil {
+			t.Fatalf("%s: Load returned error: %v", step.name, err)
+		}
+		if len(cases) != 1 {
+			t.Fatalf("%s: got %d testcases, want 1", step.name, len(cases))
+		}
+		if got := cases[0]; got.InputKey != step.wantInput || got.OutputKey != step.wantOutput {
+			t.Fatalf("%s: testcase = (%q, %q), want (%q, %q)", step.name, got.InputKey, got.OutputKey, step.wantInput, step.wantOutput)
+		}
+		if store.gets != step.wantGets {
+			t.Fatalf("%s: storage gets = %d, want %d", step.name, store.gets, step.wantGets)
+		}
+	}
+}
+
 func TestTestcaseCacheRejectsChecksumMismatch(t *testing.T) {
 	archive := testcaseCacheArchive(t, map[string]string{
 		"1.in":  "1\n",
