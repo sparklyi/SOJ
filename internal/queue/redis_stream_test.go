@@ -248,6 +248,83 @@ func TestRedisStreamPublishUsesApproximateMaxLen(t *testing.T) {
 	requireXAddRetention(t, recorder.singleCommand(t), "tasks", 50)
 }
 
+func TestRedisStreamPublishPreservesPayloadAndEntryID(t *testing.T) {
+	client, recorder := newRecordingRedisClient(t)
+
+	q := NewRedisStreamQueue(client, RedisStreamConfig{
+		Stream: "judge:custom",
+		MaxLen: 50,
+	})
+
+	taskID := int64(5_000_000_000)
+	payload := []byte(`{"message":"Привет"}`)
+	recorder.entryID = "1700000000000-1"
+
+	id, err := q.Publish(context.Background(), taskID, payload)
+
+	if err != nil {
+		t.Fatalf("Publish() error = %v", err)
+	}
+
+	if id != recorder.entryID {
+		t.Fatalf("Publish() ID = %q, want %q", id, recorder.entryID)
+	}
+
+	args := recorder.singleCommand(t)
+	requireXAddRetention(t, args, "judge:custom", 50)
+
+	if len(args) != 10 {
+		t.Fatalf("unexpected XADD arguments: %#v", args)
+	}
+
+	got := make(map[string]any)
+
+	for i := 6; i < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if !ok {
+			t.Fatalf("unexpected field name: %#v", args[i])
+		}
+		got[key] = args[i+1]
+	}
+
+	want := map[string]any{
+		"task_id": "5000000000",
+		"payload": string(payload),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("XADD fields = %#v, want %#v", got, want)
+	}
+}
+
+func TestRedisStreamPublishReturnsWriteError(t *testing.T) {
+	client, recorder := newRecordingRedisClient(t)
+
+	q := NewRedisStreamQueue(client, RedisStreamConfig{
+		Stream: "judge:custom",
+		MaxLen: 50,
+	})
+
+	writeErr := errors.New("redis write failed")
+	recorder.err = writeErr
+
+	id, err := q.Publish(
+		context.Background(),
+		42,
+		[]byte(`{"status":"queued"}`),
+	)
+
+	if id != "" {
+		t.Fatalf("Publish() ID = %q, want empty string", id)
+	}
+
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("Publish() error = %v, want %v", err, writeErr)
+	}
+
+	requireXAddRetention(t, recorder.singleCommand(t), "judge:custom", 50)
+}
+
 func TestRedisStreamDeadLetterUsesSeparateApproximateMaxLen(t *testing.T) {
 	client, recorder := newRecordingRedisClient(t)
 	q := NewRedisStreamQueue(client, RedisStreamConfig{
@@ -367,6 +444,7 @@ func TestRedisStreamStatsClampUnusablePendingTimestamps(t *testing.T) {
 type redisCommandRecorder struct {
 	commands [][]any
 	err      error
+	entryID  string
 }
 
 func newRecordingRedisClient(t *testing.T) (*redis.Client, *redisCommandRecorder) {
@@ -385,7 +463,18 @@ func (r *redisCommandRecorder) DialHook(next redis.DialHook) redis.DialHook {
 func (r *redisCommandRecorder) ProcessHook(_ redis.ProcessHook) redis.ProcessHook {
 	return func(_ context.Context, cmd redis.Cmder) error {
 		r.commands = append(r.commands, append([]any(nil), cmd.Args()...))
-		return r.err
+
+		if r.err != nil {
+			return r.err
+		}
+
+		if cmd.Name() == "xadd" {
+			if xadd, ok := cmd.(*redis.StringCmd); ok {
+				xadd.SetVal(r.entryID)
+			}
+		}
+
+		return nil
 	}
 }
 
