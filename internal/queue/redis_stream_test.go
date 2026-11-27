@@ -500,8 +500,13 @@ func (missingKeyRedisHook) ProcessHook(redis.ProcessHook) redis.ProcessHook {
 	return func(context.Context, redis.Cmder) error { return errors.New("ERR no such key") }
 }
 
-func (missingKeyRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return next
+func (missingKeyRedisHook) ProcessPipelineHook(redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(_ context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			cmd.SetErr(errors.New("ERR no such key"))
+		}
+		return nil
+	}
 }
 
 // scriptedAutoClaimHook answers XAUTOCLAIM commands from a fixed script, one
@@ -755,6 +760,166 @@ func BenchmarkRedisMessages(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
+			}
+		})
+	}
+}
+
+type redisStatsPipelineHook struct {
+	commands    [][]any
+	info        *redis.XInfoStream
+	pending     *redis.XPending
+	infoErr     error
+	pendingErr  error
+	pipelineErr error
+}
+
+func (h *redisStatsPipelineHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *redisStatsPipelineHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return next
+}
+
+func (h *redisStatsPipelineHook) ProcessPipelineHook(redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(_ context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			h.commands = append(h.commands, append([]any(nil), cmd.Args()...))
+
+			switch c := cmd.(type) {
+			case *redis.XInfoStreamCmd:
+				c.SetVal(h.info)
+				c.SetErr(h.infoErr)
+			case *redis.XPendingCmd:
+				c.SetVal(h.pending)
+				c.SetErr(h.pendingErr)
+			default:
+				return fmt.Errorf("unexpected pipeline command type %T", cmd)
+			}
+		}
+		return h.pipelineErr
+	}
+}
+func TestRedisStreamQueueStatsReturnsPipelineError(t *testing.T) {
+	pipelineErr := errors.New("redis: connection reset")
+	hook := &redisStatsPipelineHook{
+		pipelineErr: pipelineErr,
+	}
+
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+
+	q := NewRedisStreamQueue(client, RedisStreamConfig{
+		Stream: "tasks",
+		Group:  "workers",
+	})
+
+	_, err := q.Stats(context.Background())
+	if !errors.Is(err, pipelineErr) {
+		t.Fatalf("expected pipeline error %v, got %v", pipelineErr, err)
+	}
+}
+func TestRedisStreamQueueStatsPreservesContextCancellation(t *testing.T) {
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	t.Cleanup(func() { _ = client.Close() })
+
+	q := NewRedisStreamQueue(client, RedisStreamConfig{
+		Stream: "tasks",
+		Group:  "workers",
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := q.Stats(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Stats() error = %v, want %v", err, context.Canceled)
+	}
+}
+func TestRedisStreamQueueStatsUsesPipeline(t *testing.T) {
+	hook := &redisStatsPipelineHook{
+		info: &redis.XInfoStream{Length: 7},
+		pending: &redis.XPending{
+			Count: 3,
+			Lower: "1700000000000-0",
+		},
+	}
+
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+
+	q := NewRedisStreamQueue(client, RedisStreamConfig{
+		Stream: "tasks",
+		Group:  "workers",
+	})
+
+	stats, err := q.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+
+	if stats.Depth != 7 || stats.Pending != 3 {
+		t.Fatalf("Stats() = %+v, want depth 7 and pending 3", stats)
+	}
+
+	if len(hook.commands) != 2 {
+		t.Fatalf("pipeline commands = %#v, want exactly 2", hook.commands)
+	}
+
+	want := [][]any{
+		{"xinfo", "stream", "tasks"},
+		{"xpending", "tasks", "workers"},
+	}
+
+	if !reflect.DeepEqual(hook.commands, want) {
+		t.Fatalf("pipeline commands = %#v, want %#v", hook.commands, want)
+	}
+}
+
+func TestRedisStreamQueueStatsDoesNotHidePipelineErrors(t *testing.T) {
+	missingErr := errors.New("ERR no such key")
+	actionableErr := errors.New("LOADING Redis is loading the dataset")
+
+	cases := []struct {
+		name       string
+		infoErr    error
+		pendingErr error
+	}{
+		{
+			name:       "missing stream and actionable pending error",
+			infoErr:    missingErr,
+			pendingErr: actionableErr,
+		},
+		{
+			name:       "actionable stream error and missing group",
+			infoErr:    actionableErr,
+			pendingErr: errors.New("NOGROUP No such key"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hook := &redisStatsPipelineHook{
+				infoErr:    tc.infoErr,
+				pendingErr: tc.pendingErr,
+			}
+
+			client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+			client.AddHook(hook)
+			t.Cleanup(func() { _ = client.Close() })
+
+			q := NewRedisStreamQueue(client, RedisStreamConfig{
+				Stream: "tasks",
+				Group:  "workers",
+			})
+
+			_, err := q.Stats(context.Background())
+
+			if !errors.Is(err, actionableErr) {
+				t.Fatalf("Stats() error = %v, want actionable error %v", err, actionableErr)
 			}
 		})
 	}
