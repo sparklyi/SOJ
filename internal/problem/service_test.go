@@ -1824,7 +1824,8 @@ func TestRunProblemCheckReportsOversizedArchiveAsReadable(t *testing.T) {
 	repo := newFakeRepository()
 	store := &fakeStorage{}
 	seedProblemCheckData(t, repo, store, `[]`, nil, 1)
-	body := &countingZeroReader{remaining: MaxTestcaseArchiveBytes + 1}
+	// Provide more than cap+1 bytes so the assertion below fails if the read limit is removed.
+	body := &countingZeroReader{remaining: MaxTestcaseArchiveBytes + 2}
 	service := newProblemService(repo, store)
 	service.checks.archives = streamingArchiveReader{body: io.NopCloser(body)}
 
