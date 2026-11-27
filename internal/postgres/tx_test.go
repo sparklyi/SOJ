@@ -43,6 +43,32 @@ func TestWithTxIgnoresRollbackAfterCommit(t *testing.T) {
 	}
 }
 
+func TestWithTxRollsBackOnceWhenCallbackPanics(t *testing.T) {
+	sentinel := errors.New("callback panicked")
+	tx := &recordingTx{}
+
+	defer func() {
+		recovered := recover()
+		//nolint:errorlint // the panic value is the sentinel itself; WithTx must not wrap it
+		if recovered != sentinel {
+			t.Fatalf("recovered %v, want the callback's sentinel %v", recovered, sentinel)
+		}
+		if tx.rollbackCalls != 1 {
+			t.Fatalf("Rollback calls = %d, want 1", tx.rollbackCalls)
+		}
+		if !tx.rolledBack {
+			t.Fatal("WithTx did not roll back the transaction")
+		}
+		if tx.committed {
+			t.Fatal("WithTx committed a transaction whose callback panicked")
+		}
+	}()
+
+	_ = WithTx(context.Background(), recordingTxRunner{tx: tx}, func(pgx.Tx) error {
+		panic(sentinel)
+	})
+}
+
 type recordingTxRunner struct {
 	tx pgx.Tx
 }
@@ -53,10 +79,11 @@ func (r recordingTxRunner) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, erro
 
 type recordingTx struct {
 	pgx.Tx
-	commitErr   error
-	rollbackErr error
-	committed   bool
-	rolledBack  bool
+	commitErr     error
+	rollbackErr   error
+	committed     bool
+	rolledBack    bool
+	rollbackCalls int
 }
 
 func (tx *recordingTx) Commit(context.Context) error {
@@ -66,5 +93,6 @@ func (tx *recordingTx) Commit(context.Context) error {
 
 func (tx *recordingTx) Rollback(context.Context) error {
 	tx.rolledBack = true
+	tx.rollbackCalls++
 	return tx.rollbackErr
 }
