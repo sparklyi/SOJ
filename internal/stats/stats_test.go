@@ -95,6 +95,27 @@ func TestSiteFactsFallsBackToPostgresOnCacheMiss(t *testing.T) {
 	}
 }
 
+func TestSiteFactsReturnsFactsAfterCacheWriteFailure(t *testing.T) {
+	store := &fakeStore{problems: 7, submissions: 42, languages: 5}
+	cache := &fakeCache{setErr: errors.New("redis write failed")}
+	service := newTestService(store, cache)
+
+	facts, err := service.SiteFacts(t.Context())
+	if err != nil {
+		t.Fatalf("SiteFacts returned error: %v", err)
+	}
+	// 回填失败只记日志：首页仍要拿到 PG 的完整计数。
+	if want := (Facts{Problems: 7, Submissions: 42, Languages: 5}); facts != want {
+		t.Fatalf("SiteFacts = %+v, want %+v", facts, want)
+	}
+	if store.counts != 3 {
+		t.Errorf("store calls = %d, want 3", store.counts)
+	}
+	if cache.sets != 1 {
+		t.Errorf("cache sets = %d, want 1 repopulation attempt", cache.sets)
+	}
+}
+
 func TestSiteFactsServesCacheHitWithoutTouchingPostgres(t *testing.T) {
 	store := &fakeStore{problems: 99, submissions: 99, languages: 99}
 	cache := &fakeCache{facts: Facts{Problems: 3, Submissions: 12, Languages: 3}, hasKey: true}
