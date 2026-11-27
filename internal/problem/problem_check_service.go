@@ -80,10 +80,9 @@ func (s *ProblemCheckService) RunProblemCheck(ctx context.Context, actor auth.Ac
 		}
 		data, err := readAllAndClose(body, MaxTestcaseArchiveBytes)
 		if err != nil {
-			// An oversized archive was fully read from storage; keep its
-			// distinct finding and readable flag. Any other failure means the
-			// stream could not be read.
-			if _, tooLarge := apperror.From(err); tooLarge {
+			// readAllAndClose stops at the size limit plus one byte, which is
+			// enough to establish that storage returned an oversized object.
+			if appErr, ok := apperror.From(err); ok && appErr.Code == codeArchiveTooLarge {
 				storageReadable = true
 			}
 			findings = append(findings, archiveErrorFinding(err, set.StorageKey))
