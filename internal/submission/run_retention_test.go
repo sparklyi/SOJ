@@ -332,6 +332,39 @@ func TestRunRetentionRecordsWhatItRemoved(t *testing.T) {
 	}
 }
 
+// A run removed before the orphan query fails is real, completed work. The sweep
+// must still report it, must not touch any orphan, and must attribute the failure
+// to the orphan query rather than to the run removal.
+func TestRunRetentionKeepsCompletedRunsWhenOrphanQueryFails(t *testing.T) {
+	retention, store, objects, _ := newRetentionForTest(t, time.Hour,
+		ExpiredRunRecord{ID: 1, SourceArtifactID: int64Ptr(4), StorageKey: "run/1/abc"})
+	sentinel := errors.New("orphan query unavailable")
+	store.orphanErr = sentinel
+	recorder := &retentionMetricsStub{}
+	retention.metrics = recorder
+
+	result, err := retention.Sweep(t.Context())
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Sweep error = %v, want the orphan query error", err)
+	}
+	if result.Scanned != 1 || result.Deleted != 1 || result.Failed != 0 || result.OrphanedArtifacts != 0 {
+		t.Fatalf("result = %+v, want the completed run kept and no orphans removed", result)
+	}
+	if len(store.deleted) != 1 || store.deleted[0].RunID != 1 {
+		t.Fatalf("rows deleted = %+v, want run 1 removed", store.deleted)
+	}
+	if len(objects.deleted) != 1 || objects.deleted[0] != "run/1/abc" {
+		t.Fatalf("objects deleted = %v, want only the expired run's object", objects.deleted)
+	}
+	if len(store.deletedArts) != 0 {
+		t.Fatalf("artifact rows deleted = %v, want none after the orphan query failed", store.deletedArts)
+	}
+	want := []string{"run_retention/success/1", "run_retention_orphans/error/1"}
+	if len(recorder.actions) != len(want) || recorder.actions[0] != want[0] || recorder.actions[1] != want[1] {
+		t.Fatalf("recorded actions = %v, want %v", recorder.actions, want)
+	}
+}
+
 type retentionMetricsStub struct {
 	actions []string
 }
