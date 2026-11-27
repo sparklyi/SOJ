@@ -237,7 +237,7 @@ The process backend exists only for development tests and local real-code smoke.
 ## Troubleshooting
 
 - Queue backlog: check Redis stream length for `redis.stream`, worker logs, and `soj_worker_judge_task_dispatch_total`.
-- Queue backlog in Prometheus: check `soj_queue_depth`, `soj_queue_pending_messages`, and `soj_queue_oldest_pending_age_seconds` by logical queue (`request`, `run_request` for playground self-run backlog, or `result`).
+- Queue backlog in Prometheus: check `soj_queue_depth` (stream length, which includes retained entries), `soj_queue_pending_messages` (delivered but unacknowledged entries), and `soj_queue_oldest_pending_age_seconds` (age of the oldest pending entry) by logical queue (`request`, `run_request` for playground self-run backlog, or `result`). None of these is the number of entries still waiting to be delivered.
 - No result events: check judge-agent readiness, `redis.stream`, `redis.result_stream`, and object storage credentials.
 - Result events not persisted: check `soj_worker_result_consumer_messages_total{result="error"}`, PostgreSQL readiness, and worker logs.
 - Agent startup failure: verify `redis.addr`, object storage credentials, Docker socket access, runner images, `judge.sandbox_backend`, and `agent.runner.runtime` safety rules.
