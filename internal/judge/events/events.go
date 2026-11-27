@@ -2,6 +2,7 @@ package events
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"SOJ/internal/judge"
@@ -233,6 +234,11 @@ func NormalizeResult(result judge.Result) (judge.Result, error) {
 		return judge.Result{}, err
 	}
 	result.Verdict = verdict
+	// Cases shares its backing array with the caller; normalize a copy so the
+	// input keeps its original verdicts even when a later case fails.
+	if result.Cases != nil {
+		result.Cases = slices.Clone(result.Cases)
+	}
 	for i := range result.Cases {
 		caseVerdict, err := NormalizeVerdict(result.Cases[i].Verdict)
 		if err != nil {
