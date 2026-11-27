@@ -623,6 +623,64 @@ func TestRedisStreamClaimStaleKeepsCursorWhenMessageConversionFails(t *testing.T
 	}
 }
 
+func TestRedisStreamQueueStatsUsesPipeline(t *testing.T) {
+	pendingTimestamp := time.Now().Add(-10 * time.Second).UnixMilli()
+	pendingTime := time.UnixMilli(pendingTimestamp)
+
+	hook := &redisStatsPipelineHook{
+		info: &redis.XInfoStream{Length: 7},
+		pending: &redis.XPending{
+			Count: 3,
+			Lower: fmt.Sprintf("%d-0", pendingTimestamp),
+		},
+	}
+
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+
+	q := NewRedisStreamQueue(client, RedisStreamConfig{
+		Stream: "tasks",
+		Group:  "workers",
+	})
+
+	before := time.Now()
+	stats, err := q.Stats(context.Background())
+	after := time.Now()
+
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+
+	if stats.Depth != 7 || stats.Pending != 3 {
+		t.Fatalf("Stats() = %+v, want depth 7 and pending 3", stats)
+	}
+
+	minAge := before.Sub(pendingTime)
+	maxAge := after.Sub(pendingTime)
+
+	if stats.OldestPendingAge < minAge || stats.OldestPendingAge > maxAge {
+		t.Fatalf(
+			"OldestPendingAge = %v, want between %v and %v",
+			stats.OldestPendingAge,
+			minAge,
+			maxAge,
+		)
+	}
+
+	if len(hook.commands) != 2 {
+		t.Fatalf("pipeline commands = %#v, want exactly 2", hook.commands)
+	}
+
+	want := [][]any{
+		{"xinfo", "stream", "tasks"},
+		{"xpending", "tasks", "workers"},
+	}
+
+	if !reflect.DeepEqual(hook.commands, want) {
+		t.Fatalf("pipeline commands = %#v, want %#v", hook.commands, want)
+	}
+}
 func TestRedisMessagesMapping(t *testing.T) {
 	makeMessage := func(id, taskID, payload, attempts string) redis.XMessage {
 		return redis.XMessage{
@@ -838,46 +896,6 @@ func TestRedisStreamQueueStatsPreservesContextCancellation(t *testing.T) {
 		t.Fatalf("Stats() error = %v, want %v", err, context.Canceled)
 	}
 }
-func TestRedisStreamQueueStatsUsesPipeline(t *testing.T) {
-	hook := &redisStatsPipelineHook{
-		info: &redis.XInfoStream{Length: 7},
-		pending: &redis.XPending{
-			Count: 3,
-			Lower: "1700000000000-0",
-		},
-	}
-
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
-	client.AddHook(hook)
-	t.Cleanup(func() { _ = client.Close() })
-
-	q := NewRedisStreamQueue(client, RedisStreamConfig{
-		Stream: "tasks",
-		Group:  "workers",
-	})
-
-	stats, err := q.Stats(context.Background())
-	if err != nil {
-		t.Fatalf("Stats() error = %v", err)
-	}
-
-	if stats.Depth != 7 || stats.Pending != 3 {
-		t.Fatalf("Stats() = %+v, want depth 7 and pending 3", stats)
-	}
-
-	if len(hook.commands) != 2 {
-		t.Fatalf("pipeline commands = %#v, want exactly 2", hook.commands)
-	}
-
-	want := [][]any{
-		{"xinfo", "stream", "tasks"},
-		{"xpending", "tasks", "workers"},
-	}
-
-	if !reflect.DeepEqual(hook.commands, want) {
-		t.Fatalf("pipeline commands = %#v, want %#v", hook.commands, want)
-	}
-}
 
 func TestRedisStreamQueueStatsDoesNotHidePipelineErrors(t *testing.T) {
 	missingErr := errors.New("ERR no such key")
@@ -903,8 +921,9 @@ func TestRedisStreamQueueStatsDoesNotHidePipelineErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			hook := &redisStatsPipelineHook{
-				infoErr:    tc.infoErr,
-				pendingErr: tc.pendingErr,
+				infoErr:     tc.infoErr,
+				pendingErr:  tc.pendingErr,
+				pipelineErr: tc.infoErr,
 			}
 
 			client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
