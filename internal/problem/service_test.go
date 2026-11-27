@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -707,6 +708,55 @@ func TestRunProblemCheckPersistsCompletedRunAndSummary(t *testing.T) {
 	}
 }
 
+func TestRunProblemCheckWriteFailures(t *testing.T) {
+	writeErr := errors.New("check write failed")
+	tests := []struct {
+		name         string
+		failFindings bool
+		failComplete bool
+		wantCalls    []string
+	}{
+		{name: "saving findings fails", failFindings: true, wantCalls: []string{"findings"}},
+		{name: "completing the run fails", failComplete: true, wantCalls: []string{"findings", "complete"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepository()
+			store := &fakeStorage{}
+			// The archive holds one case while the set claims two, so the check
+			// has a finding to persist.
+			seedProblemCheckData(t, repo, store, `[]`, zipArchive(t, map[string]string{
+				"1.in":  "1\n",
+				"1.ans": "1\n",
+			}), 2)
+			if tt.failFindings {
+				repo.failCheckFindings = writeErr
+			}
+			if tt.failComplete {
+				repo.failCompleteCheckRun = writeErr
+			}
+			service := newProblemService(repo, store)
+
+			got, err := service.RunProblemCheck(context.Background(), auth.Actor{UserID: 10, Roles: []auth.Role{auth.RoleAuthor}, Permissions: seededPermissions(auth.RoleAuthor)}, 1)
+			if !errors.Is(err, writeErr) {
+				t.Fatalf("RunProblemCheck() error = %v, want %v", err, writeErr)
+			}
+			if got.Run.ID != 0 || len(got.Findings) != 0 {
+				t.Fatalf("result must be zero on a write failure, got %+v", got)
+			}
+			if !reflect.DeepEqual(repo.checkTxLog, tt.wantCalls) {
+				t.Fatalf("transaction calls = %v, want %v", repo.checkTxLog, tt.wantCalls)
+			}
+			for _, run := range repo.checkRuns {
+				if run.Status == ProblemCheckStatusCompleted {
+					t.Fatalf("a failed write must not complete the run: %+v", run)
+				}
+			}
+		})
+	}
+}
+
 func TestRunProblemCheckReportsArchiveFindings(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1193,6 +1243,9 @@ type fakeRepository struct {
 	nextTestcaseID        int64
 	nextCheckRunID        int64
 	nextCheckFindingID    int64
+	checkTxLog            []string
+	failCheckFindings     error
+	failCompleteCheckRun  error
 	failCreateTestcaseSet bool
 	slugConflicts         int
 	lastListFilter        ListProblemsFilter
@@ -1577,6 +1630,11 @@ func (r *fakeRepository) CompleteProblemCheckRun(ctx context.Context, input Comp
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.checkTxLog = append(r.checkTxLog, "complete")
+	if r.failCompleteCheckRun != nil {
+		return ProblemCheckRunRecord{}, r.failCompleteCheckRun
+	}
+
 	run, ok := r.checkRuns[input.ID]
 	if !ok || (run.Status != ProblemCheckStatusQueued && run.Status != ProblemCheckStatusRunning) {
 		return ProblemCheckRunRecord{}, apperror.NotFound("problem.not_found", "problem not found")
@@ -1598,6 +1656,11 @@ func (r *fakeRepository) CompleteProblemCheckRun(ctx context.Context, input Comp
 func (r *fakeRepository) CreateProblemCheckFindings(ctx context.Context, inputs []CreateProblemCheckFindingInput) ([]ProblemCheckFindingRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	r.checkTxLog = append(r.checkTxLog, "findings")
+	if r.failCheckFindings != nil {
+		return nil, r.failCheckFindings
+	}
 
 	records := make([]ProblemCheckFindingRecord, 0, len(inputs))
 	for _, input := range inputs {
