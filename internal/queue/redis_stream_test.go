@@ -123,6 +123,40 @@ func TestRedisStreamQueueEnsure(t *testing.T) {
 	})
 }
 
+func TestRedisStreamQueueAckTargetsConfiguredStreamAndGroup(t *testing.T) {
+	const (
+		stream    = "soj:custom:results"
+		group     = "result-consumers"
+		messageID = "1700000000123-4"
+	)
+	client, hook := newScriptedRedisClient(t, nil)
+	q := NewRedisStreamQueue(client, RedisStreamConfig{Stream: stream, Group: group})
+
+	if err := q.Ack(context.Background(), messageID); err != nil {
+		t.Fatalf("Ack() error = %v, want nil", err)
+	}
+
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	want := [][]any{{"xack", stream, group, messageID}}
+	if !reflect.DeepEqual(hook.commands, want) {
+		t.Fatalf("Ack() commands = %#v, want %#v", hook.commands, want)
+	}
+}
+
+func TestRedisStreamQueueAckPropagatesCommandError(t *testing.T) {
+	sentinelErr := errors.New("ERR XACK failed")
+	client, _ := newScriptedRedisClient(t, sentinelErr)
+	q := NewRedisStreamQueue(client, RedisStreamConfig{
+		Stream: "soj:custom:results",
+		Group:  "result-consumers",
+	})
+
+	if err := q.Ack(context.Background(), "1700000000123-4"); !errors.Is(err, sentinelErr) {
+		t.Fatalf("Ack() error = %v, want %v", err, sentinelErr)
+	}
+}
+
 // scriptedRedisHook records every command and fails it with the scripted
 // reply (nil succeeds), so queue code can be driven without a Redis socket.
 // When several replies are given they are consumed one per command and the
