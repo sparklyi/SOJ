@@ -102,6 +102,34 @@ func TestExpandResolvesQuotedKeyAfterExplicitFlowMappingIndicator(t *testing.T) 
 	}
 }
 
+func TestExpandResolvesQuotedValueInMultilineFlowMapping(t *testing.T) {
+	t.Setenv("SOJ_TEST_MULTILINE_FLOW", "expanded")
+
+	input := "value: {\n  key:\"prefix # ${SOJ_TEST_MULTILINE_FLOW}\"\n}\n"
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := "value: {\n  key:\"prefix # expanded\"\n}\n"
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
+func TestExpandResolvesInsideSingleQuotedScalarWithDoubledApostrophe(t *testing.T) {
+	t.Setenv("SOJ_TEST_DOUBLED_APOSTROPHE", "demo")
+
+	input := "name: 'it''s # ${SOJ_TEST_DOUBLED_APOSTROPHE}'\n"
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := "name: 'it''s # demo'\n"
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
 func TestExpandResolvesAfterLiteralHash(t *testing.T) {
 	t.Setenv("SOJ_TEST_HASH_VALUE", "demo")
 

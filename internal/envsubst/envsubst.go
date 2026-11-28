@@ -28,10 +28,11 @@ var refPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}`
 func Expand(data string) (string, error) {
 	var missing []string
 	var expanded strings.Builder
+	var lex yamlLexState
 	expanded.Grow(len(data))
 
 	for _, line := range strings.SplitAfter(data, "\n") {
-		code, comment := splitComment(line)
+		code, comment := splitComment(line, &lex)
 		expanded.WriteString(refPattern.ReplaceAllStringFunc(code, func(ref string) string {
 			match := refPattern.FindStringSubmatch(ref)
 			if value, ok := os.LookupEnv(match[1]); ok && value != "" {
@@ -57,26 +58,32 @@ func Expand(data string) (string, error) {
 // comment. As in YAML, a comment starts at a # outside quotes that is at the
 // start of the line or preceded by whitespace, so a # inside a plain scalar
 // such as prefix#value is part of the value.
-func splitComment(line string) (code, comment string) {
-	var quote byte
-	var flowDepth int
+type yamlLexState struct {
+	quote     byte
+	flowDepth int
+}
 
+func splitComment(line string, state *yamlLexState) (code, comment string) {
 	for i := 0; i < len(line); i++ {
 		switch c := line[i]; {
-		case quote != 0:
-			if c == '\\' && quote == '"' {
+		case state.quote != 0:
+			if c == '\\' && state.quote == '"' {
 				i++
 				continue
 			}
-			if c == quote {
-				quote = 0
+			if c == state.quote {
+				if state.quote == '\'' && i+1 < len(line) && line[i+1] == '\'' {
+					i++
+					continue
+				}
+				state.quote = 0
 			}
-		case (c == '"' || c == '\'') && startsQuotedScalar(line, i, flowDepth):
-			quote = c
+		case (c == '"' || c == '\'') && startsQuotedScalar(line, i, state.flowDepth):
+			state.quote = c
 		case (c == '[' || c == '{') && startsFlowCollection(line, i):
-			flowDepth++
-		case (c == ']' || c == '}') && flowDepth > 0:
-			flowDepth--
+			state.flowDepth++
+		case (c == ']' || c == '}') && state.flowDepth > 0:
+			state.flowDepth--
 		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
 			return line[:i], line[i:]
 		}
