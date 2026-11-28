@@ -74,6 +74,34 @@ func TestExpandResolvesInsideQuotedScalarsAfterNodeProperties(t *testing.T) {
 	}
 }
 
+func TestExpandResolvesQuotedFlowValuesAfterColon(t *testing.T) {
+	t.Setenv("SOJ_TEST_FLOW_VALUE", "expanded")
+
+	input := `{"name":"prefix # ${SOJ_TEST_FLOW_VALUE}"}`
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := `{"name":"prefix # expanded"}`
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
+func TestExpandResolvesQuotedKeyAfterExplicitFlowMappingIndicator(t *testing.T) {
+	t.Setenv("SOJ_TEST_EXPLICIT_KEY", "expanded")
+
+	input := `{? 'prefix # ${SOJ_TEST_EXPLICIT_KEY}': value}`
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := `{? 'prefix # expanded': value}`
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
 func TestExpandResolvesAfterLiteralHash(t *testing.T) {
 	t.Setenv("SOJ_TEST_HASH_VALUE", "demo")
 

@@ -59,6 +59,7 @@ func Expand(data string) (string, error) {
 // such as prefix#value is part of the value.
 func splitComment(line string) (code, comment string) {
 	var quote byte
+	var flowDepth int
 
 	for i := 0; i < len(line); i++ {
 		switch c := line[i]; {
@@ -70,13 +71,31 @@ func splitComment(line string) (code, comment string) {
 			if c == quote {
 				quote = 0
 			}
-		case (c == '"' || c == '\'') && startsQuotedScalar(line, i):
+		case (c == '"' || c == '\'') && startsQuotedScalar(line, i, flowDepth):
 			quote = c
+		case (c == '[' || c == '{') && startsFlowCollection(line, i):
+			flowDepth++
+		case (c == ']' || c == '}') && flowDepth > 0:
+			flowDepth--
 		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
 			return line[:i], line[i:]
 		}
 	}
 	return line, ""
+}
+
+// startsFlowCollection reports whether an opening bracket begins a collection
+// rather than appearing as content inside a plain scalar.
+func startsFlowCollection(line string, i int) bool {
+	if i == 0 {
+		return true
+	}
+	switch line[i-1] {
+	case ' ', '\t', ':', ',', '[', '{':
+		return true
+	default:
+		return false
+	}
 }
 
 // isBlank reports whether line[i] is a space or tab.
@@ -87,9 +106,51 @@ func isBlank(line string, i int) bool {
 // startsQuotedScalar reports whether quote opens a YAML scalar at this position.
 // Quote characters inside plain scalars (for example, the apostrophe in "it's")
 // are ordinary content and must not hide a later comment.
-func startsQuotedScalar(line string, i int) bool {
-	for i--; ; i-- {
-		for i >= 0 && (line[i] == ' ' || line[i] == '\t') {
+func startsQuotedScalar(line string, i, flowDepth int) bool {
+	// Without whitespace, only a flow delimiter can directly precede a quoted
+	// scalar. This fast path also avoids rescanning long plain-scalar tokens for
+	// every apostrophe they contain.
+	if i > 0 && !isBlank(line, i-1) {
+		switch line[i-1] {
+		case ',', '[', '{':
+			return true
+		case ':':
+			return flowDepth > 0
+		default:
+			return false
+		}
+	}
+
+	for i--; isBlank(line, i); i-- {
+	}
+	if i < 0 {
+		return true
+	}
+	switch line[i] {
+	case ',', '[', '{':
+		return true
+	case ':':
+		return isBlank(line, i+1)
+	case '-':
+		return isBlank(line, i+1) && (i == 0 || isBlank(line, i-1))
+	case '?':
+		return isBlank(line, i+1) && (i == 0 || isBlank(line, i-1) ||
+			(flowDepth > 0 && (line[i-1] == '[' || line[i-1] == '{' || line[i-1] == ',')))
+	}
+
+	// YAML node properties can precede a quoted scalar, for example
+	// `&label "value"` or `!!str "value"`. Skip those property tokens
+	// before deciding whether the quote starts the scalar.
+	for {
+		end := i + 1
+		for i >= 0 && !isBlank(line, i) {
+			i--
+		}
+		property := line[i+1 : end]
+		if property[0] != '&' && property[0] != '!' {
+			return false
+		}
+		for i >= 0 && isBlank(line, i) {
 			i--
 		}
 		if i < 0 {
@@ -98,26 +159,13 @@ func startsQuotedScalar(line string, i int) bool {
 		switch line[i] {
 		case ',', '[', '{':
 			return true
-		case ':', '-', '?':
-			// These are indicators only when followed by white space, and
-			// '-' and '?' only when they start a token. Otherwise they are
-			// part of a plain scalar, such as the hyphen in "well-'known".
-			if !isBlank(line, i+1) {
-				return false
-			}
-			return line[i] == ':' || i == 0 || isBlank(line, i-1)
-		}
-
-		// YAML node properties can precede a quoted scalar, for example
-		// `&label "value"` or `!!str "value"`. Skip those property tokens
-		// before deciding whether the quote starts the scalar.
-		end := i + 1
-		for i >= 0 && line[i] != ' ' && line[i] != '\t' {
-			i--
-		}
-		property := line[i+1 : end]
-		if property[0] != '&' && property[0] != '!' {
-			return false
+		case ':':
+			return isBlank(line, i+1)
+		case '-':
+			return isBlank(line, i+1) && (i == 0 || isBlank(line, i-1))
+		case '?':
+			return isBlank(line, i+1) && (i == 0 || isBlank(line, i-1) ||
+				(flowDepth > 0 && (line[i-1] == '[' || line[i-1] == '{' || line[i-1] == ',')))
 		}
 	}
 }
