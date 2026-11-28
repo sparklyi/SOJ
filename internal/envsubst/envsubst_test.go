@@ -53,6 +53,27 @@ func TestExpandResolvesInsideQuotedValues(t *testing.T) {
 	}
 }
 
+func TestExpandResolvesInsideQuotedScalarsAfterNodeProperties(t *testing.T) {
+	t.Setenv("SOJ_TEST_PROPERTY_HASH", "expanded")
+
+	for _, input := range []string{
+		"name: &label \"prefix # ${SOJ_TEST_PROPERTY_HASH}\"\n",
+		"name: !!str \"prefix # ${SOJ_TEST_PROPERTY_HASH}\"\n",
+		"name: &label !!str \"prefix # ${SOJ_TEST_PROPERTY_HASH}\"\n",
+	} {
+		t.Run(input, func(t *testing.T) {
+			expanded, err := Expand(input)
+			if err != nil {
+				t.Fatalf("Expand() error = %v", err)
+			}
+			want := strings.ReplaceAll(input, "${SOJ_TEST_PROPERTY_HASH}", "expanded")
+			if expanded != want {
+				t.Fatalf("Expand() = %q, want %q", expanded, want)
+			}
+		})
+	}
+}
+
 func TestExpandResolvesAfterLiteralHash(t *testing.T) {
 	t.Setenv("SOJ_TEST_HASH_VALUE", "demo")
 

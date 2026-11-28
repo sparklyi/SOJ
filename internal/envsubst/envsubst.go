@@ -83,18 +83,28 @@ func splitComment(line string) (code, comment string) {
 // Quote characters inside plain scalars (for example, the apostrophe in "it's")
 // are ordinary content and must not hide a later comment.
 func startsQuotedScalar(line string, i int) bool {
-	for i--; i >= 0 && (line[i] == ' ' || line[i] == '\t'); i-- {
-		if i == 0 {
+	for i--; ; i-- {
+		for i >= 0 && (line[i] == ' ' || line[i] == '\t') {
+			i--
+		}
+		if i < 0 {
 			return true
 		}
-	}
-	if i < 0 {
-		return true
-	}
-	switch line[i] {
-	case ':', ',', '[', '{', '-', '?':
-		return true
-	default:
-		return false
+		switch line[i] {
+		case ':', ',', '[', '{', '-', '?':
+			return true
+		}
+
+		// YAML node properties can precede a quoted scalar, for example
+		// `&label "value"` or `!!str "value"`. Skip those property tokens
+		// before deciding whether the quote starts the scalar.
+		end := i + 1
+		for i >= 0 && line[i] != ' ' && line[i] != '\t' {
+			i--
+		}
+		property := line[i+1 : end]
+		if property[0] != '&' && property[0] != '!' {
+			return false
+		}
 	}
 }
