@@ -79,6 +79,11 @@ func splitComment(line string) (code, comment string) {
 	return line, ""
 }
 
+// isBlank reports whether line[i] is a space or tab.
+func isBlank(line string, i int) bool {
+	return i >= 0 && i < len(line) && (line[i] == ' ' || line[i] == '\t')
+}
+
 // startsQuotedScalar reports whether quote opens a YAML scalar at this position.
 // Quote characters inside plain scalars (for example, the apostrophe in "it's")
 // are ordinary content and must not hide a later comment.
@@ -91,8 +96,16 @@ func startsQuotedScalar(line string, i int) bool {
 			return true
 		}
 		switch line[i] {
-		case ':', ',', '[', '{', '-', '?':
+		case ',', '[', '{':
 			return true
+		case ':', '-', '?':
+			// These are indicators only when followed by white space, and
+			// '-' and '?' only when they start a token. Otherwise they are
+			// part of a plain scalar, such as the hyphen in "well-'known".
+			if !isBlank(line, i+1) {
+				return false
+			}
+			return line[i] == ':' || i == 0 || isBlank(line, i-1)
 		}
 
 		// YAML node properties can precede a quoted scalar, for example

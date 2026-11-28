@@ -100,6 +100,41 @@ func TestExpandPreservesCommentAfterApostropheInPlainScalar(t *testing.T) {
 	}
 }
 
+func TestExpandPreservesCommentAfterPunctuationInPlainScalar(t *testing.T) {
+	t.Setenv("SOJ_TEST_MISSING_AFTER_PUNCTUATION", "")
+
+	for _, input := range []string{
+		"name: prefix#well-'known # ${SOJ_TEST_MISSING_AFTER_PUNCTUATION}\n",
+		"name: prefix#a?'b # ${SOJ_TEST_MISSING_AFTER_PUNCTUATION}\n",
+		"name: prefix#a:'b # ${SOJ_TEST_MISSING_AFTER_PUNCTUATION}\n",
+		"name: value-'x # ${SOJ_TEST_MISSING_AFTER_PUNCTUATION}\n",
+	} {
+		t.Run(input, func(t *testing.T) {
+			expanded, err := Expand(input)
+			if err != nil {
+				t.Fatalf("Expand() error = %v, variable in comment must not be expanded", err)
+			}
+			if expanded != input {
+				t.Fatalf("Expand() = %q, want comment preserved as %q", expanded, input)
+			}
+		})
+	}
+}
+
+func TestExpandResolvesQuotedSequenceItemsAfterHyphenMarker(t *testing.T) {
+	t.Setenv("SOJ_TEST_SEQUENCE_VALUE", "expanded")
+
+	input := "items:\n- 'prefix # ${SOJ_TEST_SEQUENCE_VALUE}'\n"
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := "items:\n- 'prefix # expanded'\n"
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
 func TestExpandTreatsEmptyAsUnset(t *testing.T) {
 	t.Setenv("SOJ_TEST_EMPTY", "")
 
