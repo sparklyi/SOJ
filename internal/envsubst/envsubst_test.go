@@ -53,6 +53,144 @@ func TestExpandResolvesInsideQuotedValues(t *testing.T) {
 	}
 }
 
+func TestExpandResolvesInsideQuotedScalarsAfterNodeProperties(t *testing.T) {
+	t.Setenv("SOJ_TEST_PROPERTY_HASH", "expanded")
+
+	for _, input := range []string{
+		"name: &label \"prefix # ${SOJ_TEST_PROPERTY_HASH}\"\n",
+		"name: !!str \"prefix # ${SOJ_TEST_PROPERTY_HASH}\"\n",
+		"name: &label !!str \"prefix # ${SOJ_TEST_PROPERTY_HASH}\"\n",
+	} {
+		t.Run(input, func(t *testing.T) {
+			expanded, err := Expand(input)
+			if err != nil {
+				t.Fatalf("Expand() error = %v", err)
+			}
+			want := strings.ReplaceAll(input, "${SOJ_TEST_PROPERTY_HASH}", "expanded")
+			if expanded != want {
+				t.Fatalf("Expand() = %q, want %q", expanded, want)
+			}
+		})
+	}
+}
+
+func TestExpandResolvesQuotedFlowValuesAfterColon(t *testing.T) {
+	t.Setenv("SOJ_TEST_FLOW_VALUE", "expanded")
+
+	input := `{"name":"prefix # ${SOJ_TEST_FLOW_VALUE}"}`
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := `{"name":"prefix # expanded"}`
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
+func TestExpandResolvesQuotedKeyAfterExplicitFlowMappingIndicator(t *testing.T) {
+	t.Setenv("SOJ_TEST_EXPLICIT_KEY", "expanded")
+
+	input := `{? 'prefix # ${SOJ_TEST_EXPLICIT_KEY}': value}`
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := `{? 'prefix # expanded': value}`
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
+func TestExpandResolvesQuotedValueInMultilineFlowMapping(t *testing.T) {
+	t.Setenv("SOJ_TEST_MULTILINE_FLOW", "expanded")
+
+	input := "value: {\n  key:\"prefix # ${SOJ_TEST_MULTILINE_FLOW}\"\n}\n"
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := "value: {\n  key:\"prefix # expanded\"\n}\n"
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
+func TestExpandResolvesInsideSingleQuotedScalarWithDoubledApostrophe(t *testing.T) {
+	t.Setenv("SOJ_TEST_DOUBLED_APOSTROPHE", "demo")
+
+	input := "name: 'it''s # ${SOJ_TEST_DOUBLED_APOSTROPHE}'\n"
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := "name: 'it''s # demo'\n"
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
+func TestExpandResolvesAfterLiteralHash(t *testing.T) {
+	t.Setenv("SOJ_TEST_HASH_VALUE", "demo")
+
+	expanded, err := Expand("name: prefix#${SOJ_TEST_HASH_VALUE}\n")
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := "name: prefix#demo\n"
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
+func TestExpandPreservesCommentAfterApostropheInPlainScalar(t *testing.T) {
+	t.Setenv("SOJ_TEST_MISSING_AFTER_APOSTROPHE", "")
+
+	input := "name: prefix#it's # ${SOJ_TEST_MISSING_AFTER_APOSTROPHE}\n"
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v, variable in comment must not be expanded", err)
+	}
+	if expanded != input {
+		t.Fatalf("Expand() = %q, want comment preserved as %q", expanded, input)
+	}
+}
+
+func TestExpandPreservesCommentAfterPunctuationInPlainScalar(t *testing.T) {
+	t.Setenv("SOJ_TEST_MISSING_AFTER_PUNCTUATION", "")
+
+	for _, input := range []string{
+		"name: prefix#well-'known # ${SOJ_TEST_MISSING_AFTER_PUNCTUATION}\n",
+		"name: prefix#a?'b # ${SOJ_TEST_MISSING_AFTER_PUNCTUATION}\n",
+		"name: prefix#a:'b # ${SOJ_TEST_MISSING_AFTER_PUNCTUATION}\n",
+		"name: value-'x # ${SOJ_TEST_MISSING_AFTER_PUNCTUATION}\n",
+	} {
+		t.Run(input, func(t *testing.T) {
+			expanded, err := Expand(input)
+			if err != nil {
+				t.Fatalf("Expand() error = %v, variable in comment must not be expanded", err)
+			}
+			if expanded != input {
+				t.Fatalf("Expand() = %q, want comment preserved as %q", expanded, input)
+			}
+		})
+	}
+}
+
+func TestExpandResolvesQuotedSequenceItemsAfterHyphenMarker(t *testing.T) {
+	t.Setenv("SOJ_TEST_SEQUENCE_VALUE", "expanded")
+
+	input := "items:\n- 'prefix # ${SOJ_TEST_SEQUENCE_VALUE}'\n"
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := "items:\n- 'prefix # expanded'\n"
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
 func TestExpandTreatsEmptyAsUnset(t *testing.T) {
 	t.Setenv("SOJ_TEST_EMPTY", "")
 
@@ -66,5 +204,43 @@ func TestExpandTreatsEmptyAsUnset(t *testing.T) {
 
 	if _, err := Expand("a: ${SOJ_TEST_EMPTY}\n"); err == nil {
 		t.Fatal("Expand() error = nil, want an empty required value rejected")
+	}
+}
+
+func TestExpandPreservesCommentAfterCommaApostropheInPlainBlockValue(t *testing.T) {
+	t.Setenv("SOJ_TEST_MISSING_AFTER_COMMA", "")
+
+	for _, input := range []string{
+		"name: a,'b # ${SOJ_TEST_MISSING_AFTER_COMMA}\n",
+		"name: a, 'b # ${SOJ_TEST_MISSING_AFTER_COMMA}\n",
+	} {
+		t.Run(input, func(t *testing.T) {
+			expanded, err := Expand(input)
+			if err != nil {
+				t.Fatalf("Expand() error = %v, variable in comment must not be expanded", err)
+			}
+			if expanded != input {
+				t.Fatalf("Expand() = %q, want comment preserved as %q", expanded, input)
+			}
+		})
+	}
+}
+
+func TestExpandResolvesQuotedFlowItemAfterComma(t *testing.T) {
+	t.Setenv("SOJ_TEST_FLOW_COMMA", "expanded")
+
+	for _, tc := range []struct{ input, want string }{
+		{"key: [a,'prefix # ${SOJ_TEST_FLOW_COMMA}'] # note\n", "key: [a,'prefix # expanded'] # note\n"},
+		{"key: [a, 'prefix # ${SOJ_TEST_FLOW_COMMA}'] # note\n", "key: [a, 'prefix # expanded'] # note\n"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			expanded, err := Expand(tc.input)
+			if err != nil {
+				t.Fatalf("Expand() error = %v", err)
+			}
+			if expanded != tc.want {
+				t.Fatalf("Expand() = %q, want %q", expanded, tc.want)
+			}
+		})
 	}
 }
