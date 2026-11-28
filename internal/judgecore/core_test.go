@@ -240,6 +240,55 @@ func (c *scriptedChecker) Check(_ context.Context, request checker.Request) (che
 	return c.results[len(c.requests)-1], nil
 }
 
+func TestCoreRunPreservesRawOutput(t *testing.T) {
+	profile := testGoProfile()
+	source := []byte("package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"Hello, world!\") }\n")
+	stdin := "test input\n"
+	stdout := "Hello, world!\n"
+	stderr := "warning: unused variable\n"
+
+	backend := &scriptedSandbox{
+		compiled: sandbox.CompileResult{Verdict: judge.VerdictAccepted},
+		runs: []sandbox.RunResult{{
+			Verdict: judge.VerdictAccepted,
+			Stdout:  []byte(stdout),
+			Stderr:  []byte(stderr),
+		}},
+	}
+	outputChecker := &scriptedChecker{}
+
+	core := New(Options{Sandbox: backend, Checker: outputChecker})
+	got, err := core.Run(t.Context(), RunRequest{Language: profile, Source: source, Stdin: stdin})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if got.Verdict != judge.VerdictAccepted {
+		t.Fatalf("verdict = %q, want accepted; result=%+v", got.Verdict, got)
+	}
+	if string(got.Stdout) != stdout {
+		t.Fatalf("stdout = %q, want %q", got.Stdout, stdout)
+	}
+	if string(got.Stderr) != stderr {
+		t.Fatalf("stderr = %q, want %q", got.Stderr, stderr)
+	}
+
+	if len(backend.requests) != 1 {
+		t.Fatalf("expected 1 run request, got %d", len(backend.requests))
+	}
+	if string(backend.requests[0].Stdin) != stdin {
+		t.Fatalf("stdin = %q, want %q", backend.requests[0].Stdin, stdin)
+	}
+
+	if len(outputChecker.requests) != 0 {
+		t.Fatalf("expected 0 checker requests, got %d", len(outputChecker.requests))
+	}
+
+	if backend.cleanups != 1 {
+		t.Fatalf("expected 1 cleanup, got %d", backend.cleanups)
+	}
+}
+
 func TestCorePreservesCompileVerdict(t *testing.T) {
 	profile := testGoProfile()
 	source := []byte("package main\nfunc main() {}\n")
