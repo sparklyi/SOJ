@@ -53,6 +53,19 @@ func TestExpandResolvesInsideQuotedValues(t *testing.T) {
 	}
 }
 
+func TestExpandResolvesAfterLiteralHash(t *testing.T) {
+	t.Setenv("SOJ_TEST_HASH_VALUE", "demo")
+
+	expanded, err := Expand("name: prefix#${SOJ_TEST_HASH_VALUE}\n")
+	if err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	want := "name: prefix#demo\n"
+	if expanded != want {
+		t.Fatalf("Expand() = %q, want %q", expanded, want)
+	}
+}
+
 func TestExpandTreatsEmptyAsUnset(t *testing.T) {
 	t.Setenv("SOJ_TEST_EMPTY", "")
 

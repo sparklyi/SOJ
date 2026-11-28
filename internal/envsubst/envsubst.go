@@ -54,7 +54,9 @@ func Expand(data string) (string, error) {
 }
 
 // splitComment splits a line into the part the loader expands and a trailing
-// comment, which starts at the first # outside quotes.
+// comment. As in YAML, a comment starts at a # outside quotes that is at the
+// start of the line or preceded by whitespace, so a # inside a plain scalar
+// such as prefix#value is part of the value.
 func splitComment(line string) (code, comment string) {
 	var quote byte
 
@@ -70,7 +72,7 @@ func splitComment(line string) (code, comment string) {
 			}
 		case c == '"' || c == '\'':
 			quote = c
-		case c == '#':
+		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
 			return line[:i], line[i:]
 		}
 	}
