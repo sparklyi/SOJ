@@ -119,7 +119,9 @@ func startsQuotedScalar(line string, i, flowDepth int) bool {
 	// every apostrophe they contain.
 	if i > 0 && !isBlank(line, i-1) {
 		switch line[i-1] {
-		case ',', '[', '{':
+		case ',':
+			return flowDepth > 0
+		case '[', '{':
 			return true
 		case ':':
 			return flowDepth > 0
@@ -134,7 +136,9 @@ func startsQuotedScalar(line string, i, flowDepth int) bool {
 		return true
 	}
 	switch line[i] {
-	case ',', '[', '{':
+	case ',':
+		return flowDepth > 0
+	case '[', '{':
 		return true
 	case ':':
 		return isBlank(line, i+1)
@@ -164,7 +168,9 @@ func startsQuotedScalar(line string, i, flowDepth int) bool {
 			return true
 		}
 		switch line[i] {
-		case ',', '[', '{':
+		case ',':
+			return flowDepth > 0
+		case '[', '{':
 			return true
 		case ':':
 			return isBlank(line, i+1)

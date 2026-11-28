@@ -206,3 +206,41 @@ func TestExpandTreatsEmptyAsUnset(t *testing.T) {
 		t.Fatal("Expand() error = nil, want an empty required value rejected")
 	}
 }
+
+func TestExpandPreservesCommentAfterCommaApostropheInPlainBlockValue(t *testing.T) {
+	t.Setenv("SOJ_TEST_MISSING_AFTER_COMMA", "")
+
+	for _, input := range []string{
+		"name: a,'b # ${SOJ_TEST_MISSING_AFTER_COMMA}\n",
+		"name: a, 'b # ${SOJ_TEST_MISSING_AFTER_COMMA}\n",
+	} {
+		t.Run(input, func(t *testing.T) {
+			expanded, err := Expand(input)
+			if err != nil {
+				t.Fatalf("Expand() error = %v, variable in comment must not be expanded", err)
+			}
+			if expanded != input {
+				t.Fatalf("Expand() = %q, want comment preserved as %q", expanded, input)
+			}
+		})
+	}
+}
+
+func TestExpandResolvesQuotedFlowItemAfterComma(t *testing.T) {
+	t.Setenv("SOJ_TEST_FLOW_COMMA", "expanded")
+
+	for _, tc := range []struct{ input, want string }{
+		{"key: [a,'prefix # ${SOJ_TEST_FLOW_COMMA}'] # note\n", "key: [a,'prefix # expanded'] # note\n"},
+		{"key: [a, 'prefix # ${SOJ_TEST_FLOW_COMMA}'] # note\n", "key: [a, 'prefix # expanded'] # note\n"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			expanded, err := Expand(tc.input)
+			if err != nil {
+				t.Fatalf("Expand() error = %v", err)
+			}
+			if expanded != tc.want {
+				t.Fatalf("Expand() = %q, want %q", expanded, tc.want)
+			}
+		})
+	}
+}
