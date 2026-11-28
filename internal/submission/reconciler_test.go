@@ -59,7 +59,7 @@ func (m *recordingReconciliationMetrics) RecordReconcilerAction(
 	})
 }
 
-func TestMarkStaleRunsOutcomes(t *testing.T) {
+func TestReconcilerMarkStaleRuns(t *testing.T) {
 	now := time.Date(2026, time.November, 28, 12, 0, 0, 0, time.UTC)
 	maxAge := 17 * time.Minute
 	cutoff := now.Add(-maxAge)
@@ -142,7 +142,7 @@ func TestMarkStaleRunsOutcomes(t *testing.T) {
 	}
 }
 
-func TestResetStaleTasksOutcomes(t *testing.T) {
+func TestReconcilerResetStaleTasks(t *testing.T) {
 	now := time.Date(2026, time.November, 28, 12, 0, 0, 0, time.UTC)
 	maxAge := 23 * time.Minute
 	cutoff := now.Add(-maxAge)
