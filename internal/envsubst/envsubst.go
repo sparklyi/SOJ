@@ -70,11 +70,31 @@ func splitComment(line string) (code, comment string) {
 			if c == quote {
 				quote = 0
 			}
-		case c == '"' || c == '\'':
+		case (c == '"' || c == '\'') && startsQuotedScalar(line, i):
 			quote = c
 		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
 			return line[:i], line[i:]
 		}
 	}
 	return line, ""
+}
+
+// startsQuotedScalar reports whether quote opens a YAML scalar at this position.
+// Quote characters inside plain scalars (for example, the apostrophe in "it's")
+// are ordinary content and must not hide a later comment.
+func startsQuotedScalar(line string, i int) bool {
+	for i--; i >= 0 && (line[i] == ' ' || line[i] == '\t'); i-- {
+		if i == 0 {
+			return true
+		}
+	}
+	if i < 0 {
+		return true
+	}
+	switch line[i] {
+	case ':', ',', '[', '{', '-', '?':
+		return true
+	default:
+		return false
+	}
 }

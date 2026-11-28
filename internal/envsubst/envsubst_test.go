@@ -66,6 +66,19 @@ func TestExpandResolvesAfterLiteralHash(t *testing.T) {
 	}
 }
 
+func TestExpandPreservesCommentAfterApostropheInPlainScalar(t *testing.T) {
+	t.Setenv("SOJ_TEST_MISSING_AFTER_APOSTROPHE", "")
+
+	input := "name: prefix#it's # ${SOJ_TEST_MISSING_AFTER_APOSTROPHE}\n"
+	expanded, err := Expand(input)
+	if err != nil {
+		t.Fatalf("Expand() error = %v, variable in comment must not be expanded", err)
+	}
+	if expanded != input {
+		t.Fatalf("Expand() = %q, want comment preserved as %q", expanded, input)
+	}
+}
+
 func TestExpandTreatsEmptyAsUnset(t *testing.T) {
 	t.Setenv("SOJ_TEST_EMPTY", "")
 
